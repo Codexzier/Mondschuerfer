@@ -1,0 +1,4 @@
+cmake-build-*/
+build/
+.idea/
+mondschuerfer_spielstand.txt
