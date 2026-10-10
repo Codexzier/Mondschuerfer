@@ -1,11 +1,12 @@
 // Mondschürfer – ein kleines Weltraum-Bergbau-Spiel mit dem Kenney Space Kit.
 //
 // Steuerung: W/S Schub, A/D drehen, Leertaste schießen, E Scanner, F abbauen/andocken,
-//            Mausrad Zoom, ESC Pause, F11 Vollbild.
+//            Mausrad Zoom, ESC Pause, M Ton an/aus, F11 Vollbild.
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "Assets.hpp"
+#include "Audio.hpp"
 #include "Hud.hpp"
 #include "Save.hpp"
 #include "Ui.hpp"
@@ -92,6 +93,10 @@ public:
         elapsed_ += dt;
         ui::BeginFrame();
         if (IsKeyPressed(KEY_F11)) ToggleBorderlessWindowed();
+        if (IsKeyPressed(KEY_M)) {
+            g_audio.ToggleMute();
+            if (screen_ == Screen::Playing) world_.Notify(g_audio.Muted() ? "Ton aus  [M]" : "Ton an  [M]", MUTED);
+        }
         float wheel = GetMouseWheelMove();
         if (wheel != 0.0f && screen_ != Screen::Menu) zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
 
@@ -102,6 +107,7 @@ public:
             case Screen::Simulation: UpdateSimulation(dt); break;
         }
         UpdateCamera(dt);
+        UpdateAudio(dt);
         if (opt_.noRender) { BeginDrawing(); ClearBackground(BLACK); EndDrawing(); }
         else Draw();
         HandleTestOptions();
@@ -158,6 +164,7 @@ private:
             dockFrames_ = 0;
         } else {
             hasSave_ = false;
+            g_audio.Play(Sfx::Denied);
         }
     }
 
@@ -173,6 +180,7 @@ private:
     }
 
     void BackToMenu() {
+        g_audio.Play(Sfx::UiBack);
         hasSave_ = SaveExists();
         screen_ = Screen::Menu;
         menuSel_ = 0;
@@ -240,6 +248,7 @@ private:
                 screen_ = Screen::Paused;
                 pauseSel_ = 0;
                 pauseFrames_ = 0;
+                g_audio.Play(Sfx::PauseOpen);
                 return;
             }
             ShipInput in = ReadPlayerInput();
@@ -250,6 +259,27 @@ private:
             world_.wantAutosave = false;
             if (world_.outcome == Outcome::None) SaveGame(world_);
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // Geräusche der Spielwelt abspielen und Dauergeräusche steuern.
+    // Die Hintergrund-Simulation im Hauptmenü bleibt stumm.
+    void UpdateAudio(float dt) {
+        LoopState loops;
+        if (screen_ == Screen::Playing || screen_ == Screen::Simulation) {
+            for (const auto& e : world_.sounds) g_audio.PlayAt(e, camTarget_);
+            const Ship& p = world_.Player();
+            if (world_.PlayerAlive() && !p.hidden && world_.dockedAt < 0 && world_.outcome == Outcome::None) {
+                loops.engine = 1.0f;
+                loops.enginePitch = 0.9f + 0.25f * Vector3Length(p.vel) / std::max(1.0f, p.maxSpeed);
+                loops.thrust = p.thrustVisual;
+                loops.scanner = world_.scanOn ? 1.0f : 0.0f;
+                loops.mining = world_.mining ? 1.0f : 0.0f;
+                loops.alarm = p.hp / p.maxHp < 0.3f;
+            }
+        }
+        world_.sounds.clear();
+        g_audio.Update(dt, loops);
     }
 
     // ------------------------------------------------------------------------
@@ -316,6 +346,7 @@ private:
         std::vector<bool> enabled = {true, hasSave_, true, true};
         float bw = 420 * s, bh = 60 * s;
         int choice = ButtonList(items, enabled, menuSel_, x + bw * 0.5f, y + 170 * s, bw, bh, 16 * s, 28 * s);
+        if (choice >= 0 && choice <= 2) g_audio.Play(Sfx::UiConfirm);
         switch (choice) {
             case 0: NewGame(); break;
             case 1: Continue(); break;
@@ -332,8 +363,8 @@ private:
         };
         for (int i = 0; i < 3; ++i) Text(info[i], x, iy + i * 28 * s, 20 * s, Color{200, 206, 220, 230});
 
-        Text("Grafik: Kenney Space Kit (CC0)  -  www.kenney.nl", x, H - 44 * s, 18 * s, MUTED);
-        TextRight("F11 Vollbild", W - 24 * s, H - 44 * s, 18 * s, MUTED);
+        Text("Grafik und Ton: Kenney (CC0)  -  www.kenney.nl", x, H - 44 * s, 18 * s, MUTED);
+        TextRight(g_audio.Muted() ? "M Ton aus    F11 Vollbild" : "M Ton an    F11 Vollbild", W - 24 * s, H - 44 * s, 18 * s, MUTED);
     }
 
     void DrawPlaying() {
@@ -367,8 +398,10 @@ private:
         std::vector<std::string> items = {"Weiterspielen", "Speichern & zum Hauptmenü", "Hauptmenü ohne Speichern"};
         int c = ButtonList(items, {true, true, true}, pauseSel_, W * 0.5f, r.y + 100 * s, 440 * s, 54 * s, 12 * s, 24 * s);
         if (pauseFrames_ > 1 && (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P))) c = 0;
-        if (c == 0) screen_ = Screen::Playing;
-        else if (c == 1) { SaveGame(world_); BackToMenu(); return; }
+        if (c == 0) {
+            screen_ = Screen::Playing;
+            g_audio.Play(Sfx::PauseClose);
+        } else if (c == 1) { SaveGame(world_); BackToMenu(); return; }
         else if (c == 2) BackToMenu();
         DrawControls(r.x + 70 * s, r.y + 320 * s, 18 * s);
     }
@@ -486,6 +519,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    g_audio.Init(g_assets.AssetDir()); // ohne Audiogerät läuft das Spiel stumm weiter
+
     if (opt.noRender) SetTargetFPS(0);
     App app(opt);
     app.Start();
@@ -495,6 +530,7 @@ int main(int argc, char** argv) {
         if (!app.Frame(dt)) break;
     }
     app.OnExit();
+    g_audio.Shutdown();
     g_assets.Shutdown();
     CloseWindow();
     return 0;

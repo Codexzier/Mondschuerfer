@@ -147,6 +147,7 @@ void World::Update(float dt, const ShipInput& input) {
         }
         if (s.pos.y <= 0.45f) {
             Explosion({s.pos.x, 0.8f, s.pos.z}, s.kind == ShipKind::Player ? 2.0f : 1.4f);
+            SoundAt(Sfx::CrashBoom, s.pos, s.kind == ShipKind::Player ? 1.0f : 0.8f);
             s.dead = true;
             if (s.kind == ShipKind::Player) {
                 s.hidden = true;
@@ -277,16 +278,24 @@ void World::UpdatePlayer(float dt, const ShipInput& in) {
     if (in.scanToggle) {
         if (scanOn) {
             scanOn = false;
+            SoundAt(Sfx::ScanOff, p.pos);
         } else if (scanEnergy >= 1.0f) {
             scanOn = true;
             scanPulse = 0.0f;
+            SoundAt(Sfx::ScanOn, p.pos);
+            SoundAt(Sfx::ScanPing, p.pos, 1.0f, 0.15f);
         } else if (!simulation) {
             Notify("Scanner-Energie zu niedrig", Color{255, 170, 120, 255});
+            SoundAt(Sfx::Denied, p.pos);
         }
     }
     if (scanOn) {
         scanEnergy -= cfg::SCANNER_DRAIN * dt;
+        const float lastPulse = scanPulse;
         scanPulse += dt;
+        // Jeder neue Scannerring gibt einen Ping
+        if (floorf(scanPulse / cfg::SCANNER_PULSE_TIME) > floorf(lastPulse / cfg::SCANNER_PULSE_TIME))
+            SoundAt(Sfx::ScanPing, p.pos);
         float ring = cfg::SCANNER_RADIUS * fmodf(scanPulse, cfg::SCANNER_PULSE_TIME) / cfg::SCANNER_PULSE_TIME;
         int found = 0;
         for (auto& d : deposits) {
@@ -296,12 +305,14 @@ void World::UpdatePlayer(float dt, const ShipInput& in) {
                 ++found;
             }
         }
+        if (found > 0) SoundAt(Sfx::Discover, p.pos);
         if (found > 0 && !simulation)
             Notify(found == 1 ? "Lagerstätte entdeckt!" : TextFormat("%d Lagerstätten entdeckt!", found),
                    Color{120, 255, 190, 255});
         if (scanEnergy <= 0.0f) {
             scanEnergy = 0.0f;
             scanOn = false;
+            SoundAt(Sfx::ScanEmpty, p.pos);
             if (!simulation) Notify("Scanner abgeschaltet: Energie leer", Color{255, 170, 120, 255});
         }
     } else {
@@ -318,6 +329,7 @@ void World::UpdatePlayer(float dt, const ShipInput& in) {
     if (in.interact) {
         if (mining) {
             mining = false;
+            SoundAt(Sfx::MineAbort, p.pos);
             if (!simulation) Notify("Abbau abgebrochen", Color{255, 200, 150, 255});
         } else {
             int kind = 0, id = -1;
@@ -326,6 +338,7 @@ void World::UpdatePlayer(float dt, const ShipInput& in) {
             else if (kind == 4) Dock(1);
             else if (kind == 1 || kind == 2) {
                 if (p.cargo >= p.cargoMax) {
+                    SoundAt(Sfx::CargoFull, p.pos);
                     if (!simulation) Notify("Lager voll! Ab zur Handelsstation.", Color{255, 200, 120, 255});
                 } else {
                     StartMining(kind, id);
@@ -346,9 +359,11 @@ void World::UpdatePlayer(float dt, const ShipInput& in) {
         }
         if (!valid) {
             mining = false;
+            SoundAt(Sfx::MineAbort, p.pos);
             if (!simulation) Notify("Lagerstätte erschöpft", Color{255, 200, 150, 255});
         } else if (Dist2D(target, p.pos) > cfg::MINING_RANGE + 1.5f) {
             mining = false;
+            SoundAt(Sfx::MineAbort, p.pos);
             if (!simulation) Notify("Abbau abgebrochen: zu weit entfernt", Color{255, 200, 150, 255});
         } else {
             mineT += dt;
@@ -453,6 +468,7 @@ void World::StartMining(int kind, int id) {
     mineKind = kind;
     mineId = id;
     mineT = 0.0f;
+    SoundAt(Sfx::MineStart, Player().pos);
     if (!simulation) Notify(kind == 2 ? "Wrack wird ausgeschlachtet ..." : "Abbau gestartet ...",
                             Color{150, 255, 200, 255});
 }
@@ -468,6 +484,8 @@ void World::FinishMining() {
     int take = std::min(free, *amount);
     *amount -= take;
     p.cargo += take;
+    SoundAt(Sfx::MineDone, p.pos);
+    if (p.cargo >= p.cargoMax) SoundAt(Sfx::CargoFull, p.pos, 1.0f, 0.45f);
     if (!simulation) {
         Notify(TextFormat("+%d Ressourcen geladen", take), Color{120, 255, 190, 255});
         if (p.cargo >= p.cargoMax) Notify("Lager voll! Ab zur Handelsstation.", Color{255, 200, 120, 255});
@@ -495,16 +513,19 @@ void World::Dock(int station) {
     scanOn = false;
     p.vel = {0, 0, 0};
     lastSale = 0;
+    SoundAt(Sfx::Dock, p.pos);
     if (station == 0) {
         int sale = p.cargo;
         p.cargo = 0;
         balance += sale;
         totalDelivered += sale;
         lastSale = sale;
+        if (sale > 0) SoundAt(Sfx::Sale, p.pos, 1.0f, 0.35f);
         int stage = StationStage();
         if (stage > lastStage) {
             lastStage = stage;
             stageAnim = 1.0f;
+            SoundAt(Sfx::StationGrow, p.pos, 1.0f, 0.8f);
             if (!simulation) Notify(TextFormat("Die Station wächst! Ausbaustufe %d", stage), Color{255, 210, 120, 255});
             for (const auto& part : stations[0].parts)
                 if (part.stage == stage) SpawnSparks(Vector3Add(stations[0].pos, Vector3Add(part.offset, {0, 1.5f, 0})), Color{255, 220, 120, 255}, 12);
@@ -512,6 +533,7 @@ void World::Dock(int station) {
         if (balance >= cfg::GOAL_POINTS && outcome == Outcome::None) {
             outcome = Outcome::Won;
             outcomeT = 0.0f;
+            SoundAt(Sfx::Victory, p.pos, 1.0f, 1.3f);
         }
     }
     wantAutosave = !simulation;
@@ -524,6 +546,7 @@ void World::Undock() {
     p.yaw = YawTowards(stations[dockedAt].pos, p.pos);
     p.vel = Vector3Scale(ForwardFromYaw(p.yaw), 6.0f);
     dockedAt = -1;
+    SoundAt(Sfx::Undock, p.pos);
 }
 
 int World::RepairCost() const {
@@ -539,6 +562,7 @@ bool World::Repair() {
     if (balance >= cost) {
         balance -= cost;
         p.hp = p.maxHp;
+        SoundAt(Sfx::Repair, p.pos);
         return true;
     }
     // Teilreparatur mit dem vorhandenen Geld
@@ -546,6 +570,7 @@ bool World::Repair() {
     if (points <= 0) return false;
     balance -= points * cfg::REPAIR_COST_PER_POINT;
     p.hp = std::min(p.maxHp, p.hp + points);
+    SoundAt(Sfx::Repair, p.pos);
     return true;
 }
 
@@ -560,6 +585,7 @@ bool World::BuyUpgrade(int type) {
     balance -= cost;
     upgrades[type]++;
     ApplyUpgrades(false);
+    SoundAt(Sfx::Upgrade, Player().pos);
     return true;
 }
 
@@ -595,6 +621,7 @@ void World::FireBullet(Ship& s) {
     b.faction = s.faction;
     b.ownerId = s.id;
     bullets.push_back(b);
+    SoundAt(s.kind == ShipKind::Player ? Sfx::PlayerShot : Sfx::EnemyShot, s.pos);
 }
 
 void World::UpdateTurrets(float dt) {
@@ -629,6 +656,7 @@ void World::UpdateTurrets(float dt) {
                 b.faction = Faction::Neutral;
                 b.ownerId = -1;
                 bullets.push_back(b);
+                SoundAt(Sfx::TurretShot, wp);
             }
         }
     }
@@ -650,6 +678,8 @@ void World::UpdateBullets(float dt) {
             if (Vector3Distance(b.pos, s.pos) < cfg::SHIP_HIT_RADIUS) {
                 b.life = 0.0f;
                 SpawnSparks(b.pos, b.faction == Faction::Player ? Color{255, 200, 90, 255} : Color{255, 90, 80, 255}, 7);
+                SoundAt(Sfx::HitMetal, b.pos);
+                if (s.kind == ShipKind::Player) SoundAt(Sfx::ShieldHit, s.pos);
                 DamageShip(s, b.damage, b.ownerId, b.faction);
                 break;
             }
@@ -693,6 +723,7 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker) {
         s.vel.y = 1.5f;
         s.mining = false;
         Explosion(s.pos, 0.7f);
+        SoundAt(Sfx::ShipExplode, s.pos);
         if (s.kind == ShipKind::Player) {
             mining = false;
             scanOn = false;
@@ -773,6 +804,10 @@ void World::Notify(const std::string& text, Color c) {
     }
     notices.push_back({text, 4.0f, c, 1});
     if (notices.size() > 5) notices.erase(notices.begin());
+}
+
+void World::SoundAt(Sfx id, Vector3 pos, float volume, float delay) {
+    sounds.push_back({id, pos, volume, delay});
 }
 
 // ===========================================================================

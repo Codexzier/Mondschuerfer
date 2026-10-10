@@ -1,6 +1,7 @@
 // HUD, Minikarte, Stationsfenster und Endbildschirme.
 #include "Hud.hpp"
 #include "Assets.hpp"
+#include "Audio.hpp"
 #include "Ui.hpp"
 #include <algorithm>
 #include <cmath>
@@ -123,9 +124,10 @@ void Minimap(const World& w) {
 } // namespace
 
 void DrawControls(float x, float y, float size) {
-    const char* keys[] = {"W / S", "A / D", "Leertaste", "E", "F", "Mausrad", "ESC"};
-    const char* what[] = {"Schub / Bremsen", "Drehen", "Schießen", "Scanner an/aus", "Abbauen / Andocken", "Zoom", "Pause"};
-    for (int i = 0; i < 7; ++i) {
+    const char* keys[] = {"W / S", "A / D", "Leertaste", "E", "F", "Mausrad", "ESC", "M"};
+    const char* what[] = {"Schub / Bremsen", "Drehen", "Schießen", "Scanner an/aus", "Abbauen / Andocken", "Zoom", "Pause",
+                          "Ton an/aus"};
+    for (int i = 0; i < 8; ++i) {
         Text(keys[i], x, y + i * size * 1.35f, size, Color{255, 200, 140, 210});
         Text(what[i], x + size * 7.0f, y + i * size * 1.35f, size, Color{220, 225, 235, 200});
     }
@@ -241,7 +243,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     }
 
     if (!simulation) {
-        if (w.playTime < 90.0f || IsKeyDown(KEY_H)) DrawControls(18 * s, H - 7 * 16 * s * 1.35f - 16 * s, 16 * s);
+        if (w.playTime < 90.0f || IsKeyDown(KEY_H)) DrawControls(18 * s, H - 8 * 16 * s * 1.35f - 16 * s, 16 * s);
         else Text("[H] Steuerung anzeigen", 18 * s, H - 30 * s, 16 * s, Color{200, 205, 215, 170});
     }
 }
@@ -300,8 +302,11 @@ bool DrawDockPanel(World& w, bool interactive) {
         std::string rl = cost > 0 ? TextFormat("Schild reparieren  (%s Pkt.)  [R]", Num(cost).c_str()) : "Schild ist voll";
         bool canRepair = cost > 0 && w.balance >= cfg::REPAIR_COST_PER_POINT;
         Rectangle rb{x, y, bw, 50 * s};
-        if (Button(rb, rl, 22 * s, false, canRepair && interactive) || (interactive && canRepair && IsKeyPressed(KEY_R)))
+        bool repairHover = false;
+        if (Button(rb, rl, 22 * s, false, canRepair && interactive, &repairHover) || (interactive && canRepair && IsKeyPressed(KEY_R)))
             w.Repair();
+        else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))))
+            g_audio.Play(Sfx::Denied);
         y += 64 * s;
         Rectangle ub{x, y, bw, 50 * s};
         if (Button(ub, "Abdocken  [F]", 22 * s, true, interactive)) undock = true;
@@ -352,9 +357,13 @@ bool DrawDockPanel(World& w, bool interactive) {
             bool afford = cost >= 0 && w.balance >= cost;
             std::string bl = maxed ? std::string("MAXIMUM") : TextFormat("[%d]  %s Pkt.", t + 1, Num(cost).c_str());
             Rectangle b{row.x + row.width - 230 * s, row.y + 14 * s, 214 * s, 50 * s};
-            bool click = Button(b, bl, 22 * s, false, afford && interactive);
-            if (interactive && afford && (click || IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t)))) {
+            bool buyHover = false;
+            bool click = Button(b, bl, 22 * s, false, afford && interactive, &buyHover);
+            bool keyBuy = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t));
+            if (interactive && afford && (click || keyBuy)) {
                 if (w.BuyUpgrade(t)) w.Notify(TextFormat("%s auf Stufe %d verbessert!", names[t], w.upgrades[t]), GOOD);
+            } else if (interactive && !afford && (keyBuy || (buyHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))) {
+                g_audio.Play(Sfx::Denied);
             }
             y += 90 * s;
         }

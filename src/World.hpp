@@ -1,6 +1,7 @@
 #pragma once
 #include "raylib.h"
 #include "raymath.h"
+#include "Audio.hpp"
 #include "Config.hpp"
 #include <random>
 #include <string>
@@ -173,6 +174,7 @@ public:
     bool PlayerAlive() const { return !Player().crashing && !Player().dead; }
 
     void Notify(const std::string& text, Color c = WHITE);
+    void SoundAt(Sfx id, Vector3 pos, float volume = 1.0f, float delay = 0.0f);
 
     // --- Rendering (Render.cpp) ---------------------------------------------
     void Draw(const Camera3D& cam) const;
@@ -221,6 +223,7 @@ public:
     bool wantAutosave = false;
 
     std::vector<Notice> notices;
+    std::vector<SoundEvent> sounds; // wird von main.cpp abgespielt und geleert
 
     // Modell-IDs (beim Start aufgelöst)
     struct Models {

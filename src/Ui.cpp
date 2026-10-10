@@ -1,4 +1,5 @@
 #include "Ui.hpp"
+#include "Audio.hpp"
 #include <cmath>
 #include <cstdio>
 
@@ -105,6 +106,7 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
     if (selected < 0 || selected >= n || !isEnabled(selected)) {
         for (int i = 0; i < n; ++i) if (isEnabled(i)) { selected = i; break; }
     }
+    const int before = selected;
     if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
         for (int k = 1; k <= n; ++k) {
             int i = (selected + k) % n;
@@ -127,6 +129,7 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
     if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
         if (isEnabled(selected)) chosen = selected;
     }
+    if (selected != before) g_audio.Play(Sfx::UiMove);
     return chosen;
 }
 

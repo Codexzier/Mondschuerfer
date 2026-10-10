@@ -1,7 +1,8 @@
 # Mondschürfer
 
 Ein kleines 3D-Weltraumspiel in C++ (raylib), gebaut ausschließlich mit den Modellen
-aus dem **Kenney Space Kit**. Du fliegst ein Raumschiff über die Mondoberfläche, suchst
+aus dem **Kenney Space Kit** und vertont mit den Kenney-Paketen **Sci-Fi Sounds** und
+**Interface Sounds**. Du fliegst ein Raumschiff über die Mondoberfläche, suchst
 mit dem Scanner nach Kristallen, baust sie ab, verkaufst sie an der Handelsstation und
 rüstest dein Schiff in der Werft auf. Piraten machen dir dabei das Leben schwer.
 
@@ -64,6 +65,7 @@ cmake --build build
 | Mausrad | Zoom |
 | ESC / P | Pause |
 | H | Steuerung einblenden |
+| M | Ton an / aus |
 | F11 | Vollbild |
 
 Ein Gamepad wird ebenfalls unterstützt (linker Stick, A = Feuer, X = Scanner, Y = Abbauen/Andocken).
@@ -104,6 +106,20 @@ Alle Balancing-Werte (Preise, Upgrades, Gegner, Ausbaustufen ...) stehen in `src
 
 ---
 
+## Ton
+
+Schüsse, Treffer, Explosionen, Scanner, Abbau, Andocken, Stationen und Menüs haben eigene
+Soundeffekte. Triebwerk, Schub, Scanner und Abbau laufen als Dauergeräusch, bei kritischem
+Schild ertönt ein Warnton. Geräusche anderer Schiffe werden mit der Entfernung leiser und
+kommen von links oder rechts. Die Hintergrund-Simulation im Hauptmenü bleibt stumm.
+
+Welche Datei zu welchem Ereignis gehört, steht in der Tabelle `kSfx` (und `kLoops`) in
+`src/Audio.cpp`. Dort lassen sich Dateien, Lautstärke und Tonhöhen-Variation anpassen.
+Einträge mit dem Kommentar *Notlösung* sind mit dem nächstbesten Ton belegt, weil die beiden
+Pakete nichts wirklich Passendes enthalten. Ohne Audiogerät läuft das Spiel stumm weiter.
+
+---
+
 ## Projektstruktur
 
 ```
@@ -111,7 +127,9 @@ Mondschuerfer/
 ├── CMakeLists.txt        CMake-Projekt (lädt raylib 5.5 automatisch)
 ├── assets/
 │   ├── models/*.glb      Alle 153 Modelle des Kenney Space Kit (unverändert)
-│   └── Kenney_SpaceKit_License.txt
+│   ├── sounds/scifi/     Kenney Sci-Fi Sounds (73 Dateien, unverändert)
+│   ├── sounds/interface/ Kenney Interface Sounds (100 Dateien, unverändert)
+│   └── Kenney_*_License.txt
 └── src/
     ├── main.cpp          Fenster, Menüs, Spielzustände, Kamera
     ├── Config.hpp        Balancing
@@ -122,6 +140,7 @@ Mondschuerfer/
     ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
     ├── Ui.cpp/.hpp       UI-Bausteine
     ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
+    ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Zuordnung Ereignis -> Datei
     └── Save.cpp/.hpp     Spielstand
 ```
 
@@ -141,4 +160,6 @@ Laden in Mondgrau umgefärbt.
 ## Lizenzen
 
 - Grafik: **Kenney Space Kit** von Kenney (www.kenney.nl), CC0 1.0 (siehe `assets/Kenney_SpaceKit_License.txt`)
+- Ton: **Kenney Sci-Fi Sounds** und **Kenney Interface Sounds** von Kenney (www.kenney.nl), CC0 1.0
+  (siehe `assets/Kenney_SciFiSounds_License.txt` und `assets/Kenney_InterfaceSounds_License.txt`)
 - Bibliothek: **raylib** von Ramon Santamaria, zlib-Lizenz
