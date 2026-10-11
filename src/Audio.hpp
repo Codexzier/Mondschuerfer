@@ -5,29 +5,9 @@
 
 // Soundeffekte aus den Kenney-Paketen "Sci-Fi Sounds" und "Interface Sounds".
 // Welche Datei zu welchem Ereignis gehört, steht in der Tabelle in Audio.cpp.
-enum class Sfx {
-    // Kampf
-    PlayerShot, EnemyShot, TurretShot, HitMetal, ShieldHit, ShipExplode, CrashBoom,
-    // Scanner
-    ScanOn, ScanOff, ScanEmpty, ScanPing, Discover,
-    // Abbau
-    MineStart, MineDone, MineAbort, CargoFull,
-    // Stationen
-    Dock, Undock, Sale, Repair, Upgrade, StationGrow, Victory, Denied,
-    // Warnung
-    LowShield,
-    // Menüs
-    UiMove, UiConfirm, UiBack, PauseOpen, PauseClose,
-    Count
-};
-
-// Ein Geräusch aus der Spiellogik. World sammelt sie, main.cpp spielt sie ab.
-struct SoundEvent {
-    Sfx id = Sfx::UiMove;
-    Vector3 pos{};
-    float volume = 1.0f;
-    float delay = 0.0f;  // Sekunden
-};
+// Die Liste der Effekte (enum class Sfx) und SoundEvent stehen in
+// shared/SoundEvents.hpp, weil auch die Spiellogik und der Server sie kennen.
+#include "SoundEvents.hpp"
 
 // Dauergeräusche, jedes Frame aus dem Spielzustand gesetzt (0 = aus, 1 = voll)
 struct LoopState {

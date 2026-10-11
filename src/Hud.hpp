@@ -4,9 +4,18 @@
 // Spieloberfläche während des Fluges
 void DrawHud(const World& w, const Camera3D& cam, bool simulation);
 
-// Stationsfenster. Liefert true, wenn abgedockt werden soll.
+// Was der Spieler im Stationsfenster angeklickt hat. Ausgeführt wird es vom
+// Aufrufer: im Einzelspieler direkt an der World, im Mehrspieler als Anfrage
+// an den Server.
+struct DockRequest {
+    bool undock = false;
+    bool repair = false;
+    int buy = -1;          // Upgrade-Typ (cfg::Upgrade) oder -1
+};
+
+// Stationsfenster des eigenen Spielers (w.Me()).
 // interactive = false im Simulationsmodus (nur Anzeige).
-bool DrawDockPanel(World& w, bool interactive);
+DockRequest DrawDockPanel(const World& w, bool interactive);
 
 // Endbildschirme: liefert true, wenn zurück ins Menü
 bool DrawGameOver(const World& w);

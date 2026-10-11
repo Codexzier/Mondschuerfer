@@ -1,6 +1,7 @@
 // Spielstand als einfache Textdatei neben der ausführbaren Datei.
 #include "Save.hpp"
 #include "Assets.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -47,13 +48,14 @@ bool SaveGame(const World& w) {
     std::ofstream f(SavePath(), std::ios::trunc);
     if (!f) return false;
     const Ship& p = w.Player();
+    const PlayerState& me = w.Me();
     f << kMagic << ' ' << kVersion << '\n';
     f << "seed " << w.seed << '\n';
-    f << "balance " << w.balance << '\n';
+    f << "balance " << me.balance << '\n';
     f << "delivered " << w.totalDelivered << '\n';
-    f << "upgrades " << w.upgrades[0] << ' ' << w.upgrades[1] << ' ' << w.upgrades[2] << ' ' << w.upgrades[3] << '\n';
-    f << "stats " << w.playTime << ' ' << w.kills << ' ' << w.nextId << '\n';
-    f << "scanner " << w.scanEnergy << '\n';
+    f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << '\n';
+    f << "stats " << me.playTime << ' ' << me.kills << ' ' << w.nextId << '\n';
+    f << "scanner " << me.scanEnergy << '\n';
     f << "player " << p.pos.x << ' ' << p.pos.z << ' ' << p.yaw << ' ' << p.hp << ' ' << p.cargo << '\n';
     for (const auto& d : w.deposits)
         f << "deposit " << d.id << ' ' << d.pos.x << ' ' << d.pos.z << ' ' << d.yaw << ' ' << d.scale << ' '
@@ -95,24 +97,26 @@ bool LoadGame(World& w) {
     w.NewGame(seed, false);
     w.deposits.clear();
     w.ships.resize(1);
-    w.notices.clear();
+    w.Me().notices.clear();
 
     f.clear();
     f.seekg(start);
     Ship& p = w.Player();
+    PlayerState& me = w.Me();
     while (std::getline(f, line)) {
         std::istringstream ls(line);
         std::string key;
         ls >> key;
-        if (key == "balance") ls >> w.balance;
+        if (key == "balance") ls >> me.balance;
         else if (key == "delivered") ls >> w.totalDelivered;
-        else if (key == "upgrades") ls >> w.upgrades[0] >> w.upgrades[1] >> w.upgrades[2] >> w.upgrades[3];
-        else if (key == "stats") ls >> w.playTime >> w.kills >> w.nextId;
-        else if (key == "scanner") ls >> w.scanEnergy;
+        else if (key == "upgrades") ls >> me.upgrades[0] >> me.upgrades[1] >> me.upgrades[2] >> me.upgrades[3];
+        else if (key == "stats") ls >> me.playTime >> me.kills >> w.nextId;
+        else if (key == "scanner") ls >> me.scanEnergy;
         else if (key == "player") {
             float hp = 0;
             ls >> p.pos.x >> p.pos.z >> p.yaw >> hp >> p.cargo;
-            w.ApplyUpgrades(true);
+            for (int& u : me.upgrades) u = std::clamp(u, 0, cfg::UPGRADE_LEVELS);
+            w.ApplyUpgrades(me, true);
             p.hp = hp;
         } else if (key == "deposit") {
             Deposit d;

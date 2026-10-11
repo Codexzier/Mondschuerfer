@@ -71,4 +71,10 @@ constexpr float ELITE_DAMAGE = 10.0f;      // auch Elite-Piraten: 10 Treffer = 1
 constexpr float STATION_SAFE_RADIUS = 34.0f; // Geschütztürme schützen die Stationen
 constexpr float TURRET_RANGE = 36.0f;
 
+// Mehrspieler (nur Server)
+constexpr float MP_RESPAWN_TIME = 4.0f;       // Sekunden bis zum neuen Raumschiff nach einem Absturz
+constexpr int MP_DEPOSITS_PER_PLAYER = 8;     // zusätzliche Lagerstätten je weiterem Spieler
+constexpr int MP_DEPOSITS_MAX = 240;          // Obergrenze für Lagerstätten auf der Karte
+constexpr float MP_SPAWN_DISTANCE = 24.0f;    // Abstand des neuen Schiffs zur Handelsstation
+
 } // namespace cfg

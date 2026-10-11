@@ -1,12 +1,9 @@
 // Verhalten der anderen Raumschiffe und der Autopilot für den Simulationsmodus.
 #include "World.hpp"
-#include "Assets.hpp"
 #include <algorithm>
 #include <cmath>
 
 namespace {
-
-float Dist2D(Vector3 a, Vector3 b) { return Vector2Distance({a.x, a.z}, {b.x, b.z}); }
 
 // Steuert ein Schiff auf einen Zielpunkt zu
 ShipInput SteerTo(const Ship& s, Vector3 target, float arrive, float throttle = 1.0f) {
@@ -74,8 +71,6 @@ void World::UpdateAi(Ship& s, float dt) {
     s.aggroT = std::max(0.0f, s.aggroT - dt);
     s.thinkT -= dt;
     s.aiTimer -= dt;
-    Ship& player = Player();
-    const bool playerAvailable = !player.crashing && !player.dead && !player.hidden && dockedAt < 0;
 
     if (s.faction == Faction::Pirate) {
         // ---------------- Pirat -------------------------------------------
@@ -85,7 +80,7 @@ void World::UpdateAi(Ship& s, float dt) {
             float bestScore = 1e9f;
             for (auto& o : ships) {
                 if (&o == &s || o.dead || o.crashing || o.hidden || o.faction == Faction::Pirate) continue;
-                if (o.kind == ShipKind::Player && !playerAvailable) continue;
+                if (o.kind == ShipKind::Player && !Targetable(o)) continue;   // z. B. angedockt
                 float d = Dist2D(o.pos, s.pos);
                 float range = cfg::PIRATE_AGGRO;
                 if (o.kind == ShipKind::Miner) range = 24.0f;
@@ -106,7 +101,7 @@ void World::UpdateAi(Ship& s, float dt) {
 
         if (s.ai == AiState::Attack) {
             Ship* t = FindShip(s.targetShip);
-            if (!t || t->crashing || t->hidden || (t->kind == ShipKind::Player && !playerAvailable)) {
+            if (!t || t->crashing || t->hidden || (t->kind == ShipKind::Player && !Targetable(*t))) {
                 s.ai = AiState::Wander;
                 s.aiTimer = 0.0f;
             } else {
@@ -145,7 +140,7 @@ void World::UpdateAi(Ship& s, float dt) {
         switch (s.ai) {
             case AiState::Attack: {
                 Ship* t = FindShip(s.targetShip);
-                bool lost = !t || t->crashing || t->hidden || (t->kind == ShipKind::Player && !playerAvailable) ||
+                bool lost = !t || t->crashing || t->hidden || (t->kind == ShipKind::Player && !Targetable(*t)) ||
                             Dist2D(s.pos, t->pos) > 60.0f || s.aggroT <= 0.0f;
                 if (lost) {
                     s.ai = s.cargo >= s.cargoMax * 0.8f ? AiState::GoSell : AiState::GoMine;
@@ -156,8 +151,10 @@ void World::UpdateAi(Ship& s, float dt) {
                 break;
             }
             case AiState::Flee: {
-                in = SteerTo(s, stations[0].pos, 8.0f, 1.0f);
-                if (s.aiTimer <= 0.0f || Dist2D(s.pos, stations[0].pos) < cfg::STATION_SAFE_RADIUS * 0.6f)
+                // Zur nächsten Handelsstation fliehen (dort schützen die Geschütztürme)
+                const Vector3 home = stations[std::max(0, NearestStation(s.pos, StationType::Trade))].pos;
+                in = SteerTo(s, home, 8.0f, 1.0f);
+                if (s.aiTimer <= 0.0f || Dist2D(s.pos, home) < cfg::STATION_SAFE_RADIUS * 0.6f)
                     s.ai = AiState::GoSell;
                 break;
             }
@@ -206,9 +203,11 @@ void World::UpdateAi(Ship& s, float dt) {
                 break;
             }
             case AiState::GoSell: {
-                in = SteerTo(s, stations[0].pos, 6.0f, 0.85f);
-                if (Dist2D(s.pos, stations[0].pos) < 10.0f) {
+                const int home = std::max(0, NearestStation(s.pos, StationType::Trade));
+                in = SteerTo(s, stations[home].pos, 6.0f, 0.85f);
+                if (Dist2D(s.pos, stations[home].pos) < 10.0f) {
                     s.ai = AiState::Docked;
+                    s.station = home;
                     s.hidden = true;
                     s.aiTimer = Rand(4.0f, 9.0f);
                     s.cargo = 0;
@@ -219,9 +218,12 @@ void World::UpdateAi(Ship& s, float dt) {
             case AiState::Docked: {
                 if (s.aiTimer <= 0.0f) {
                     s.hidden = false;
+                    int home = s.station;
+                    if (home < 0 || home >= static_cast<int>(stations.size())) home = std::max(0, NearestStation(s.pos, StationType::Trade));
+                    const Vector3 hp = stations[home].pos;
                     float a = Rand(0, 2 * PI);
-                    s.pos = {stations[0].pos.x + cosf(a) * 13.0f, cfg::SHIP_ALTITUDE, stations[0].pos.z + sinf(a) * 13.0f};
-                    s.yaw = YawTowards(stations[0].pos, s.pos);
+                    s.pos = {hp.x + cosf(a) * 13.0f, cfg::SHIP_ALTITUDE, hp.z + sinf(a) * 13.0f};
+                    s.yaw = YawTowards(hp, s.pos);
                     s.ai = AiState::GoMine;
                     s.targetDeposit = -1;
                 }
@@ -267,14 +269,16 @@ int CheapestUpgrade(const World& w, long long budget) {
 void ResetAutopilot() { g_ap = AutopilotState{}; }
 
 void AutopilotDockActions(World& w) {
-    if (w.dockedAt == 0) {
+    PlayerState& me = w.Me();
+    if (me.dockedAt < 0) return;
+    if (w.stations[me.dockedAt].type == StationType::Trade) {
         w.Repair();
-    } else if (w.dockedAt == 1) {
+    } else {
         for (int i = 0; i < 8; ++i) {
-            int t = CheapestUpgrade(w, w.balance - 300);
+            int t = CheapestUpgrade(w, me.balance - 300);
             if (t < 0 || !w.BuyUpgrade(t)) break;
             static const char* names[4] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager"};
-            w.Notify(TextFormat("Autopilot kauft: %s Stufe %d", names[t], w.upgrades[t]), Color{255, 210, 130, 255});
+            w.Notify(Fmt("Autopilot kauft: %s Stufe %d", names[t], me.upgrades[t]), Color{255, 210, 130, 255});
         }
     }
 }
@@ -282,7 +286,8 @@ void AutopilotDockActions(World& w) {
 ShipInput AutopilotInput(World& w, float dt) {
     ShipInput in;
     Ship& p = w.Player();
-    if (p.crashing || p.dead || p.hidden || w.dockedAt >= 0) return in;
+    PlayerState& me = w.Me();
+    if (p.crashing || p.dead || p.hidden || me.dockedAt >= 0) return in;
     g_ap.interactCd -= dt;
     g_ap.exploreT -= dt;
 
@@ -291,7 +296,9 @@ ShipInput AutopilotInput(World& w, float dt) {
         in.thrust = s.thrust;
         in.turn = s.turn;
     };
-    auto dock = [&](int station) {
+    // Andocken an der nächsten Station des gewünschten Typs
+    auto dock = [&](StationType type) {
+        const int station = std::max(0, w.NearestStation(p.pos, type));
         go(w.stations[station].pos, 4.0f);
         if (w.NearStation(station, cfg::DOCK_RANGE - 3.0f) && g_ap.interactCd <= 0.0f) {
             in.interact = true;
@@ -312,14 +319,14 @@ ShipInput AutopilotInput(World& w, float dt) {
     const float shield = p.hp / p.maxHp;
     if (threat) {
         if (shield < 0.35f) {
-            if (w.mining) { in.interact = true; return in; } // Abbau abbrechen
-            dock(0);
+            if (me.mining) { in.interact = true; return in; } // Abbau abbrechen
+            dock(StationType::Trade);
             return in;
         }
-        if (w.mining && threatD > 16.0f) {
+        if (me.mining && threatD > 16.0f) {
             // weiter abbauen, aber Gegner im Blick behalten
         } else {
-            if (w.mining) in.interact = true;
+            if (me.mining) in.interact = true;
             Vector3 lead = LeadPoint(p, *threat);
             float desired = YawTowards(p.pos, lead);
             float diff = AngleDiff(p.yaw, desired);
@@ -330,15 +337,15 @@ ShipInput AutopilotInput(World& w, float dt) {
         }
     }
 
-    if (w.mining) return in; // warten, bis das Lager gefüllt ist
+    if (me.mining) return in; // warten, bis das Lager gefüllt ist
 
     // --- Reparieren / Verkaufen ------------------------------------------------
-    if (shield < 0.6f && w.balance >= 50) { dock(0); return in; }
-    if (p.cargo >= p.cargoMax * 0.95f) { dock(0); return in; }
+    if (shield < 0.6f && me.balance >= 50) { dock(StationType::Trade); return in; }
+    if (p.cargo >= p.cargoMax * 0.95f) { dock(StationType::Trade); return in; }
 
     // --- Aufrüsten ---------------------------------------------------------------
-    if (w.balance < cfg::GOAL_POINTS - 2000 && CheapestUpgrade(w, w.balance - 300) >= 0) {
-        dock(1);
+    if (me.balance < cfg::GOAL_POINTS - 2000 && CheapestUpgrade(w, me.balance - 300) >= 0) {
+        dock(StationType::Shipyard);
         return in;
     }
 
@@ -372,6 +379,6 @@ ShipInput AutopilotInput(World& w, float dt) {
         g_ap.hasExplore = true;
     }
     go(g_ap.explore, 4.0f, 1.0f);
-    if (!w.scanOn && w.scanEnergy >= cfg::SCANNER_MAX_ENERGY - 0.01f) in.scanToggle = true;
+    if (!me.scanOn && me.scanEnergy >= cfg::SCANNER_MAX_ENERGY - 0.01f) in.scanToggle = true;
     return in;
 }

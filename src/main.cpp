@@ -141,10 +141,10 @@ private:
         if (opt_.deliver >= 0) { world_.totalDelivered = opt_.deliver; world_.lastStage = world_.StationStage(); }
         if (opt_.hasPos) { world_.Player().pos.x = opt_.posX; world_.Player().pos.z = opt_.posZ; }
         if (opt_.zoom > 0.0f) zoom_ = opt_.zoom;
-        if (opt_.scan) { world_.scanOn = true; }
+        if (opt_.scan) { world_.Me().scanOn = true; }
         if (opt_.thrustTest) world_.Player().yaw = -PI * 0.5f;
         if (opt_.hp > 0.0f) world_.Player().hp = opt_.hp;
-        if (opt_.balance >= 0) world_.balance = opt_.balance;
+        if (opt_.balance >= 0) world_.Me().balance = opt_.balance;
         for (int i = 0; i < opt_.pirates; ++i) {
             Ship pr = world_.MakeShip(ShipKind::Pirate, Vector3Add(world_.Player().pos, {-20.0f + i * 6.0f, 0, -22.0f}));
             pr.ai = AiState::Wander;
@@ -152,7 +152,7 @@ private:
         }
         camTarget_ = world_.Player().pos;
         if (opt_.mode == "dock0") { world_.Player().cargo = 240; world_.Dock(0); }
-        if (opt_.mode == "dock1") { world_.balance = 4200; world_.Dock(1); }
+        if (opt_.mode == "dock1") { world_.Me().balance = 4200; world_.Dock(1); }
         dockFrames_ = 0;
     }
 
@@ -190,7 +190,7 @@ private:
     // ------------------------------------------------------------------------
     // Gemeinsame Logik für den Autopiloten (Menü-Hintergrund und Simulation)
     void StepAutopilot(float dt) {
-        if (world_.dockedAt >= 0) {
+        if (world_.Me().dockedAt >= 0) {
             if (simDock_ == 0.0f) AutopilotDockActions(world_);
             simDock_ += dt;
             world_.UpdateAmbient(dt);
@@ -239,7 +239,7 @@ private:
             if (!endHandled_) { DeleteSave(); endHandled_ = true; }
             return;
         }
-        if (world_.dockedAt >= 0) {
+        if (world_.Me().dockedAt >= 0) {
             world_.UpdateAmbient(dt);
             ++dockFrames_;
         } else {
@@ -269,12 +269,13 @@ private:
         if (screen_ == Screen::Playing || screen_ == Screen::Simulation) {
             for (const auto& e : world_.sounds) g_audio.PlayAt(e, camTarget_);
             const Ship& p = world_.Player();
-            if (world_.PlayerAlive() && !p.hidden && world_.dockedAt < 0 && world_.outcome == Outcome::None) {
+            const PlayerState& me = world_.Me();
+            if (world_.PlayerAlive() && !p.hidden && me.dockedAt < 0 && world_.outcome == Outcome::None) {
                 loops.engine = 1.0f;
                 loops.enginePitch = 0.9f + 0.25f * Vector3Length(p.vel) / std::max(1.0f, p.maxSpeed);
                 loops.thrust = p.thrustVisual;
-                loops.scanner = world_.scanOn ? 1.0f : 0.0f;
-                loops.mining = world_.mining ? 1.0f : 0.0f;
+                loops.scanner = me.scanOn ? 1.0f : 0.0f;
+                loops.mining = me.mining ? 1.0f : 0.0f;
                 loops.alarm = p.hp / p.maxHp < 0.3f;
             }
         }
@@ -379,9 +380,12 @@ private:
             return;
         }
         DrawHud(world_, cam_, false);
-        if (world_.dockedAt >= 0) {
-            bool undock = DrawDockPanel(world_, dockFrames_ > 1);
-            if (undock) {
+        if (world_.Me().dockedAt >= 0) {
+            // Das Stationsfenster meldet nur, was angeklickt wurde; ausgeführt wird es hier
+            DockRequest req = DrawDockPanel(world_, dockFrames_ > 1);
+            if (req.repair) world_.Repair();
+            if (req.buy >= 0) world_.BuyUpgrade(req.buy);
+            if (req.undock) {
                 world_.Undock();
                 if (world_.outcome == Outcome::None) SaveGame(world_);
             }
@@ -410,7 +414,7 @@ private:
         const float s = Scale();
         const float W = static_cast<float>(GetScreenWidth());
         DrawHud(world_, cam_, true);
-        if (world_.dockedAt >= 0 && world_.outcome == Outcome::None) DrawDockPanel(world_, false);
+        if (world_.Me().dockedAt >= 0 && world_.outcome == Outcome::None) DrawDockPanel(world_, false);
         DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(52 * s), Color{10, 12, 20, 200});
         TextCentered("SIMULATION  -  der Autopilot spielt.  Beliebige Taste: zurück zum Menü", W * 0.5f, 15 * s, 22 * s, ACCENT);
         if (world_.outcome == Outcome::Won) DrawVictory(world_);
@@ -433,9 +437,9 @@ private:
             int pirates = 0;
             for (const auto& sh : world_.ships) if (sh.faction == Faction::Pirate && !sh.dead) ++pirates;
             fprintf(stderr, "REPORT t=%.0f play=%.0f bal=%lld deliv=%lld stage=%d upg=%d%d%d%d hp=%.0f/%.0f cargo=%d/%d kills=%d pirates=%d deps=%d revealed=%d wrecks=%d outcome=%d\n",
-                     elapsed_, world_.playTime, world_.balance, world_.totalDelivered, world_.StationStage(), world_.upgrades[0],
-                     world_.upgrades[1], world_.upgrades[2], world_.upgrades[3], p.hp, p.maxHp, p.cargo, p.cargoMax,
-                     world_.kills, pirates, static_cast<int>(world_.deposits.size()),
+                     elapsed_, world_.Me().playTime, world_.Me().balance, world_.totalDelivered, world_.StationStage(),
+                     world_.Me().upgrades[0], world_.Me().upgrades[1], world_.Me().upgrades[2], world_.Me().upgrades[3], p.hp,
+                     p.maxHp, p.cargo, p.cargoMax, world_.Me().kills, pirates, static_cast<int>(world_.deposits.size()),
                      static_cast<int>(std::count_if(world_.deposits.begin(), world_.deposits.end(), [](const Deposit& d) { return d.revealed; })),
                      static_cast<int>(world_.wrecks.size()), static_cast<int>(world_.outcome));
             fflush(stderr);

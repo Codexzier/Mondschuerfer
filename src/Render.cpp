@@ -7,8 +7,6 @@
 
 namespace {
 
-float Dist2D(Vector3 a, Vector3 b) { return Vector2Distance({a.x, a.z}, {b.x, b.z}); }
-
 // Flacher Ring auf dem Boden (beidseitig sichtbar)
 void DrawGroundRing(Vector3 c, float rIn, float rOut, Color col, int segments = 64, float y = 0.12f) {
     rlBegin(RL_TRIANGLES);
@@ -69,12 +67,16 @@ float EaseOutBack(float t) {
 void World::Draw(const Camera3D& cam) const {
     g_assets.SetCamera(cam.position);
     const Vector3 focus = cam.target;
-    const float cullR = 115.0f;
+    const float cullR = drawRange;
     const Ship& player = Player();
+    const PlayerState& me = Me();
+    const bool orangeMoon = g_assets.GetMoonColor() == MoonColor::Orange;
 
     // --- Boden --------------------------------------------------------------
-    g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), Color{120, 120, 128, 255});
-    g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, cfg::WORLD_HALF * 2.0f + 30.0f), Color{176, 176, 184, 255});
+    // Beim orangefarbenen Mond (Originalfarbe) den Boden kaum abdunkeln
+    g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), orangeMoon ? Color{150, 140, 136, 255} : Color{120, 120, 128, 255});
+    g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, cfg::WORLD_HALF * 2.0f + 30.0f),
+                  orangeMoon ? Color{225, 218, 214, 255} : Color{176, 176, 184, 255});
 
     // --- Dekoration -----------------------------------------------------------
     for (const auto& d : decos) {
@@ -89,15 +91,15 @@ void World::Draw(const Camera3D& cam) const {
     }
 
     // --- Stationen ------------------------------------------------------------
-    for (int si = 0; si < 2; ++si) {
-        const Station& st = stations[si];
+    for (const Station& st : stations) {
         if (Dist2D(st.pos, focus) > cullR + 30.0f) continue;
-        int stage = si == 0 ? StationStage() : 0;
+        const bool trade = st.type == StationType::Trade;
+        int stage = trade ? StationStage() : 0;
         for (const auto& p : st.parts) {
             if (p.stage > stage) continue;
             float scale = p.scale;
             Vector3 off = p.offset;
-            if (si == 0 && p.stage == lastStage && stageAnim > 0.0f && p.stage > 0) {
+            if (trade && p.stage == lastStage && stageAnim > 0.0f && p.stage > 0) {
                 float t = std::clamp(1.0f - stageAnim * 1.4f, 0.0f, 1.0f);
                 float k = EaseOutBack(t);
                 scale *= std::max(0.001f, k);
@@ -163,30 +165,33 @@ void World::Draw(const Camera3D& cam) const {
     if (!player.dead && !player.hidden && !player.crashing)
         DrawGroundRing(player.pos, 1.7f, 1.95f, Color{255, 170, 60, 130}, 40);
     for (const auto& s : ships) {
-        if (s.dead || s.hidden || s.crashing || s.kind == ShipKind::Player) continue;
+        if (s.dead || s.hidden || s.crashing || &s == &player) continue;
         if (Dist2D(s.pos, focus) > cullR) continue;
-        if (s.faction == Faction::Pirate || s.hostileToPlayer)
+        if (s.kind == ShipKind::Player)   // andere Spieler (Mehrspieler)
+            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{110, 240, 170, 130}, 32);
+        else if (s.faction == Faction::Pirate || s.hostileToPlayer)
             DrawGroundRing(s.pos, 1.7f, 1.95f, Color{255, 70, 60, 150}, 32);
         else
             DrawGroundRing(s.pos, 1.7f, 1.9f, Color{120, 200, 255, 100}, 32);
     }
 
     // Andockbereich der Stationen
-    for (int si = 0; si < 2; ++si) {
-        float d = Dist2D(player.pos, stations[si].pos);
+    for (const Station& st : stations) {
+        if (player.hidden) break;
+        float d = Dist2D(player.pos, st.pos);
         if (d < 55.0f) {
             float a = std::clamp((55.0f - d) / 25.0f, 0.0f, 1.0f);
-            Color c = si == 0 ? Color{255, 190, 80, static_cast<unsigned char>(120 * a)}
-                              : Color{120, 210, 255, static_cast<unsigned char>(120 * a)};
-            DrawDashedRing(stations[si].pos, cfg::DOCK_RANGE, 0.35f, c, 28, time * 0.15f);
+            Color c = st.type == StationType::Trade ? Color{255, 190, 80, static_cast<unsigned char>(120 * a)}
+                                                    : Color{120, 210, 255, static_cast<unsigned char>(120 * a)};
+            DrawDashedRing(st.pos, cfg::DOCK_RANGE, 0.35f, c, 28, time * 0.15f);
         }
     }
 
     BeginBlendMode(BLEND_ADDITIVE);
 
     // Scanner
-    if (scanOn && !player.crashing) {
-        float f = fmodf(scanPulse, cfg::SCANNER_PULSE_TIME) / cfg::SCANNER_PULSE_TIME;
+    if (me.scanOn && !player.crashing && !player.hidden) {
+        float f = fmodf(me.scanPulse, cfg::SCANNER_PULSE_TIME) / cfg::SCANNER_PULSE_TIME;
         float r = cfg::SCANNER_RADIUS * f;
         unsigned char a = static_cast<unsigned char>(200 * (1.0f - f * 0.7f));
         DrawGroundRing(player.pos, std::max(0.0f, r - 0.9f), r, Color{60, 255, 180, a}, 96);
@@ -213,15 +218,16 @@ void World::Draw(const Camera3D& cam) const {
         DrawCylinderEx({from.x, from.y - 0.3f, from.z}, {to.x, 0.8f, to.z}, w, w * 1.8f, 8, Color{60, 255, 170, 150});
         DrawCylinderEx({from.x, from.y - 0.3f, from.z}, {to.x, 0.8f, to.z}, w * 2.5f, w * 4.0f, 8, Color{30, 140, 90, 60});
     };
-    if (mining && !player.crashing) {
+    if (me.mining && !player.crashing && !player.hidden) {
         Vector3 t{};
         bool ok = false;
-        for (const auto& d : deposits) if (mineKind == 1 && d.id == mineId) { t = d.pos; ok = true; }
-        for (const auto& w : wrecks) if (mineKind == 2 && w.id == mineId) { t = w.pos; ok = true; }
+        for (const auto& d : deposits) if (me.mineKind == 1 && d.id == me.mineId) { t = d.pos; ok = true; }
+        for (const auto& w : wrecks) if (me.mineKind == 2 && w.id == me.mineId) { t = w.pos; ok = true; }
         if (ok) beam(player.pos, t);
     }
+    // Abbaustrahlen der anderen Schiffe (Händler und, im Mehrspieler, andere Spieler)
     for (const auto& s : ships) {
-        if (s.kind != ShipKind::Player && s.mining && !s.hidden && Dist2D(s.pos, focus) < cullR) beam(s.pos, s.mineTarget);
+        if (&s != &player && s.mining && !s.hidden && Dist2D(s.pos, focus) < cullR) beam(s.pos, s.mineTarget);
     }
 
     // Triebwerke
