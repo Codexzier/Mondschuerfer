@@ -27,10 +27,18 @@ void Sanitize(GameSettings& s) {
     std::string clean;
     for (unsigned char c : s.serverName)
         if (c >= 32 && c != 127) clean.push_back(static_cast<char>(c));
-    if (clean.size() > static_cast<size_t>(limits::MAX_SERVER_NAME)) clean.resize(limits::MAX_SERVER_NAME);
-    // Keine halben UTF-8-Zeichen am Ende stehen lassen
-    while (!clean.empty() && (static_cast<unsigned char>(clean.back()) & 0xC0) == 0x80) clean.pop_back();
-    if (!clean.empty() && (static_cast<unsigned char>(clean.back()) & 0xC0) == 0xC0) clean.pop_back();
+    if (clean.size() > static_cast<size_t>(limits::MAX_SERVER_NAME)) {
+        clean.resize(limits::MAX_SERVER_NAME);
+        // Beim Kürzen kein halbes UTF-8-Zeichen (z. B. halbes "ü") am Ende stehen lassen:
+        // Anfang der letzten Bytefolge suchen und prüfen, ob sie vollständig ist.
+        size_t k = clean.size();
+        while (k > 0 && (static_cast<unsigned char>(clean[k - 1]) & 0xC0) == 0x80) --k;
+        if (k > 0) {
+            const unsigned char lead = static_cast<unsigned char>(clean[k - 1]);
+            const size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+            if (clean.size() - (k - 1) < need) clean.resize(k - 1);
+        }
+    }
     if (clean.empty()) clean = "Mondschürfer-Server";
     s.serverName = clean;
 }
