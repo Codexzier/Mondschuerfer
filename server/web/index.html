@@ -265,17 +265,20 @@
                     </div>
                     <div class="hw">
                         <!-- HARDWARE-EMPFEHLUNG -->
-                        <!-- Vorläufige Werte (siehe DESIGN / server/README.md). Nach einem Benchmark auf dem
-                             Zielsystem hier anpassen. Dies ist die einzige Stelle dieser Tabelle in der Seite. -->
+                        <!-- Grundlage: Messung mit --benchmark 64 und einem Netzwerk-Lasttest auf einem x86-Server.
+                             Die Rechenzeit liegt bei ca. 1 % des Budgets; begrenzend ist der Upload
+                             (ca. 9 KB/s pro Spieler bei 16, ca. 20-26 KB/s bei 64 Spielern).
+                             Raspberry-Pi-Werte sind daraus geschätzt, nicht auf einem Pi gemessen.
+                             Dies ist die einzige Stelle dieser Tabelle in der Seite. -->
                         <table class="hw-table">
                             <caption>Empfehlung nach Hardware</caption>
                             <thead>
                             <tr><th scope="col">System</th><th scope="col" class="num">Empf. max. Spieler</th><th scope="col">Bemerkung</th></tr>
                             </thead>
                             <tbody>
-                            <tr><td>Raspberry Pi 4 (4 GB)</td><td class="num">16</td><td>im LAN per Kabel; über WLAN eher 8–12</td></tr>
-                            <tr><td>Raspberry Pi 5</td><td class="num">32</td><td class="hw-none">–</td></tr>
-                            <tr><td>AMD Ryzen 5 / Intel Core i5 (ab ca. 2018) oder besser</td><td class="num">64 (Obergrenze)</td><td class="hw-none">–</td></tr>
+                            <tr><td>Raspberry Pi 4 (4 GB)</td><td class="num">24</td><td>per LAN-Kabel; über WLAN eher 8–12; Upload ca. 2,5 Mbit/s</td></tr>
+                            <tr><td>Raspberry Pi 5</td><td class="num">48</td><td>Upload ca. 8 Mbit/s</td></tr>
+                            <tr><td>AMD Ryzen 5 / Intel Core i5 (ab ca. 2018) oder besser</td><td class="num">64 (Obergrenze)</td><td>Upload ca. 12–15 Mbit/s</td></tr>
                             </tbody>
                         </table>
                         <!-- /HARDWARE-EMPFEHLUNG -->
