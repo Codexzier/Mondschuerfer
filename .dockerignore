@@ -1,0 +1,46 @@
+# =============================================================================
+# .dockerignore – was beim "docker build" NICHT an Docker geschickt wird
+#
+# Beim Bauen packt Docker den ganzen "Kontext" (hier: den Hauptordner, siehe
+# docker-compose.yml) ein und schickt ihn an den Docker-Dienst. Ohne diese
+# Datei wären das auch assets/ (Modelle und Töne, viele MB), Build-Ordner und
+# das komplette .git-Verzeichnis – langsam, und es könnten private Dateien
+# (z. B. .env mit dem Admin-Passwort) im Build landen.
+#
+# Vorgehen "erst alles verbieten, dann gezielt erlauben":
+#   *        schließt alles im Hauptordner aus (und damit alles darunter)
+#   !name    nimmt eine Datei / einen Ordner wieder auf
+# Die Regeln gelten der Reihe nach; bei mehreren passenden gewinnt die LETZTE.
+# Gebraucht werden nur die Dateien, die server/Dockerfile kopiert.
+# =============================================================================
+
+# 1. Alles ausschließen
+*
+
+# 2. Nur das, was der Server zum Bauen braucht, wieder erlauben
+!CMakeLists.txt
+!shared/
+!server/
+!third_party/
+
+# 3. Innerhalb der erlaubten Ordner wieder ausschließen, was nicht gebraucht wird
+#    oder nur den Build-Cache unnötig ungültig machen würde (eine Änderung an
+#    der Doku soll nicht den ganzen Server neu übersetzen):
+#    - Build-Ordner, falls jemand innerhalb dieser Ordner gebaut hat
+**/build/
+**/build-*/
+**/cmake-build-*/
+**/CMakeCache.txt
+**/CMakeFiles/
+#    - Dokumentation und Docker-Dateien des Servers selbst
+server/README.md
+server/Dockerfile
+server/Caddyfile
+#    - lokale Datenordner/Geheimnisse, falls sie dort jemand anlegt
+**/data/
+**/.env
+#    - Editor- und Systemdateien
+**/.idea/
+**/.vscode/
+**/*.swp
+**/.DS_Store

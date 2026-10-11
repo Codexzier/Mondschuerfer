@@ -11,6 +11,10 @@ using namespace ui;
 
 namespace {
 
+// Rechte obere Ecke, die Randpfeile meiden (siehe SetHudRightReserve). 0 = Standard.
+float g_rightReserveW = 0.0f;
+float g_rightReserveBottom = 0.0f;
+
 void StatBar(float x, float y, float w, const char* label, const std::string& value, float frac, Color col) {
     const float s = Scale();
     Text(label, x, y, 20 * s, MUTED);
@@ -48,7 +52,9 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
         float k = std::min(kx, ky);
         Vector2 e = Vector2Add(c, Vector2Scale(d, k));
         if (e.x < 400 * s && e.y < 340 * s) e.y = 340 * s;              // nicht unter das Statusfenster
-        if (e.x > W - 260 * s && e.y < 300 * s) e.y = 300 * s;          // nicht unter die Minikarte
+        const float rw = g_rightReserveW > 0.0f ? g_rightReserveW : 260 * s;
+        const float rb = g_rightReserveBottom > 0.0f ? g_rightReserveBottom : 300 * s;
+        if (e.x > W - rw && e.y < rb) e.y = rb;                          // nicht unter die Minikarte
         float ang = atan2f(d.y, d.x);
         Vector2 tip{e.x + cosf(ang) * 14 * s, e.y + sinf(ang) * 14 * s};
         Vector2 l{e.x + cosf(ang + 2.5f) * 12 * s, e.y + sinf(ang + 2.5f) * 12 * s};
@@ -97,7 +103,10 @@ void Minimap(const World& w) {
         DrawRectangleLinesEx({m.x - 7 * s, m.y - 7 * s, 14 * s, 14 * s}, 1, c);
     }
     for (const auto& sh : w.ships) {
-        if (sh.dead || sh.hidden || sh.kind == ShipKind::Player) continue;
+        // Das eigene Schiff zeichnet unten der weiße Pfeil. (Früher wurde hier jedes
+        // Spielerschiff übersprungen – im Mehrspieler fehlten dadurch die anderen
+        // Spieler; im Einzelspieler gibt es nur das eigene, dort ändert sich nichts.)
+        if (sh.dead || sh.hidden || &sh == &p) continue;
         if (Dist2D(sh.pos, p.pos) > 90.0f) continue;
         Vector2 m = map(sh.pos);
         Color c = (sh.faction == Faction::Pirate || sh.hostileToPlayer) ? BAD
@@ -128,6 +137,11 @@ void Minimap(const World& w) {
 }
 
 } // namespace
+
+void SetHudRightReserve(float width, float bottom) {
+    g_rightReserveW = width;
+    g_rightReserveBottom = bottom;
+}
 
 void DrawControls(float x, float y, float size) {
     const char* keys[] = {"W / S", "A / D", "Leertaste", "E", "F", "Mausrad", "ESC", "M"};

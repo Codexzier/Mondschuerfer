@@ -2,12 +2,20 @@
 //
 // Steuerung: W/S Schub, A/D drehen, Leertaste schießen, E Scanner, F abbauen/andocken,
 //            Mausrad Zoom, ESC Pause, M Ton an/aus, F11 Vollbild.
+//
+// Aufbau: Die Klasse App kennt die Bildschirme (Screen) Hauptmenü, Einzelspiel,
+// Pause, Simulation und Mehrspieler. Die Einzelspieler-Bildschirme rechnet sie
+// selbst mit einer lokalen World. Für den Mehrspieler erzeugt sie ein
+// MultiplayerScreen-Objekt (src/Multiplayer.hpp) und gibt ihm jedes Frame
+// Update, Kamera, Zeichnen und Ton ab; es lebt nur, solange man im
+// Mehrspieler ist (Verbindung, Spiegelwelt, Menüs).
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "Assets.hpp"
 #include "Audio.hpp"
 #include "Hud.hpp"
+#include "Multiplayer.hpp"
 #include "Save.hpp"
 #include "Ui.hpp"
 #include "World.hpp"
@@ -17,13 +25,14 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <memory>
 #include <string>
 
 using namespace ui;
 
 namespace {
 
-enum class Screen { Menu, Playing, Paused, Simulation };
+enum class Screen { Menu, Playing, Paused, Simulation, Multiplayer };
 
 // Optionen für automatisierte Tests (Kommandozeile), im normalen Spiel ohne Bedeutung
 struct TestOptions {
@@ -40,6 +49,7 @@ struct TestOptions {
     float zoom = 0.0f;
     bool scan = false;
     bool hasCam = false;
+    int winW = 1600, winH = 900;   // --size B H: Fenstergröße (Tests der Bildschirmaufteilung, z. B. 960 540)
     Vector3 camPos{}, camTarget{};
     bool noHud = false;
     bool noRender = false;
@@ -48,6 +58,10 @@ struct TestOptions {
     int pirates = 0;
     float hp = -1.0f;
     long long balance = -1;
+    // Mehrspieler (--mp-connect ADRESSE startet direkt im Mehrspieler-Bildschirm,
+    // --mp-name/--mp-pass melden automatisch an, --mp-register legt das Konto an,
+    // --mp-spectate schaut zu, --mp-autopilot lässt den Autopiloten fliegen)
+    MultiplayerOptions mp;
 };
 
 ShipInput ReadPlayerInput() {
@@ -80,7 +94,8 @@ public:
     void Start() {
         hasSave_ = SaveExists();
         StartBackground();
-        if (opt_.mode == "sim") StartSimulation();
+        if (!opt_.mp.connect.empty()) EnterMultiplayer(opt_.mp);
+        else if (opt_.mode == "sim") StartSimulation();
         else if (opt_.mode == "game" || opt_.mode == "dock0" || opt_.mode == "dock1" || opt_.mode == "pause") {
             NewGame();
             if (opt_.mode == "pause") screen_ = Screen::Paused;
@@ -93,18 +108,29 @@ public:
         elapsed_ += dt;
         ui::BeginFrame();
         if (IsKeyPressed(KEY_F11)) ToggleBorderlessWindowed();
-        if (IsKeyPressed(KEY_M)) {
+        // M schaltet überall den Ton um – außer während in einem Textfeld
+        // (Mehrspieler: Name, Adresse) getippt wird, dann ist M ein Buchstabe.
+        if (IsKeyPressed(KEY_M) && !ui::TextInputActive()) {
             g_audio.ToggleMute();
             if (screen_ == Screen::Playing) world_.Notify(g_audio.Muted() ? "Ton aus  [M]" : "Ton an  [M]", MUTED);
+            if (screen_ == Screen::Multiplayer && mp_) mp_->OnMuteToggled(g_audio.Muted());
         }
         float wheel = GetMouseWheelMove();
-        if (wheel != 0.0f && screen_ != Screen::Menu) zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
+        if (wheel != 0.0f && screen_ != Screen::Menu && screen_ != Screen::Multiplayer)   // Mehrspieler zoomt selbst
+            zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
 
         switch (screen_) {
             case Screen::Menu: UpdateMenuWorld(dt); break;
             case Screen::Playing: UpdatePlaying(dt); break;
             case Screen::Paused: ++pauseFrames_; break;
             case Screen::Simulation: UpdateSimulation(dt); break;
+            case Screen::Multiplayer:
+                // Netzwerk, Eingaben und Kamera des Mehrspielers. Will der Spieler
+                // zurück ins Hauptmenü, wird das Objekt in BackToMenu zerstört
+                // (das trennt die Verbindung).
+                mp_->Update(dt);
+                if (mp_->WantsMenu()) BackToMenu();
+                break;
         }
         UpdateCamera(dt);
         UpdateAudio(dt);
@@ -116,6 +142,7 @@ public:
 
     // Beim Schließen des Fensters automatisch speichern
     void OnExit() {
+        mp_.reset();   // Mehrspieler: beim Server abmelden (er speichert den Fortschritt)
         if ((screen_ == Screen::Playing || screen_ == Screen::Paused) && world_.outcome == Outcome::None &&
             world_.PlayerAlive())
             SaveGame(world_);
@@ -179,8 +206,19 @@ private:
         simStarted_ = elapsed_;
     }
 
+    // Mehrspieler-Bildschirm öffnen. opt enthält nur bei Testläufen etwas
+    // (--mp-connect ...); aus dem Hauptmenü heraus ist es leer.
+    void EnterMultiplayer(const MultiplayerOptions& opt) {
+        mp_ = std::make_unique<MultiplayerScreen>(opt);
+        screen_ = Screen::Multiplayer;
+    }
+
     void BackToMenu() {
         g_audio.Play(Sfx::UiBack);
+        if (mp_) {
+            mp_.reset();                               // trennt die Verbindung
+            g_assets.SetMoonColor(MoonColor::Grey);    // Einzelspieler: immer grauer Mond
+        }
         hasSave_ = SaveExists();
         screen_ = Screen::Menu;
         menuSel_ = 0;
@@ -265,6 +303,12 @@ private:
     // Geräusche der Spielwelt abspielen und Dauergeräusche steuern.
     // Die Hintergrund-Simulation im Hauptmenü bleibt stumm.
     void UpdateAudio(float dt) {
+        if (screen_ == Screen::Multiplayer) {
+            // Töne des Mehrspielers kommen vom Server (über NetClient)
+            world_.sounds.clear();
+            mp_->UpdateAudio(dt);
+            return;
+        }
         LoopState loops;
         if (screen_ == Screen::Playing || screen_ == Screen::Simulation) {
             for (const auto& e : world_.sounds) g_audio.PlayAt(e, camTarget_);
@@ -285,6 +329,7 @@ private:
 
     // ------------------------------------------------------------------------
     void UpdateCamera(float dt) {
+        if (screen_ == Screen::Multiplayer) return;   // eigene Kameras in MultiplayerScreen::Update
         const Ship& p = world_.Player();
         Vector3 target = p.pos;
         target.y = 0.0f;
@@ -314,6 +359,14 @@ private:
 
     // ------------------------------------------------------------------------
     void Draw() {
+        if (screen_ == Screen::Multiplayer) {
+            // Der Mehrspieler zeichnet alles selbst (3D-Welt, HUD, Menüs)
+            BeginDrawing();
+            ClearBackground(Color{14, 17, 26, 255});
+            mp_->Draw();
+            EndDrawing();
+            return;
+        }
         BeginDrawing();
         ClearBackground(Color{14, 17, 26, 255});
         BeginMode3D(cam_);
@@ -329,6 +382,7 @@ private:
                 DrawPause();
                 break;
             case Screen::Simulation: DrawSimulation(); break;
+            case Screen::Multiplayer: break;   // oben behandelt
         }
         EndDrawing();
     }
@@ -338,25 +392,28 @@ private:
         const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
         DrawRectangleGradientH(0, 0, static_cast<int>(W * 0.55f), static_cast<int>(H), Color{10, 12, 20, 235},
                                Color{10, 12, 20, 0});
+        // Fünf Knöpfe: etwas höher anfangen und etwas flacher als früher (vier
+        // Knöpfe), damit auch bei 960x540 alles über die Fußzeile passt.
         float x = 90 * s;
-        float y = H * 0.16f;
+        float y = H * 0.12f;
         Text("MONDSCHÜRFER", x, y, 80 * s, ACCENT);
         Text("Kristallabbau über der Mondoberfläche", x + 4 * s, y + 92 * s, 26 * s, TEXT);
 
-        std::vector<std::string> items = {"Neues Spiel", "Fortsetzen", "Simulation (spielt selbst)", "Beenden"};
-        std::vector<bool> enabled = {true, hasSave_, true, true};
-        float bw = 420 * s, bh = 60 * s;
-        int choice = ButtonList(items, enabled, menuSel_, x + bw * 0.5f, y + 170 * s, bw, bh, 16 * s, 28 * s);
-        if (choice >= 0 && choice <= 2) g_audio.Play(Sfx::UiConfirm);
+        std::vector<std::string> items = {"Neues Spiel", "Fortsetzen", "Mehrspieler", "Simulation (spielt selbst)", "Beenden"};
+        std::vector<bool> enabled = {true, hasSave_, true, true, true};
+        float bw = 420 * s, bh = 54 * s, gap = 12 * s;
+        int choice = ButtonList(items, enabled, menuSel_, x + bw * 0.5f, y + 160 * s, bw, bh, gap, 26 * s);
+        if (choice >= 0 && choice <= 3) g_audio.Play(Sfx::UiConfirm);
         switch (choice) {
             case 0: NewGame(); break;
             case 1: Continue(); break;
-            case 2: StartSimulation(); break;
-            case 3: quit_ = true; break;
+            case 2: EnterMultiplayer(MultiplayerOptions{}); break;
+            case 3: StartSimulation(); break;
+            case 4: quit_ = true; break;
             default: break;
         }
 
-        float iy = y + 170 * s + 4 * (bh + 16 * s) + 30 * s;
+        float iy = y + 160 * s + 5 * (bh + gap) + 24 * s;
         const char* info[] = {
             "Scanne den Mond nach Kristallen, baue sie ab und verkaufe sie an der Handelsstation.",
             "Rüste dein Schiff in der Werft auf. Vorsicht vor Piraten!",
@@ -431,7 +488,12 @@ private:
             lastShot_ = elapsed_;
             TakeScreenshot(TextFormat("seq_%03d.png", shotIndex_++));
         }
-        if (opt_.report && elapsed_ - lastReport_ >= 10.0f) {
+        if (opt_.report && elapsed_ - lastReport_ >= 10.0f && screen_ == Screen::Multiplayer && mp_) {
+            // Mehrspieler-Testlauf: Zustand des Mehrspielers statt der Menü-Welt
+            lastReport_ = elapsed_;
+            fprintf(stderr, "%s\n", mp_->Report().c_str());
+            fflush(stderr);
+        } else if (opt_.report && elapsed_ - lastReport_ >= 10.0f) {
             lastReport_ = elapsed_;
             const Ship& p = world_.Player();
             int pirates = 0;
@@ -449,6 +511,7 @@ private:
 
     TestOptions opt_;
     World world_;
+    std::unique_ptr<MultiplayerScreen> mp_;   // nur im Mehrspieler vorhanden
     Screen screen_ = Screen::Menu;
     Camera3D cam_{};
     Vector3 camTarget_{};
@@ -495,6 +558,13 @@ int main(int argc, char** argv) {
         else if (a == "--pirates") opt.pirates = atoi(next().c_str());
         else if (a == "--hp") opt.hp = static_cast<float>(atof(next().c_str()));
         else if (a == "--balance") opt.balance = atoll(next().c_str());
+        else if (a == "--mp-connect") opt.mp.connect = next();
+        else if (a == "--mp-name") opt.mp.name = next();
+        else if (a == "--mp-pass") opt.mp.password = next();
+        else if (a == "--mp-register") opt.mp.registerAccount = true;
+        else if (a == "--mp-spectate") opt.mp.spectate = true;
+        else if (a == "--mp-autopilot") opt.mp.autopilot = true;
+        else if (a == "--size") { opt.winW = std::max(960, atoi(next().c_str())); opt.winH = std::max(540, atoi(next().c_str())); }
         else if (a == "--cam") {
             opt.hasCam = true;
             opt.camPos.x = static_cast<float>(atof(next().c_str())); opt.camPos.y = static_cast<float>(atof(next().c_str())); opt.camPos.z = static_cast<float>(atof(next().c_str()));
@@ -504,7 +574,7 @@ int main(int argc, char** argv) {
 
     SetTraceLogLevel(LOG_ERROR);
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
-    InitWindow(1600, 900, "Mondschürfer - Kenney Space Kit");
+    InitWindow(opt.winW, opt.winH, "Mondschürfer - Kenney Space Kit");
     SetWindowMinSize(960, 540);
     SetExitKey(KEY_NULL);
     SetTargetFPS(144);

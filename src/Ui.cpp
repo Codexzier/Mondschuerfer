@@ -1,5 +1,13 @@
+// ---------------------------------------------------------------------------
+// Ui.cpp: einfache 2D-Bausteine für Menüs und HUD (Texte, Panels, Balken,
+// Knöpfe, Knopflisten, Textfelder). Alles im "immediate mode": Jede Funktion
+// zeichnet sofort und wertet dabei Maus/Tastatur des aktuellen Frames aus.
+// Benutzt von main.cpp, Hud.cpp und Multiplayer.cpp (nur im Spiel-Thread,
+// zwischen BeginDrawing und EndDrawing). Größen skalieren mit Scale().
+// ---------------------------------------------------------------------------
 #include "Ui.hpp"
 #include "Audio.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -7,11 +15,19 @@ namespace ui {
 
 namespace {
 double g_lastMouseMove = -10.0;
+// Textfeld-Fokus: TextField::Draw setzt "thisFrame", BeginFrame schiebt den
+// Wert nach "lastFrame". Abgefragt wird der Wert des VORIGEN Frames, weil
+// main.cpp Tasten wie M schon am Anfang des Frames auswertet – bevor die
+// Textfelder dieses Frames gezeichnet wurden.
+bool g_textFocusThisFrame = false;
+bool g_textFocusLastFrame = false;
 }
 
 void BeginFrame() {
     Vector2 d = GetMouseDelta();
     if (d.x != 0.0f || d.y != 0.0f || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_lastMouseMove = GetTime();
+    g_textFocusLastFrame = g_textFocusThisFrame;
+    g_textFocusThisFrame = false;
 }
 
 static bool MouseActive() { return GetTime() - g_lastMouseMove < 2.0; }
@@ -132,6 +148,150 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
     if (selected != before) g_audio.Play(Sfx::UiMove);
     return chosen;
 }
+
+// ===========================================================================
+// Textfeld
+// ===========================================================================
+int Utf8Length(const std::string& s) {
+    // In UTF-8 beginnt jedes Zeichen mit einem Byte, das NICHT die Form
+    // 10xxxxxx hat; Folgebytes haben genau diese Form. Also zählen wir nur
+    // die Anfangsbytes.
+    int n = 0;
+    for (char ch : s)
+        if ((static_cast<unsigned char>(ch) & 0xC0) != 0x80) ++n;
+    return n;
+}
+
+namespace {
+
+// Letztes Zeichen (mitsamt seinen UTF-8-Folgebytes) entfernen
+void PopUtf8(std::string& s) {
+    while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+    if (!s.empty()) s.pop_back();
+}
+
+// Ein Zeichen anhängen, wenn es erlaubt ist und noch Platz ist. true = angehängt.
+bool AppendCodepoint(TextField& f, int cp) {
+    if (cp < 32 || cp == 127) return false;                  // Steuerzeichen (Tab, Enter ...) nie
+    if (f.accept && !f.accept(cp)) return false;
+    if (Utf8Length(f.text) >= f.maxChars) return false;
+    int len = 0;
+    const char* bytes = CodepointToUTF8(cp, &len);           // raylib: Codepoint -> UTF-8 (statischer Puffer)
+    f.text.append(bytes, static_cast<size_t>(len));
+    return true;
+}
+
+} // namespace
+
+bool TextField::Draw(Rectangle r, float size, bool enabled) {
+    // --- Fokus per Maus ------------------------------------------------------
+    if (enabled && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) focused = CheckCollisionPointRec(GetMousePosition(), r);
+
+    // Gesperrt (enabled = false): Fokus bleibt gemerkt, aber es wird nichts
+    // eingegeben – nach dem Entsperren kann man gleich weitertippen.
+    const bool active = focused && enabled;
+    bool submit = false;
+    if (active) {
+        g_textFocusThisFrame = true;
+
+        // --- Getippte Zeichen ------------------------------------------------
+        // GetCharPressed liefert jedes Zeichen, das das Betriebssystem seit dem
+        // letzten Frame gemeldet hat (mit Tastaturlayout, Umschalt, AltGr ...),
+        // eins pro Aufruf, 0 = Warteschlange leer.
+        for (int cp = GetCharPressed(); cp > 0; cp = GetCharPressed())
+            if (AppendCodepoint(*this, cp)) lastEdit = GetTime();
+
+        // --- Rücktaste mit Wiederholung ---------------------------------------
+        // Erster Druck löscht sofort; wer die Taste hält, löscht nach 0,45 s
+        // Wartezeit alle 0,04 s ein weiteres Zeichen (wie in Textprogrammen).
+        if (IsKeyPressed(KEY_BACKSPACE)) {
+            PopUtf8(text);
+            repeatT = 0.45f;
+            lastEdit = GetTime();
+        } else if (IsKeyDown(KEY_BACKSPACE)) {
+            repeatT -= GetFrameTime();
+            if (repeatT <= 0.0f) {
+                PopUtf8(text);
+                repeatT = 0.04f;
+                lastEdit = GetTime();
+            }
+        }
+
+        // --- Einfügen: Strg+V (macOS: Cmd+V) ------------------------------------
+        const bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) || IsKeyDown(KEY_LEFT_SUPER) ||
+                          IsKeyDown(KEY_RIGHT_SUPER);
+        if (ctrl && IsKeyPressed(KEY_V)) {
+            const char* clip = GetClipboardText();   // kann nullptr sein (leere Zwischenablage)
+            if (clip) {
+                // Zeichen für Zeichen dekodieren; beim ersten Zeilenumbruch aufhören
+                // (aus einer Datei kopierte Adresse mit '\n' am Ende).
+                for (const char* p = clip; *p;) {
+                    int len = 0;
+                    const int cp = GetCodepointNext(p, &len);
+                    if (len <= 0) break;
+                    p += len;
+                    if (cp == '\n' || cp == '\r') break;
+                    AppendCodepoint(*this, cp);
+                }
+                lastEdit = GetTime();
+            }
+        }
+
+        submit = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
+    }
+
+    // --- Zeichnen ---------------------------------------------------------------
+    const float s = Scale();
+    Color fill = enabled ? Color{15, 18, 24, 235} : Color{24, 27, 34, 200};
+    Color border = active ? ACCENT : Color{90, 100, 120, 255};
+    DrawRectangleRec(r, fill);
+    DrawRectangleLinesEx(r, Px(2.0f) < 1 ? 1 : Px(2.0f), border);
+
+    const float pad = 12 * s;
+    const float ty = r.y + (r.height - size) * 0.5f;
+    if (text.empty()) {
+        if (!placeholder.empty()) Text(placeholder, r.x + pad, ty, size, Color{110, 117, 134, 255}, false);
+    }
+
+    // Anzeigetext: beim Passwort ein * pro Zeichen. Ist er breiter als das
+    // Feld, wird vorne abgeschnitten, damit das Ende (wo getippt wird) sichtbar
+    // bleibt.
+    std::string shown = password ? std::string(static_cast<size_t>(Utf8Length(text)), '*') : text;
+    const float avail = r.width - 2 * pad - size * 0.4f;
+    while (!shown.empty() && Width(shown, size) > avail) {
+        // erstes Zeichen samt UTF-8-Folgebytes entfernen
+        size_t cut = 1;
+        while (cut < shown.size() && (static_cast<unsigned char>(shown[cut]) & 0xC0) == 0x80) ++cut;
+        shown.erase(0, cut);
+    }
+    if (!shown.empty()) Text(shown, r.x + pad, ty, size, enabled ? TEXT : MUTED, false);
+
+    // Blinkender Cursor (Strich hinter dem Text): 0,5 s an, 0,5 s aus. Nach
+    // einer Eingabe beginnt der Takt neu, damit der Cursor beim Tippen sichtbar ist.
+    if (active) {
+        const double phase = fmod(GetTime() - lastEdit, 1.0);
+        if (phase < 0.5) {
+            const float cx = r.x + pad + (shown.empty() ? 0.0f : Width(shown, size) + size * 0.08f);
+            const float cw = std::max(1.0f, size / 12.0f);
+            DrawRectangleRec({cx, ty - size * 0.05f, cw, size * 1.05f}, ACCENT);
+        }
+    }
+    return submit;
+}
+
+void CycleFocus(const std::vector<TextField*>& fields) {
+    if (fields.empty() || !IsKeyPressed(KEY_TAB)) return;
+    const int n = static_cast<int>(fields.size());
+    int cur = -1;
+    for (int i = 0; i < n; ++i) if (fields[i]->focused) cur = i;
+    const bool back = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    int next = cur < 0 ? 0 : (cur + (back ? n - 1 : 1)) % n;
+    for (int i = 0; i < n; ++i) fields[i]->focused = (i == next);
+    fields[next]->lastEdit = GetTime();   // Cursor sofort sichtbar
+    g_audio.Play(Sfx::UiMove);
+}
+
+bool TextInputActive() { return g_textFocusLastFrame; }
 
 std::string Num(long long v) {
     bool neg = v < 0;

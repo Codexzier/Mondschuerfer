@@ -1,0 +1,55 @@
+# =============================================================================
+# Caddyfile – OPTIONALER HTTPS-Vorbau für die Verwaltungsseite
+#
+# Wird nur benutzt, wenn der Dienst "caddy" läuft, also mit
+#     docker compose --profile online up -d --build
+# (siehe docker-compose.yml und server/README.md, Abschnitt "Sicherheit").
+#
+# Was ist Caddy?
+#   Ein Webserver, der sich selbst um HTTPS-Zertifikate kümmert. Er holt für
+#   die Domain in DOMAIN automatisch ein kostenloses Zertifikat bei Let's
+#   Encrypt, verlängert es rechtzeitig und leitet http:// auf https:// um.
+#
+# Ablauf einer Anfrage:
+#   Browser --HTTPS (verschlüsselt)--> Caddy :443 --HTTP (nur im internen
+#   Docker-Netz)--> server:8080 (Mondschürfer-Verwaltungsseite)
+#   Die Anmeldung (Benutzername/Passwort) prüft weiterhin der Mondschürfer-
+#   Server selbst; Caddy sorgt nur für die Verschlüsselung unterwegs.
+#
+# {$DOMAIN} wird beim Start durch die Umgebungsvariable DOMAIN ersetzt
+# (gesetzt in .env, weitergereicht in docker-compose.yml).
+# =============================================================================
+
+# Globale Einstellungen
+{
+	# Caddys eigene Verwaltungs-Schnittstelle (sonst Port 2019 im Container)
+	# wird nicht gebraucht: Die Konfiguration ändert sich nur durch einen
+	# Neustart des Containers. Was nicht läuft, kann nicht angegriffen werden.
+	admin off
+
+	# Optional: E-Mail-Adresse für Let's Encrypt (Warnungen, falls ein
+	# Zertifikat einmal nicht verlängert werden kann). Raute entfernen und
+	# Adresse eintragen:
+	# email du@example.org
+}
+
+# Die Website für DOMAIN
+{$DOMAIN} {
+	# Alles an den Mondschürfer-Server weiterreichen. "server" ist der Name des
+	# Dienstes in docker-compose.yml; Docker löst ihn im internen Netz auf.
+	# Caddy gibt den ursprünglichen Host-Header unverändert weiter – das ist
+	# wichtig, denn der Server vergleicht ihn bei Änderungen (POST) mit dem
+	# Origin-Header des Browsers (Schutz gegen Cross-Site-Request-Forgery).
+	reverse_proxy server:8080
+
+	# Antworten komprimieren (die Statusabfrage alle 2 s wird kleiner)
+	encode zstd gzip
+
+	header {
+		# HSTS: Der Browser merkt sich ein Jahr lang, diese Domain NUR noch
+		# über HTTPS aufzurufen – auch wenn jemand http:// eintippt.
+		Strict-Transport-Security "max-age=31536000"
+		# Nicht verraten, welche Server-Software läuft
+		-Server
+	}
+}
