@@ -2,3 +2,6 @@ cmake-build-*/
 build/
 .idea/
 mondschuerfer_spielstand.txt
+mondschuerfer_client.txt
+data/
+.env
