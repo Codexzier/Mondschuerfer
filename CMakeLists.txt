@@ -83,6 +83,7 @@ add_executable(Mondschuerfer
         src/NetClient.cpp
         src/Multiplayer.cpp
         src/ClientConfig.cpp
+        src/Options.cpp
         ${MONDSCHUERFER_SHARED_SOURCES}
 )
 
@@ -143,7 +144,7 @@ if (APPLE)
     target_link_libraries(Mondschuerfer PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
 endif ()
 
-# Assets (Kenney Space Kit, Sci-Fi Sounds, Interface Sounds) neben die ausfuehrbare Datei kopieren
+# Assets (Kenney Space Kit, Sci-Fi Sounds, Interface Sounds, Musik) neben die ausfuehrbare Datei kopieren
 add_custom_command(TARGET Mondschuerfer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/assets

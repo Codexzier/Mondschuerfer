@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // Ui.cpp: einfache 2D-Bausteine für Menüs und HUD (Texte, Panels, Balken,
-// Knöpfe, Knopflisten, Textfelder). Alles im "immediate mode": Jede Funktion
-// zeichnet sofort und wertet dabei Maus/Tastatur des aktuellen Frames aus.
-// Benutzt von main.cpp, Hud.cpp und Multiplayer.cpp (nur im Spiel-Thread,
-// zwischen BeginDrawing und EndDrawing). Größen skalieren mit Scale().
+// Knöpfe, Knopflisten, Schieberegler, Umschalter, Textfelder). Alles im
+// "immediate mode": Jede Funktion zeichnet sofort und wertet dabei
+// Maus/Tastatur des aktuellen Frames aus. Benutzt von main.cpp, Hud.cpp,
+// Multiplayer.cpp und Options.cpp (nur im Spiel-Thread, zwischen
+// BeginDrawing und EndDrawing). Größen skalieren mit Scale().
 //
 // Abhängigkeiten:
 //   - raylib: Zeichnen (DrawRectangle..., DrawTextEx), eingebaute Schrift
@@ -49,10 +50,16 @@ bool g_textFocusLastFrame = false;
 // Wird von main.cpp (App::Frame) als Erstes in jedem Frame aufgerufen.
 void BeginFrame() {
     Vector2 d = GetMouseDelta();
-    if (d.x != 0.0f || d.y != 0.0f || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_lastMouseMove = GetTime();
+    if (d.x != 0.0f || d.y != 0.0f || PointerPressed()) g_lastMouseMove = GetTime();
     g_textFocusLastFrame = g_textFocusThisFrame;
     g_textFocusThisFrame = false;
 }
+
+// Zeiger-Abfragen (Begründung in Ui.hpp). Heute nur die linke Maustaste.
+bool PointerPressed() { return IsMouseButtonPressed(MOUSE_BUTTON_LEFT); }
+bool PointerDown() { return IsMouseButtonDown(MOUSE_BUTTON_LEFT); }
+bool PointerReleased() { return IsMouseButtonReleased(MOUSE_BUTTON_LEFT); }
+bool BackPressed() { return IsKeyPressed(KEY_ESCAPE); }
 
 // "Benutzt der Spieler gerade die Maus?" – ja, wenn sie sich in den letzten
 // 2 s bewegt hat. Grund: Wer mit der Tastatur durch ein Menü geht, während der
@@ -168,7 +175,74 @@ bool Button(Rectangle r, const std::string& label, float size, bool focused, boo
     }
     // Text senkrecht mittig: Schrifthöhe = size, also (Knopfhöhe - size) / 2 Rand oben
     TextCentered(label, r.x + r.width * 0.5f, r.y + (r.height - size) * 0.5f, size, tc);
-    return enabled && hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    return enabled && hover && PointerPressed();
+}
+
+// Schieberegler (Beschreibung in Ui.hpp).
+// Aufbau, von hinten nach vorn gezeichnet:
+//   - Schiene: ein flaches Rechteck in der Mitte der Fläche (22 % der Höhe),
+//     links vom Griff orange gefüllt (der eingestellte Anteil),
+//   - Griff: ein Kreis an der Stelle des Werts.
+// Damit der Griff bei 0 und bei 1 nicht über den Rand hinausragt, läuft die
+// Schiene nur von x0 = links + Griffradius bis x1 = rechts - Griffradius.
+// Umrechnung Zeiger -> Wert: (Zeiger-x - x0) / (x1 - x0), also 0 am linken
+// und 1 am rechten Ende; danach aufs Raster runden: round(v / step) * step
+// (bei step 0,05: 0,437 -> round(8,74) = 9 -> 0,45).
+bool Slider(Rectangle r, float& value, bool& dragging, bool focused, float step) {
+    const Vector2 m = GetMousePosition();
+    const bool hover = CheckCollisionPointRec(m, r);
+    const float knobR = r.height * 0.32f;
+    const float x0 = r.x + knobR, x1 = r.x + r.width - knobR;
+
+    // Ziehen beginnt mit einem Klick IN die Fläche und endet, sobald der
+    // Zeiger losgelassen wird – egal, wo er dann ist.
+    if (hover && PointerPressed()) dragging = true;
+    if (dragging && !PointerDown()) dragging = false;
+
+    const float before = value;
+    if (dragging && x1 > x0) {
+        float v = (m.x - x0) / (x1 - x0);
+        if (step > 0.0f) v = roundf(v / step) * step;
+        value = v;
+    }
+    if (value < 0.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+
+    // --- Zeichnen ---------------------------------------------------------------
+    const bool hot = focused || dragging || (hover && MouseActive());
+    const float th = std::max(4.0f, r.height * 0.22f);
+    const Rectangle track{x0, r.y + (r.height - th) * 0.5f, x1 - x0, th};
+    DrawRectangleRec(track, Color{15, 18, 24, 235});
+    DrawRectangleRec({track.x, track.y, track.width * value, track.height}, hot ? ACCENT : ACCENT_DIM);
+    DrawRectangleLinesEx(track, 1.0f, Color{255, 255, 255, 40});
+    const Vector2 knob{x0 + (x1 - x0) * value, r.y + r.height * 0.5f};
+    DrawCircleV(knob, knobR, hot ? ACCENT : TEXT);
+    DrawCircleV(knob, knobR * 0.45f, Color{26, 31, 41, 255});   // dunkler Punkt in der Mitte
+    return value != before;
+}
+
+// Umschalter (Beschreibung in Ui.hpp): eine "Pille" (Rechteck mit
+// halbrunden Enden) mit einem runden Knopf darin. AN: grüne Pille, Knopf
+// rechts, Text "AN" links daneben. AUS: graue Pille, Knopf links, Text "AUS"
+// rechts. So erkennt man den Zustand an Farbe, Lage UND Text.
+// DrawRectangleRounded(r, roundness, segments, color): roundness 1 = die
+// kürzere Seite wird ganz zum Halbkreis; segments = aus wie vielen
+// Teilstücken eine Rundung gezeichnet wird (mehr = glatter).
+bool Toggle(Rectangle r, bool on, float size, bool focused) {
+    const bool hover = CheckCollisionPointRec(GetMousePosition(), r);
+    const bool hot = focused || (hover && MouseActive());
+    const Color fill = on ? Color{40, 130, 90, 255} : Color{50, 56, 70, 255};
+    DrawRectangleRounded(r, 1.0f, 16, fill);
+    DrawRectangleRoundedLinesEx(r, 1.0f, 16, Px(2.0f) < 1 ? 1 : Px(2.0f), hot ? ACCENT : Color{90, 100, 120, 255});
+    const float knobR = r.height * 0.36f;
+    const float pad = r.height * 0.5f;   // Mittelpunkt des Knopfs: eine halbe Höhe vom Rand
+    const Vector2 knob{on ? r.x + r.width - pad : r.x + pad, r.y + r.height * 0.5f};
+    DrawCircleV(knob, knobR, hot ? Color{255, 220, 170, 255} : TEXT);
+    // Text in der freien Hälfte, senkrecht mittig
+    const float ty = r.y + (r.height - size) * 0.5f;
+    if (on) TextCentered("AN", r.x + (r.width - pad) * 0.5f, ty, size, TEXT, false);
+    else TextCentered("AUS", r.x + pad + (r.width - pad) * 0.5f, ty, size, Color{200, 205, 215, 255}, false);
+    return hover && PointerPressed();
 }
 
 // Ablauf pro Frame:
@@ -269,7 +343,7 @@ bool AppendCodepoint(TextField& f, int cp) {
 // getipptes Zeichen schon in diesem Frame sichtbar ist.
 bool TextField::Draw(Rectangle r, float size, bool enabled) {
     // --- Fokus per Maus ------------------------------------------------------
-    if (enabled && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) focused = CheckCollisionPointRec(GetMousePosition(), r);
+    if (enabled && PointerPressed()) focused = CheckCollisionPointRec(GetMousePosition(), r);
 
     // Gesperrt (enabled = false): Fokus bleibt gemerkt, aber es wird nichts
     // eingegeben – nach dem Entsperren kann man gleich weitertippen.

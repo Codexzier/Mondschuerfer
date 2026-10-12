@@ -4,13 +4,16 @@
 //
 // Wofür ist die Datei da?
 //   Texte (mit Schatten, zentriert, rechtsbündig), Panels, Balken, Knöpfe,
-//   senkrechte Knopflisten, einzeilige Textfelder und zwei Zahlenformate
-//   (Tausenderpunkte, Uhrzeit). Dazu die Farbpalette des Spiels, angelehnt an
-//   den Stil der Kenney-Grafiken (dunkle Panels, orangefarbene Akzente).
+//   senkrechte Knopflisten, Schieberegler, Umschalter, einzeilige Textfelder
+//   und zwei Zahlenformate (Tausenderpunkte, Uhrzeit). Dazu die Farbpalette
+//   des Spiels, angelehnt an den Stil der Kenney-Grafiken (dunkle Panels,
+//   orangefarbene Akzente), und die Zeiger-Abfragen (PointerPressed ...),
+//   über die alle Bausteine wissen, ob geklickt wurde.
 //
 // Wer benutzt sie?
 //   src/main.cpp (Hauptmenü, Pause), src/Hud.cpp (HUD, Stationsfenster,
-//   Endbildschirme) und src/Multiplayer.cpp (Mehrspieler-Menüs, Anmeldung).
+//   Endbildschirme), src/Multiplayer.cpp (Mehrspieler-Menüs, Anmeldung) und
+//   src/Options.cpp (Optionen: Schieberegler, Umschalter).
 //
 // Abhängigkeiten:
 //   Nur raylib (Zeichnen, Maus, Tastatur, eingebaute Schrift) und für die
@@ -50,6 +53,21 @@ constexpr Color SHIELD{95, 175, 255, 255};      // Blau: Schildbalken
 constexpr Color SCAN{70, 230, 170, 255};        // Türkis: Scannerbalken
 
 void BeginFrame();                   // einmal pro Frame aufrufen (main.cpp, App::Frame)
+
+// ---------------------------------------------------------------------------
+// Zeiger-Abfragen: Alle Bausteine hier (Button, Slider, Toggle, TextField)
+// fragen Klicks nur über diese Funktionen ab, nie direkt bei raylib.
+// Heute ist der Zeiger die Maus mit der linken Taste. Soll später ein
+// weiteres Gerät wie ein Linksklick wirken (z. B. ein Controller-Knopf in den
+// Menüs), wird das an EINER Stelle hier ergänzt, und alle Knöpfe, Regler und
+// Schalter können es sofort.
+// ---------------------------------------------------------------------------
+bool PointerPressed();    // in diesem Frame heruntergedrückt (ein "Klick")
+bool PointerDown();       // wird gerade gehalten (z. B. Regler ziehen)
+bool PointerReleased();   // in diesem Frame losgelassen
+// "Zurück" in Menüs und Fenstern (heute: ESC). Gleiche Idee wie oben: eine
+// Stelle, an der später z. B. ein Controller-Knopf ergänzt werden kann.
+bool BackPressed();
 // Skalierungsfaktor für alle Pixelmaße: Die Oberfläche ist für 1500 x 900
 // Pixel entworfen. Ergebnis = min(Höhe / 900, Breite / 1500), aber nie
 // kleiner als 0,55 (sonst wird die Schrift unlesbar).
@@ -76,6 +94,30 @@ void Bar(Rectangle r, float frac, Color fill, Color back = Color{15, 18, 24, 220
 // Tastatur (Enter usw.) wertet Button NICHT aus; das macht der Aufrufer.
 bool Button(Rectangle r, const std::string& label, float size, bool focused, bool enabled = true,
             bool* hovered = nullptr);
+
+// Schieberegler für einen Wert 0..1 (Optionen: Musiklautstärke).
+//   r        Fläche des Reglers in Pixeln. Die Schiene liegt waagerecht in
+//            der Mitte, ein runder Griff zeigt den Wert. Die ganze Fläche
+//            ist anklickbar: Klick springt dorthin, Halten zieht weiter.
+//   value    der Wert; wird beim Ziehen verändert (bleibt immer 0..1)
+//   dragging gehört dem Aufrufer und muss über die Frames erhalten bleiben
+//            (wie selected bei ButtonList): true, solange der Zeiger den
+//            Regler zieht. So folgt der Griff auch dann noch, wenn der
+//            Zeiger beim Ziehen über den Rand der Fläche hinausgeht.
+//   focused  per Tastatur ausgewählt (Griff und Rahmen orange)
+//   step     Raster, auf das beim Ziehen gerundet wird (0,05 = 5-%-Schritte;
+//            0 = stufenlos)
+// Liefert true, wenn sich value in diesem Frame geändert hat. Wann das
+// Ziehen endet, sieht der Aufrufer daran, dass dragging von true auf false
+// wechselt (z. B. um erst dann zu speichern). Tastatur (Pfeiltasten) wertet
+// Slider NICHT aus – das macht der Aufrufer, genau wie bei Button.
+bool Slider(Rectangle r, float& value, bool& dragging, bool focused, float step = 0.05f);
+
+// Umschalter: ein Schalter mit "AN" bzw. "AUS" (Optionen: Musik an/aus).
+// on = aktueller Zustand, nur zum Zeichnen. Liefert true beim Anklicken; den
+// Zustand ändert der Aufrufer selbst (on = !on), genau wie bei Button.
+// size = Schrifthöhe von "AN"/"AUS"; focused = per Tastatur ausgewählt.
+bool Toggle(Rectangle r, bool on, float size, bool focused);
 
 // Senkrechte Knopfliste mit Tastatur- und Maussteuerung. Liefert gewählten Index oder -1.
 // selected: per Tastatur markierter Eintrag; gehört dem Aufrufer und muss

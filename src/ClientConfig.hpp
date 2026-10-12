@@ -1,12 +1,25 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// ClientConfig: kleine Einstellungsdatei des Spiels für den Mehrspieler.
+// ClientConfig: kleine Einstellungsdatei des Spiels (Mehrspieler und Musik).
 //
 // Wofür? Damit man die Serveradresse und den eigenen Spielernamen nicht bei
-// jedem Start neu eintippen muss. Das Mehrspieler-Menü (src/Multiplayer.cpp)
-// lädt die Datei beim Öffnen, füllt damit die Eingabefelder vor und speichert
-// sie wieder, sobald man auf "Verbinden" drückt bzw. sich erfolgreich
-// angemeldet hat.
+// jedem Start neu eintippen muss, und damit die Musik-Einstellungen aus den
+// Optionen (an/aus, Lautstärke) beim nächsten Start noch gelten.
+//
+// Wer benutzt sie?
+//   Es gibt genau ein Objekt: g_clientConfig (global, definiert in
+//   ClientConfig.cpp). main() lädt es einmal beim Start, noch vor dem
+//   Hauptmenü, und gibt die Musikwerte an g_audio weiter.
+//   - src/Multiplayer.cpp füllt damit die Eingabefelder vor und speichert,
+//     sobald man auf "Verbinden" drückt bzw. sich erfolgreich angemeldet hat.
+//   - src/Options.cpp ändert die Musikwerte und speichert sie.
+//   - src/main.cpp speichert beim Beenden noch einmal, falls eine Änderung
+//     noch nicht in der Datei steht (SaveIfChanged).
+//   Warum ein gemeinsames Objekt statt einer Kopie pro Bildschirm? Save()
+//   schreibt immer die GANZE Datei. Hätte der Mehrspieler eine eigene Kopie
+//   (gelesen beim Öffnen des Mehrspieler-Menüs), würde er beim Speichern der
+//   Serveradresse die alten Musikwerte zurückschreiben – und eine Änderung,
+//   die man danach in den Optionen der Mehrspieler-Pause gemacht hat, wäre weg.
 //
 // Wo liegt die Datei? Neben der ausführbaren Datei (wie der Spielstand in
 // Save.cpp): GetApplicationDirectory() + "mondschuerfer_client.txt".
@@ -14,8 +27,11 @@
 // Format: einfache Textdatei, eine Einstellung pro Zeile, "Schlüssel Wert":
 //     server 192.168.1.20:7777
 //     name Anna
+//     music 1
+//     music_volume 0.50
 // Unbekannte Zeilen werden ignoriert (so bleiben ältere Spielversionen mit
-// neueren Dateien verträglich).
+// neueren Dateien verträglich). Fehlende Zeilen behalten ihren Standardwert
+// (z. B. eine Datei aus der Zeit vor den Musik-Einstellungen).
 //
 // WICHTIG: Das Passwort wird NIE gespeichert. Es existiert nur im Speicher,
 // solange das Anmeldefenster offen ist, und wird auch nicht zum Server
@@ -29,6 +45,13 @@
 struct ClientConfig {
     std::string server = "localhost:7777";   // zuletzt benutzte Serveradresse ("Host" oder "Host:Port")
     std::string name;                         // zuletzt erfolgreich angemeldeter Spielername
+    bool musicEnabled = true;                 // Optionen: Musik an/aus           (Zeile "music 1|0")
+    float musicVolume = 0.5f;                 // Optionen: Musiklautstärke 0..1   (Zeile "music_volume 0.50")
+
+    // Steht NICHT in der Datei: true, wenn ein Wert geändert, aber noch nicht
+    // gespeichert wurde. Setzt, wer ändert, ohne gleich zu speichern (die
+    // Optionen beim Ziehen des Lautstärkereglers); Save() löscht es wieder.
+    bool unsaved = false;
 
     // Vollständiger Pfad der Datei (neben der .exe)
     static std::string Path();
@@ -39,5 +62,14 @@ struct ClientConfig {
 
     // Schreibt die Datei neu. false, wenn sie nicht geschrieben werden konnte
     // (z. B. Spielordner schreibgeschützt) – das Spiel läuft trotzdem weiter.
-    bool Save() const;
+    // Bei Erfolg wird unsaved zurückgesetzt.
+    bool Save();
+
+    // Speichert nur, wenn unsaved gesetzt ist (Optionen schließen, Spielende).
+    void SaveIfChanged() {
+        if (unsaved) Save();
+    }
 };
+
+// Die Einstellungen des Spiels (definiert in ClientConfig.cpp, geladen in main()).
+extern ClientConfig g_clientConfig;

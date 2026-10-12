@@ -14,7 +14,7 @@
 //
 // Unterzustände (Phase), in dieser Reihenfolge durchlaufen:
 //
-//   Address     Serveradresse eingeben (vorbelegt aus ClientConfig) und
+//   Address     Serveradresse eingeben (vorbelegt aus g_clientConfig) und
 //               verbinden. Fehler (Server nicht erreichbar ...) stehen in
 //               der Statuszeile.
 //      |  NetClient meldet NetState::Lobby (ServerInfo empfangen)
@@ -30,6 +30,9 @@
 //      |                 Playing: Spiel wie im Einzelspieler, zusätzlich
 //      |                 "Beste Piloten", Namen über fremden Schiffen,
 //      |                 Anzeige nach Absturz, Abschlussanimation beim Ziel.
+//      |                 Pause (ESC) mit Weiterspielen / Optionen / Abmelden;
+//      |                 die Optionen (OptionsScreen) liegen wie die Pause
+//      |                 über dem Spiel, das auf dem Server weiterläuft.
 //
 //   Verbindungsverlust in irgendeiner Phase -> zurück zu Address mit Fehlertext.
 //
@@ -37,11 +40,16 @@
 // NetClient arbeitet seine Netzwerkpakete innerhalb von NetClient::Update ab,
 // das hier einmal pro Frame aufgerufen wird – es gibt keinen zweiten Thread.
 //
-// Abhängigkeiten: NetClient, ClientConfig, World (shared/), Ui, Hud, Audio,
+// Musik: In Address, Lobby und Login läuft die Menümusik, in Playing und
+// Spectating die Spielmusik (UpdateAudio, siehe Audio.hpp).
+//
+// Abhängigkeiten: NetClient, ClientConfig (das gemeinsame g_clientConfig),
+// Options (Optionen in der Pause), World (shared/), Ui, Hud, Audio,
 // Assets (Mondfarbe), raylib.
 // ---------------------------------------------------------------------------
 #include "ClientConfig.hpp"
 #include "NetClient.hpp"
+#include "Options.hpp"
 #include "Ui.hpp"
 #include "World.hpp"
 #include <string>
@@ -128,7 +136,9 @@ private:
 
     MultiplayerOptions opt_;
     NetClient net_;
-    ClientConfig config_;
+    // Serveradresse und Name stehen im gemeinsamen g_clientConfig (main.cpp
+    // lädt es beim Start). Absichtlich keine eigene Kopie hier – Begründung
+    // in ClientConfig.hpp.
     Phase phase_ = Phase::Address;
     int phaseFrames_ = 0;          // Frames seit dem letzten Phasenwechsel (siehe SetPhase)
     bool wantsMenu_ = false;
@@ -172,6 +182,8 @@ private:
     // Spielen
     bool paused_ = false;
     int pauseFrames_ = 0;
+    bool optionsOpen_ = false;     // in der Pause: Optionen statt Pausenmenü anzeigen
+    OptionsScreen options_;
     int dockFrames_ = 0;           // Frames seit dem Andocken (gegen "F dockt sofort wieder ab")
     float undockSentT_ = -1.0f;    // > 0: Abdocken angefragt, Antwort des Servers steht aus
     float autoDockT_ = 0.0f;       // Autopilot: Zeit an der Station

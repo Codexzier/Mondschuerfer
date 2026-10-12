@@ -1,16 +1,19 @@
 // ---------------------------------------------------------------------------
-// Audio.cpp – Soundeffekte und Dauergeräusche (Schnittstelle: Audio.hpp).
+// Audio.cpp – Soundeffekte, Dauergeräusche und Musik (Schnittstelle: Audio.hpp).
 //
 // Wofür ist die Datei da?
 //   Hier steht, welche Sounddatei zu welchem Spielereignis gehört (Tabellen
-//   kSfx und kLoops), und wie die Töne geladen, abgespielt, im Raum verteilt
-//   und überblendet werden. Benutzt wird alles über das globale Objekt
-//   g_audio (main.cpp, Multiplayer.cpp, Ui.cpp, Hud.cpp; siehe Audio.hpp).
+//   kSfx und kLoops) und welche Musik wann läuft (kSongs), und wie die Töne
+//   geladen, abgespielt, im Raum verteilt und überblendet werden. Benutzt
+//   wird alles über das globale Objekt g_audio (main.cpp, Multiplayer.cpp,
+//   Options.cpp, Ui.cpp, Hud.cpp; siehe Audio.hpp).
 //
 // Abhängigkeiten:
 //   - raylib (Audio-Funktionen), raymath.h (Clamp)
 //   - shared/SoundEvents.hpp (über Audio.hpp): enum class Sfx, SoundEvent
-//   - assets/sounds/scifi/*.ogg und assets/sounds/interface/*.ogg
+//   - src/MusicMix.hpp (über Audio.hpp): Überblend-Rechnung der Musik
+//   - assets/sounds/scifi/*.ogg, assets/sounds/interface/*.ogg und
+//     assets/music/*.mp3
 //
 // raylib-Audio in Kürze (so wie es hier benutzt wird):
 //   - InitAudioDevice() öffnet die Standard-Tonausgabe des Systems. Ab dann
@@ -40,11 +43,16 @@
 //      Tonhöhe leicht zufällig verändern, PlaySound.
 // Dauergeräusche: Update -> UpdateLoop je Schleife (weich überblenden,
 // starten/pausieren, Stream nachfüllen).
+// Musik: main.cpp/Multiplayer.cpp wählen mit SetMusicTrack das Stück ->
+// Update -> UpdateMusic: MusicMix rechnet die Blenden weiter, danach wird
+// jedes Stück gestartet/fortgesetzt, in der Lautstärke gesetzt, nachgefüllt
+// oder (bei Lautstärke 0) pausiert – wie die Dauergeräusche.
 // ---------------------------------------------------------------------------
 #include "Audio.hpp"
 #include "raymath.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 Audio g_audio;
 
@@ -160,6 +168,20 @@ const LoopDef kLoops[Audio::LOOP_COUNT] = {
     {"scifi/engineCircular_002", 0.30f, 1.2f},    // Abbau, Notlösung für Bergbau-Laser (höher = mehr "Bohrer")
 };
 
+// ===========================================================================
+// Tabelle: Musikstücke (Index = MusicTrack::Menu bzw. MusicTrack::Game)
+// ===========================================================================
+// Beide Stücke stammen von dekker187 (erstellt mit Suno) und wurden vom
+// Projektinhaber für das Spiel bereitgestellt. Sie sind je gut 3 Minuten lang
+// (MP3, 48 kHz, Stereo) und laufen als Endlosschleife.
+// Warum Music (Streaming) und nicht Sound? Ein ganzes Stück entpackt wären
+// über 70 MB Sampledaten pro Datei (197 s * 48000 Abtastwerte/s * 2 Kanäle *
+// 4 Byte); als Stream liegen immer nur wenige Kilobyte im Speicher.
+const char* const kSongs[MusicMix::kTracks] = {
+    "music/main_menu_theme.mp3",   // Menu: "Main Menu Theme"
+    "music/lunar_silence_01.mp3",  // Game: "Lunar Silence 01"
+};
+
 } // namespace
 
 // ===========================================================================
@@ -213,6 +235,18 @@ bool Audio::Init(const std::string& assetDir) {
         if (loops_[i].valid) loops_[i].music.looping = true;
         else TraceLog(LOG_WARNING, "Sound konnte nicht geladen werden: %s", path.c_str());
     }
+
+    // Musik: wie die Dauergeräusche als Stream mit Endlosschleife. Fehlt eine
+    // Datei, bleibt nur dieses Stück stumm (UpdateMusic prüft valid).
+    // LoadMusicStream liest bei MP3 die Datei einmal kurz durch, um ihre Länge
+    // zu bestimmen – das dauert einen Augenblick, passiert aber nur beim Start.
+    for (int i = 0; i < MusicMix::kTracks; ++i) {
+        const std::string path = assetDir + kSongs[i];
+        songs_[i].music = LoadMusicStream(path.c_str());
+        songs_[i].valid = IsMusicValid(songs_[i].music);
+        if (songs_[i].valid) songs_[i].music.looping = true;
+        else TraceLog(LOG_WARNING, "Musik konnte nicht geladen werden: %s", path.c_str());
+    }
     ready_ = true;
     return true;
 }
@@ -231,6 +265,10 @@ void Audio::Shutdown() {
         fx.clips.clear();
     }
     for (auto& t : loops_) {
+        if (t.valid) UnloadMusicStream(t.music);
+        t = Track{};
+    }
+    for (auto& t : songs_) {
         if (t.valid) UnloadMusicStream(t.music);
         t = Track{};
     }
@@ -340,6 +378,8 @@ void Audio::Update(float dt, const LoopState& st) {
     UpdateLoop(LOOP_SCANNER, st.scanner, 1.0f, dt);
     UpdateLoop(LOOP_MINING, st.mining, 1.0f, dt);
 
+    UpdateMusic(dt);
+
     // Warnton bei kritischem Schild alle kAlarmInterval Sekunden. Endet der
     // Alarm, wird der Zähler auf 0 gesetzt: Beim nächsten Alarm piept es
     // sofort und nicht erst nach einer Restwartezeit.
@@ -384,7 +424,11 @@ void Audio::UpdateLoop(int loop, float level, float pitch, float dt) {
             ResumeMusicStream(t.music);
             t.playing = true;
         }
-        SetMusicVolume(t.music, t.volume);
+        // "::" = die raylib-Funktion SetMusicVolume(Music, float). Ohne "::"
+        // würde der Übersetzer innerhalb der Klasse Audio nur die
+        // gleichnamige Methode Audio::SetMusicVolume(float) (Regler in den
+        // Optionen) finden – sie verdeckt die raylib-Funktion.
+        ::SetMusicVolume(t.music, t.volume);
         SetMusicPitch(t.music, pitch * kLoops[loop].pitch);
         // Puffer mit frisch entpackten Daten nachfüllen (siehe Dateikopf)
         UpdateMusicStream(t.music);
@@ -394,8 +438,70 @@ void Audio::UpdateLoop(int loop, float level, float pitch, float dt) {
     }
 }
 
-// Stummschalten über die Gesamtlautstärke: Effekte und Dauergeräusche laufen
-// intern normal weiter (Wartelisten, Überblenden), sind nur nicht zu hören.
+// ===========================================================================
+// Musik
+// ===========================================================================
+// Ablauf pro Frame:
+//   1. mix_.Step(dt): Blenden weiterrechnen (gewünschtes Stück lauter, alle
+//      anderen leiser; Musik aus = alle leiser). Die Rechnung steht in
+//      MusicMix.hpp, damit sie ohne Audiogerät testbar ist.
+//   2. Für jedes Stück die fertige Lautstärke (Gain = Blende * Regler *
+//      Grundpegel) übernehmen:
+//        > 0: beim ersten Mal starten (PlayMusicStream, beginnt am Anfang),
+//             sonst ggf. fortsetzen (ResumeMusicStream, an derselben Stelle),
+//             dann den Puffer nachfüllen (UpdateMusicStream, jedes Frame
+//             nötig, siehe Dateikopf).
+//        = 0: pausieren. Ein stummes Stück kostet so keine Rechenzeit, und
+//             wer aus dem Spiel kurz ins Menü und zurück geht, hört das
+//             Spielstück dort weiter, wo es aufgehört hat.
+// Die Lautstärke wird VOR dem Starten/Fortsetzen gesetzt: Sonst könnte der
+// Mischer im Audio-Thread den ersten Pufferrest noch mit der alten
+// Lautstärke abspielen (ein kurzes, lautes Knacken).
+void Audio::UpdateMusic(float dt) {
+    mix_.Step(dt);
+    for (int i = 0; i < MusicMix::kTracks; ++i) {
+        Track& t = songs_[i];
+        if (!t.valid) continue;
+        t.volume = mix_.Gain(i);
+        if (t.volume > 0.0f) {
+            ::SetMusicVolume(t.music, t.volume);   // raylib-Funktion, "::" siehe UpdateLoop
+            if (!t.started) {
+                PlayMusicStream(t.music);
+                t.started = true;
+                t.playing = true;
+            } else if (!t.playing) {
+                ResumeMusicStream(t.music);
+                t.playing = true;
+            }
+            UpdateMusicStream(t.music);
+        } else if (t.playing) {
+            PauseMusicStream(t.music);
+            t.playing = false;
+        }
+    }
+}
+
+// Nur für die Testoption --music-test (main.cpp): eine Zeile, an der man
+// ablesen kann, ob die Musik wirklich läuft und wie sie überblendet.
+//   want   gewünschtes Stück (-1 keins, 0 Menü, 1 Spiel)
+//   on/vol Optionen (Musik an, Regler)
+//   fade   Blende Menü/Spiel, gain = fertige Lautstärke Menü/Spiel
+//   play   läuft der Stream laut raylib (1) oder ist er pausiert (0)
+//   pos    Position im Stück in Sekunden (wächst nur, solange es läuft)
+//   ready  Audiogerät offen
+std::string Audio::MusicReport() const {
+    auto playing = [&](int i) { return songs_[i].valid && IsMusicStreamPlaying(songs_[i].music) ? 1 : 0; };
+    auto pos = [&](int i) { return songs_[i].valid ? GetMusicTimePlayed(songs_[i].music) : -1.0f; };
+    char buf[256];
+    snprintf(buf, sizeof(buf), "want=%d on=%d vol=%.2f fade=%.2f/%.2f gain=%.3f/%.3f play=%d/%d pos=%.1f/%.1f ready=%d",
+             static_cast<int>(mix_.wanted), mix_.enabled ? 1 : 0, mix_.volume, mix_.fade[0], mix_.fade[1], mix_.Gain(0),
+             mix_.Gain(1), playing(0), playing(1), pos(0), pos(1), ready_ ? 1 : 0);
+    return buf;
+}
+
+// Stummschalten über die Gesamtlautstärke: Effekte, Dauergeräusche und Musik
+// laufen intern normal weiter (Wartelisten, Überblenden), sind nur nicht zu
+// hören. Die Musik-Einstellung in den Optionen bleibt davon unberührt.
 // Ohne Audiogerät wird nur der Merker umgeschaltet, damit die Anzeige
 // "Ton an/aus" trotzdem stimmt.
 void Audio::ToggleMute() {

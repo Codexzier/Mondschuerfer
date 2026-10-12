@@ -75,6 +75,11 @@ bool DrawVictory(const World& w);
 
 // Zeigt die Tastenbelegung als zweispaltige Liste (Taste | Wirkung) ab der
 // linken oberen Ecke (x, y). size = Schriftgröße in Pixeln; die Zeilen liegen
-// 1,35 * size auseinander, also ist die Liste 8 * 1,35 * size hoch.
+// 1,35 * size auseinander.
 // Benutzt im HUD (unten links) und in den Pausenmenüs (main.cpp, Multiplayer.cpp).
 void DrawControls(float x, float y, float size);
+// Höhe, die DrawControls mit dieser Schriftgröße belegt (Zeilenzahl * 1,35 *
+// size). Die Pausenmenüs und das HUD rechnen ihr Layout damit aus, statt
+// selbst eine Zeilenzahl anzunehmen – kommt in DrawControls eine Zeile dazu,
+// passt sich alles von allein an.
+float ControlsHeight(float size);

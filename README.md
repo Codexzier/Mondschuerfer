@@ -2,7 +2,7 @@
 
 Ein kleines 3D-Weltraumspiel in C++ (raylib), gebaut ausschließlich mit den Modellen
 aus dem **Kenney Space Kit** und vertont mit den Kenney-Paketen **Sci-Fi Sounds** und
-**Interface Sounds**. Du fliegst ein Raumschiff über die Mondoberfläche, suchst
+**Interface Sounds**; die Musik stammt von **dekker187**. Du fliegst ein Raumschiff über die Mondoberfläche, suchst
 mit dem Scanner nach Kristallen, baust sie ab, verkaufst sie an der Handelsstation und
 rüstest dein Schiff in der Werft auf. Piraten machen dir dabei das Leben schwer.
 
@@ -111,7 +111,7 @@ Ein Gamepad wird ebenfalls unterstützt (linker Stick, A = Feuer, X = Scanner, Y
 
 | Taste | Aktion im Mehrspieler |
 |---|---|
-| ESC / P | Pause mit *Weiterspielen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt). Die Welt läuft während der Pause weiter, dein Schiff bekommt nur keine Steuerbefehle. |
+| ESC / P | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt). Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bekommt nur keine Steuerbefehle. |
 | ESC / F im Stationsfenster | Abdocken |
 | Tab | im Anmeldefenster zwischen Name und Passwort wechseln |
 | Zuschauer: Mausrad / Ziehen / R / ESC | Zoom / Karte verschieben / ganze Karte / Zuschauen beenden |
@@ -120,7 +120,7 @@ Ein Gamepad wird ebenfalls unterstützt (linker Stick, A = Feuer, X = Scanner, Y
 
 ## Spielregeln
 
-**Startmenü:** Neues Spiel · Fortsetzen · Mehrspieler · Simulation (spielt selbst) · Beenden
+**Startmenü:** Neues Spiel · Fortsetzen · Mehrspieler · Simulation (spielt selbst) · Optionen · Beenden
 
 - **Scanner (E):** Kristall-Lagerstätten sind unsichtbar, bis der Scanner sie erfasst.
   Der Scanner hat 10 Energieeinheiten und verbraucht 1 pro Sekunde, er läuft also höchstens
@@ -165,7 +165,7 @@ dabei selbst voraus, damit sich die Steuerung direkt anfühlt).
 2. **Serveradresse** eingeben: `localhost`, eine LAN-Adresse wie `192.168.1.20` oder ein Name wie
    `mein-server.de`, optional mit Port (`:7777` ist Standard). → **Verbinden**.
    Das Spiel merkt sich Adresse und Spielernamen in `mondschuerfer_client.txt` neben der
-   ausführbaren Datei (das Passwort nie).
+   ausführbaren Datei (das Passwort nie; siehe [Musik und Optionen](#musik-und-optionen)).
 3. In der **Lobby** stehen Servername, Spieler online und die Einstellungen des Servers.
    Dann wählen:
    - **Zuschauen** – ohne Konto die ganze Karte von oben ansehen, mit Spielerliste und
@@ -219,12 +219,55 @@ ausführliche Erklärung mit Leseempfehlung und Übungen in
 Schüsse, Treffer, Explosionen, Scanner, Abbau, Andocken, Stationen und Menüs haben eigene
 Soundeffekte. Triebwerk, Schub, Scanner und Abbau laufen als Dauergeräusch, bei kritischem
 Schild ertönt ein Warnton. Geräusche anderer Schiffe werden mit der Entfernung leiser und
-kommen von links oder rechts. Die Hintergrund-Simulation im Hauptmenü bleibt stumm.
+kommen von links oder rechts. Die Hintergrund-Simulation im Hauptmenü bleibt stumm (dort läuft
+nur die Menümusik, siehe [Musik und Optionen](#musik-und-optionen)).
 
 Welche Datei zu welchem Ereignis gehört, steht in der Tabelle `kSfx` (und `kLoops`) in
 `src/Audio.cpp`. Dort lassen sich Dateien, Lautstärke und Tonhöhen-Variation anpassen.
 Einträge mit dem Kommentar *Notlösung* sind mit dem nächstbesten Ton belegt, weil die beiden
 Pakete nichts wirklich Passendes enthalten. Ohne Audiogerät läuft das Spiel stumm weiter.
+
+---
+
+## Musik und Optionen
+
+Zwei Musikstücke von **dekker187** (erstellt mit Suno) liegen in `assets/music/`:
+
+| Stück | Datei | Läuft … |
+|---|---|---|
+| *Main Menu Theme* | `main_menu_theme.mp3` | im Hauptmenü, in den Optionen aus dem Hauptmenü und in den Mehrspieler-Menüs (Serveradresse, Lobby, Anmeldung) |
+| *Lunar Silence 01* | `lunar_silence_01.mp3` | im Spiel: Einzelspiel samt Pause und Endbildschirmen, Simulation, Mehrspieler-Spiel und Zuschauen |
+
+Beim Wechsel zwischen Menü und Spiel blendet die Musik weich über (das alte Stück wird in 1 s
+leiser, das neue in 1,5 s lauter). Ein Stück, das gerade nicht läuft, wird angehalten und setzt
+später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
+
+**Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*):
+
+- **Musik: An / Aus** – Umschalter (Mausklick, oder Zeile wählen und Enter).
+- **Lautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
+  Die Änderung ist sofort zu hören.
+- **Steuerung** – Übersicht aller Tasten für Tastatur/Maus, Xbox- und PlayStation-Controller.
+- Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Lautstärke, Enter umschalten, ESC zurück.
+
+Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte und Musik); die
+Einstellungen in den Optionen bleiben dabei erhalten.
+
+Die Einstellungen stehen zusammen mit Serveradresse und Spielername in
+`mondschuerfer_client.txt` neben der ausführbaren Datei und gelten beim nächsten Start wieder:
+
+```
+server localhost:7777
+name Anna
+music 1
+music_volume 0.50
+```
+
+`music` ist `1` (an) oder `0` (aus), `music_volume` eine Zahl von `0` bis `1` (Punkt oder Komma).
+Fehlt die Datei oder eine Zeile, gelten die Standardwerte (Musik an, 50 %).
+
+Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
+`src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/ClientConfig.*` (Datei).
 
 ---
 
@@ -240,6 +283,7 @@ Mondschuerfer/
 │   ├── models/*.glb      Alle 153 Modelle des Kenney Space Kit (unverändert)
 │   ├── sounds/scifi/     Kenney Sci-Fi Sounds (73 Dateien, unverändert)
 │   ├── sounds/interface/ Kenney Interface Sounds (100 Dateien, unverändert)
+│   ├── music/            Musik von dekker187: main_menu_theme.mp3, lunar_silence_01.mp3
 │   └── Kenney_*_License.txt
 ├── shared/               Gemeinsamer Code für Spiel UND Server (ohne raylib-Funktionen)
 │   ├── Config.hpp        Balancing (auch die Mehrspieler-Werte MP_*)
@@ -256,13 +300,15 @@ Mondschuerfer/
 │   ├── main.cpp          Fenster, Menüs, Spielzustände, Kamera
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
-│   ├── Ui.cpp/.hpp       UI-Bausteine
+│   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder)
+│   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Steuerungsübersicht
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
-│   ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Zuordnung Ereignis -> Datei
+│   ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Musik, Zuordnung Ereignis -> Datei
+│   ├── MusicMix.hpp      Überblenden der Musik (reine Rechnung, ohne raylib)
 │   ├── Save.cpp/.hpp     Spielstand
 │   ├── NetClient.*       Mehrspieler: Verbindung, Anmeldung, Vorhersage, Interpolation
 │   ├── Multiplayer.*     Mehrspieler: Menüs (Adresse, Lobby, Anmeldung), Spielen, Zuschauen
-│   └── ClientConfig.*    gemerkte Serveradresse und Spielername
+│   └── ClientConfig.*    Einstellungsdatei: Serveradresse, Spielername, Musik
 ├── server/               Der Mehrspieler-Server (ohne Grafik), Anleitung: server/README.md
 │   ├── src/              main, GameServer, Accounts, SharedState, WebServer, LoadTest
 │   ├── web/              Verwaltungs-Webseite (index.html, app.js, style.css)
@@ -284,7 +330,7 @@ Laden in Mondgrau umgefärbt.
 
 ### Kommandozeilen-Optionen (nur für Tests)
 
-`--mode sim|game|dock0|dock1|pause|continue`, `--seed N`, `--steps N` (Simulation beschleunigen),
+`--mode sim|game|dock0|dock1|pause|continue|options`, `--seed N`, `--steps N` (Simulation beschleunigen),
 `--report` (Fortschritt auf der Konsole), `--screenshot datei.png --shot-at Sekunden`,
 `--quit-after Sekunden`. Im normalen Spiel werden sie nicht gebraucht.
 
@@ -293,6 +339,12 @@ schnelle Läufe), `--nohud`, `--shot-every Sekunden` (Bildserie), `--cam PX PY P
 `--zoom Z`, `--pos X Z`, `--scan`, `--thrust-test`, `--pirates N`, `--hp H`, `--balance N`, `--deliver N`
 (Gesamtablieferung = Ausbaustufe der Stationen). Die Bedeutung jeder Option steht bei `TestOptions` in
 `src/main.cpp`.
+
+`--mode options` öffnet direkt die Optionen (für Bildschirmfotos). `--music-test` prüft die Musik: Es
+spielt einen festen Ablauf durch (Menü, neues Spiel, Musik aus und wieder an, Lautstärke 20 %, zurück
+ins Menü) und schreibt alle 0,25 s eine Zeile `MUSICTEST …` (Blenden, Lautstärken, läuft das Stück,
+Position im Stück) nach stderr. Dafür braucht es ein Audiogerät. Achtung: Es speichert die
+Musik-Einstellungen wie ein Spieler in den Optionen.
 
 Für Entwickler: `--dump-model-bounds > shared/ModelBounds.inc` misst alle Modelle in `assets/models`
 neu und gibt die Tabelle aus, aus der der Server die Größe der Stationen kennt (nötig, wenn Modelle
@@ -323,11 +375,13 @@ Phase, Spieler, Kontostand …).
 
 ---
 
-## Lizenzen
+## Lizenzen und Mitwirkende
 
 - Grafik: **Kenney Space Kit** von Kenney (www.kenney.nl), CC0 1.0 (siehe `assets/Kenney_SpaceKit_License.txt`)
 - Ton: **Kenney Sci-Fi Sounds** und **Kenney Interface Sounds** von Kenney (www.kenney.nl), CC0 1.0
   (siehe `assets/Kenney_SciFiSounds_License.txt` und `assets/Kenney_InterfaceSounds_License.txt`)
+- Musik: **dekker187** (erstellt mit Suno), bereitgestellt vom Projektinhaber – *Main Menu Theme*
+  und *Lunar Silence 01* (`assets/music/`)
 - Bibliothek: **raylib** von Ramon Santamaria, zlib-Lizenz
 - Im Projekt mitgeliefert unter `third_party/` (Einzelheiten in `third_party/README.md`):
   - **ENet** 1.3.18 von Lee Salzman, MIT-Lizenz (`third_party/enet/LICENSE`) – Netzwerk für Spiel und Server

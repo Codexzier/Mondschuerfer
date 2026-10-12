@@ -277,13 +277,20 @@ void SetHudRightReserve(float width, float bottom) {
 
 // Die Tastenbelegung ist hier fest eingetragen; sie muss zu den Abfragen in
 // main.cpp/Multiplayer.cpp passen (dort werden die Tasten ausgewertet).
-// DrawHud rechnet mit genau 8 Zeilen – bei einer neuen Zeile dort anpassen.
+// kControlRows ist die Zeilenzahl; ControlsHeight rechnet damit, DrawHud und
+// die Pausenmenüs fragen ControlsHeight – eine neue Zeile hier genügt also.
 // Spalte 2 beginnt bei 7 * size (Platz für das längste Tastenwort "Leertaste").
+namespace {
+constexpr int kControlRows = 8;
+}
+
+float ControlsHeight(float size) { return kControlRows * size * 1.35f; }
+
 void DrawControls(float x, float y, float size) {
-    const char* keys[] = {"W / S", "A / D", "Leertaste", "E", "F", "Mausrad", "ESC", "M"};
-    const char* what[] = {"Schub / Bremsen", "Drehen", "Schießen", "Scanner an/aus", "Abbauen / Andocken", "Zoom", "Pause",
-                          "Ton an/aus"};
-    for (int i = 0; i < 8; ++i) {
+    const char* keys[kControlRows] = {"W / S", "A / D", "Leertaste", "E", "F", "Mausrad", "ESC", "M"};
+    const char* what[kControlRows] = {"Schub / Bremsen", "Drehen", "Schießen", "Scanner an/aus", "Abbauen / Andocken", "Zoom",
+                                      "Pause", "Ton an/aus"};
+    for (int i = 0; i < kControlRows; ++i) {
         Text(keys[i], x, y + i * size * 1.35f, size, Color{255, 200, 140, 210});
         Text(what[i], x + size * 7.0f, y + i * size * 1.35f, size, Color{220, 225, 235, 200});
     }
@@ -448,10 +455,10 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // Tastenhilfe: in den ersten 90 s mit einem Schiff ganz, danach nur ein
     // kurzer Hinweis; mit gehaltener Taste H wieder ganz. Im Mehrspieler ist
     // playTime die Zeit mit dem aktuellen Schiff, nach einem Absturz erscheint
-    // die Hilfe also wieder. y = Unterkante minus 8 Zeilen à 1,35 * 16 px
-    // minus 16 px Rand (siehe DrawControls).
+    // die Hilfe also wieder. y = Unterkante minus Höhe der Liste
+    // (ControlsHeight, bei 16 px Schrift) minus 16 px Rand.
     if (!simulation) {
-        if (me.playTime < 90.0f || IsKeyDown(KEY_H)) DrawControls(18 * s, H - 8 * 16 * s * 1.35f - 16 * s, 16 * s);
+        if (me.playTime < 90.0f || IsKeyDown(KEY_H)) DrawControls(18 * s, H - ControlsHeight(16 * s) - 16 * s, 16 * s);
         else Text("[H] Steuerung anzeigen", 18 * s, H - 30 * s, 16 * s, Color{200, 205, 215, 170});
     }
 }

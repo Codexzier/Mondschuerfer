@@ -59,7 +59,7 @@ also auf seinem Rechner den Kontostand „hochschreiben“ – der Server würde
 | Ordner | Inhalt | Wer benutzt es? |
 |---|---|---|
 | [shared/](../shared/) | Spiellogik ([World.hpp](../shared/World.hpp), [World.cpp](../shared/World.cpp), [WorldGen.cpp](../shared/WorldGen.cpp), [Ai.cpp](../shared/Ai.cpp)), Balancing ([Config.hpp](../shared/Config.hpp)), Einstellungen ([GameSettings.hpp](../shared/GameSettings.hpp)), Netzwerkprotokoll ([Protocol.hpp](../shared/Protocol.hpp)), Kryptografie ([Crypto.hpp](../shared/Crypto.hpp)), Hilfen ([Util.hpp](../shared/Util.hpp), [Models.hpp](../shared/Models.hpp), [SoundEvents.hpp](../shared/SoundEvents.hpp)) | Spiel **und** Server **und** Lasttest |
-| [src/](../src/) | das Spiel: [main.cpp](../src/main.cpp), Zeichnen, HUD, Ton, und für den Mehrspieler [NetClient.hpp](../src/NetClient.hpp) (Netzwerk), [Multiplayer.hpp](../src/Multiplayer.hpp) (Menüs und Anzeige), [ClientConfig.hpp](../src/ClientConfig.hpp) (gemerkte Serveradresse) | nur das Spiel |
+| [src/](../src/) | das Spiel: [main.cpp](../src/main.cpp), Zeichnen, HUD, Ton, und für den Mehrspieler [NetClient.hpp](../src/NetClient.hpp) (Netzwerk), [Multiplayer.hpp](../src/Multiplayer.hpp) (Menüs und Anzeige), [ClientConfig.hpp](../src/ClientConfig.hpp) (gemerkte Serveradresse, Musik-Einstellungen) | nur das Spiel |
 | [server/](../server/) | [src/main.cpp](../server/src/main.cpp) (Start), [GameServer.hpp](../server/src/GameServer.hpp) (Herzstück), [Accounts.hpp](../server/src/Accounts.hpp) (Speichern), [SharedState.hpp](../server/src/SharedState.hpp) (Datenaustausch zwischen Threads), [WebServer.hpp](../server/src/WebServer.hpp) (Verwaltungsseite), [LoadTest.cpp](../server/src/LoadTest.cpp), [web/](../server/web/) (HTML/JS/CSS), [Dockerfile](../server/Dockerfile) | nur der Server |
 | [third_party/](../third_party/) | fremde Bibliotheken im Repository: ENet 1.3.18 (Netzwerk), cpp-httplib 0.22.0 (Webserver), `raylib.h`/`raymath.h` 5.5 (nur Datentypen und Vektor-Mathe für den Server) – siehe [third_party/README.md](../third_party/README.md) | Spiel und Server |
 | [docs/](./) | dieser Text und Bildschirmfotos | Menschen |
@@ -736,7 +736,9 @@ Gestaltungsentscheidungen, die man im Code sieht:
 
 Auch das **Spiel** merkt sich etwas: [src/ClientConfig.hpp](../src/ClientConfig.hpp) speichert die
 zuletzt benutzte Serveradresse und den Spielernamen in `mondschuerfer_client.txt` neben der
-ausführbaren Datei – **nie** das Passwort.
+ausführbaren Datei – **nie** das Passwort. In derselben Datei stehen auch die Musik-Einstellungen
+aus den Optionen. Deshalb gibt es davon nur ein gemeinsames Objekt (`g_clientConfig`): Der
+Mehrspieler schreibt beim Speichern der Serveradresse so immer die aktuellen Musikwerte mit.
 
 ---
 

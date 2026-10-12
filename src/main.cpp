@@ -16,8 +16,9 @@
 //     öffnet das Fenster, lädt Grafik (g_assets) und Ton (g_audio) und läuft
 //     dann in der Hauptschleife, bis das Fenster geschlossen wird.
 //   - Die Klasse App verwaltet die Bildschirme (enum Screen): Hauptmenü,
-//     Einzelspiel, Pause, Simulation und Mehrspieler. Sie entscheidet jedes
-//     Frame, was gerechnet, abgespielt und gezeichnet wird.
+//     Einzelspiel, Pause, Optionen, Simulation und Mehrspieler. Sie
+//     entscheidet jedes Frame, was gerechnet, abgespielt (Effekte, Musik)
+//     und gezeichnet wird.
 //
 // Einzelspieler und Mehrspieler:
 //   - Hauptmenü, Einzelspiel, Pause und Simulation rechnet App selbst mit einer
@@ -45,7 +46,9 @@
 //   - src/Hud.hpp (Spieloberfläche, Stationsfenster, Endbildschirme),
 //     src/Ui.hpp (Knöpfe, Texte, Skalierung), src/Audio.hpp (g_audio),
 //     src/Assets.hpp (g_assets: Modelle, Shader, Mondfarbe),
-//     src/Save.hpp (Spielstand-Datei), src/Multiplayer.hpp.
+//     src/Save.hpp (Spielstand-Datei), src/Multiplayer.hpp,
+//     src/Options.hpp (Bildschirm "Optionen"),
+//     src/ClientConfig.hpp (g_clientConfig: Einstellungsdatei, u. a. Musik).
 //
 // Ablauf eines Frames (App::Frame) – alles läuft im einzigen Thread des Spiels:
 //   1. Tasten, die überall gelten (F11, M, Mausrad)
@@ -63,8 +66,10 @@
 #include "rlgl.h"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "ClientConfig.hpp"
 #include "Hud.hpp"
 #include "Multiplayer.hpp"
+#include "Options.hpp"
 #include "Save.hpp"
 #include "Ui.hpp"
 #include "World.hpp"
@@ -89,9 +94,14 @@ namespace {
 //   Menu        Hauptmenü, dahinter fliegt der Autopilot in einer Zufallswelt
 //   Playing     Einzelspiel (auch angedockt und auf den Endbildschirmen)
 //   Paused      Einzelspiel angehalten, Pausenmenü
+//   Options     Optionen (Musik, Steuerung), geöffnet aus dem Hauptmenü oder
+//               aus der Pause; App::optionsReturn_ merkt sich, wohin "Zurück"
+//               führt. Aus dem Hauptmenü läuft dahinter die Menü-Welt weiter,
+//               aus der Pause bleibt das Spiel angehalten.
 //   Simulation  der Autopilot spielt eine ganze Partie vor (mit HUD)
-//   Multiplayer alles erledigt das MultiplayerScreen-Objekt
-enum class Screen { Menu, Playing, Paused, Simulation, Multiplayer };
+//   Multiplayer alles erledigt das MultiplayerScreen-Objekt (die Optionen
+//               der Mehrspieler-Pause auch)
+enum class Screen { Menu, Playing, Paused, Options, Simulation, Multiplayer };
 
 // Optionen für automatisierte Tests (Kommandozeile), im normalen Spiel ohne Bedeutung.
 // Zeiten beziehen sich auf die Spielzeit seit dem Start (App::elapsed_).
@@ -102,7 +112,8 @@ struct TestOptions {
     // --mode: direkt starten mit "sim" (Simulation), "game" (neues Spiel),
     // "dock0" (angedockt an Handelsstation 0 mit 240 Fracht, also Verkauf),
     // "dock1" (angedockt an Werft 1 mit 4.200 Guthaben, also Aufrüsten),
-    // "pause" (neues Spiel im Pausenmenü), "continue" (Spielstand laden)
+    // "pause" (neues Spiel im Pausenmenü), "continue" (Spielstand laden),
+    // "options" (Optionen, wie aus dem Hauptmenü geöffnet)
     std::string mode;
     int steps = 1;                 // --steps N: Simulationsschritte pro Frame (Zeitraffer)
     unsigned int seed = 0;         // --seed N: feste Welt; 0 = Zufall aus der Uhrzeit
@@ -123,6 +134,13 @@ struct TestOptions {
     float hp = -1.0f;              // --hp H: Schildstand vorgeben (z. B. Warnton unter 30 %)
     bool dumpModelBounds = false;  // --dump-model-bounds: Tabelle für shared/ModelBounds.inc ausgeben und beenden
     long long balance = -1;        // --balance N: Kontostand vorgeben
+    // --music-test: prüft die Musik (braucht ein Audiogerät). Spielt einen
+    // festen Ablauf durch – Hauptmenü, neues Spiel, Musik aus, wieder an,
+    // Lautstärke 20 %, zurück ins Menü, Optionen – und schreibt alle 0,25 s
+    // eine Zeile MUSICTEST mit dem Zustand der Musik nach stderr (siehe
+    // App::MusicTest). Achtung: speichert die Musik-Einstellungen wie ein
+    // Spieler in den Optionen (Lautstärke danach 20 %).
+    bool musicTest = false;
     // Mehrspieler (--mp-connect ADRESSE startet direkt im Mehrspieler-Bildschirm,
     // --mp-name/--mp-pass melden automatisch an, --mp-register legt das Konto an,
     // --mp-spectate schaut zu, --mp-autopilot lässt den Autopiloten fliegen)
@@ -191,6 +209,8 @@ public:
             if (opt_.mode == "pause") screen_ = Screen::Paused;
         } else if (opt_.mode == "continue") {
             Continue();
+        } else if (opt_.mode == "options") {
+            OpenOptions(Screen::Menu);
         }
     }
 
@@ -215,8 +235,10 @@ public:
         }
         // Mausrad: Kamera näher/weiter. Eine Raste ändert zoom_ um 0,08;
         // 0,55 (nah) .. 1,6 (weit) hält Schiff und Umgebung gut erkennbar.
+        // In den Optionen nicht: Dort bleibt das Bild dahinter, wie es ist.
         float wheel = GetMouseWheelMove();
-        if (wheel != 0.0f && screen_ != Screen::Menu && screen_ != Screen::Multiplayer)   // Mehrspieler zoomt selbst
+        if (wheel != 0.0f && screen_ != Screen::Menu && screen_ != Screen::Options &&
+            screen_ != Screen::Multiplayer)   // Mehrspieler zoomt selbst
             zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
 
         switch (screen_) {
@@ -226,6 +248,11 @@ public:
             // ESC-Druck, der die Pause geöffnet hat, sie nicht sofort wieder
             // schließt (siehe DrawPause).
             case Screen::Paused: ++pauseFrames_; break;
+            // Optionen: aus dem Hauptmenü läuft die Menü-Welt weiter, aus der
+            // Pause steht das Spiel still (wie in der Pause selbst).
+            case Screen::Options:
+                if (optionsReturn_ == Screen::Menu) UpdateMenuWorld(dt);
+                break;
             case Screen::Simulation: UpdateSimulation(dt); break;
             case Screen::Multiplayer:
                 // Netzwerk, Eingaben und Kamera des Mehrspielers. Will der Spieler
@@ -256,11 +283,16 @@ public:
     // Einzelspieler: automatisch speichern, aber nur ein laufendes Spiel –
     // nach Sieg/Absturz ist der Spielstand schon gelöscht, und während das
     // Schiff abstürzt, ist PlayerAlive() false (dann wird nicht gespeichert).
+    // Optionen über der Pause zählen wie die Pause (das Spiel läuft noch).
+    // Zum Schluss die Einstellungsdatei, falls in den Optionen etwas geändert
+    // und noch nicht gespeichert wurde (z. B. Fenster geschlossen, während
+    // der Lautstärkeregler noch gezogen wurde).
     void OnExit() {
         mp_.reset();   // Mehrspieler: beim Server abmelden (er speichert den Fortschritt)
-        if ((screen_ == Screen::Playing || screen_ == Screen::Paused) && world_.outcome == Outcome::None &&
-            world_.PlayerAlive())
-            SaveGame(world_);
+        const bool inGame = screen_ == Screen::Playing || screen_ == Screen::Paused ||
+                            (screen_ == Screen::Options && optionsReturn_ == Screen::Paused);
+        if (inGame && world_.outcome == Outcome::None && world_.PlayerAlive()) SaveGame(world_);
+        g_clientConfig.SaveIfChanged();
     }
 
 private:
@@ -349,6 +381,30 @@ private:
     void EnterMultiplayer(const MultiplayerOptions& opt) {
         mp_ = std::make_unique<MultiplayerScreen>(opt);
         screen_ = Screen::Multiplayer;
+    }
+
+    // Optionen öffnen. from = Bildschirm, zu dem "Zurück" führt (Menu oder
+    // Paused). Das OptionsScreen-Objekt liest beim Zeichnen selbst die
+    // aktuellen Werte aus g_audio; Open setzt nur Auswahl und Zähler zurück.
+    void OpenOptions(Screen from) {
+        optionsReturn_ = from;
+        screen_ = Screen::Options;
+        options_.Open();
+    }
+
+    // Optionen schließen (OptionsScreen::Draw hat true geliefert; es hat
+    // dabei schon gespeichert und den Ton "zurück" gespielt). Zurück in die
+    // Pause: pauseFrames_ = 0, damit dieselbe ESC-Taste, die die Optionen
+    // geschlossen hat, nicht auch gleich die Pause beendet.
+    void CloseOptions() {
+        screen_ = optionsReturn_;
+        if (screen_ == Screen::Paused) pauseFrames_ = 0;
+    }
+
+    // Läuft hinter dem aktuellen Bildschirm die Menü-Welt (kreisende Kamera,
+    // Menümusik)? Im Hauptmenü und in den daraus geöffneten Optionen.
+    bool MenuBackground() const {
+        return screen_ == Screen::Menu || (screen_ == Screen::Options && optionsReturn_ == Screen::Menu);
     }
 
     // Zurück ins Hauptmenü (aus Spiel, Pause, Simulation oder Mehrspieler).
@@ -492,6 +548,11 @@ private:
     //     werden. LoopState gibt nur an, wie laut jede Schleife gerade sein
     //     soll; g_audio.Update blendet weich dorthin über und muss deshalb
     //     JEDES Frame laufen (auch im Menü, dann mit allem auf 0 = ausblenden).
+    //   - Musik: SetMusicTrack wählt das Stück für den aktuellen Bildschirm,
+    //     g_audio.Update blendet beim Wechsel über (Audio.cpp, MusicMix.hpp).
+    //     Menümusik im Hauptmenü und in den Optionen daraus, Spielmusik im
+    //     Spiel, in der Pause (auch in deren Optionen), auf den
+    //     Endbildschirmen und in der Simulation.
     // ========================================================================
     void UpdateAudio(float dt) {
         if (screen_ == Screen::Multiplayer) {
@@ -520,6 +581,7 @@ private:
         // Ereignisse sind "einmalig": nach dem Abspielen (oder Verwerfen im
         // Menü/in der Pause) leeren, sonst kämen sie im nächsten Frame wieder.
         world_.sounds.clear();
+        g_audio.SetMusicTrack(MenuBackground() ? MusicTrack::Menu : MusicTrack::Game);
         g_audio.Update(dt, loops);
     }
 
@@ -551,7 +613,7 @@ private:
         cam_.up = {0, 1, 0};
         cam_.fovy = 45.0f;
         cam_.projection = CAMERA_PERSPECTIVE;
-        if (screen_ == Screen::Menu) {
+        if (MenuBackground()) {
             // Hauptmenü: Kreisbahn mit Radius 52 in 34 Einheiten Höhe
             float r = 52.0f;
             cam_.target = camTarget_;
@@ -611,6 +673,12 @@ private:
                 DrawHud(world_, cam_, false);
                 DrawPause();
                 break;
+            case Screen::Options:
+                // Hinter den Optionen: aus der Pause das HUD des angehaltenen
+                // Spiels, aus dem Hauptmenü nur die Menü-Welt (schon gezeichnet).
+                if (optionsReturn_ == Screen::Paused) DrawHud(world_, cam_, false);
+                if (options_.Draw()) CloseOptions();
+                break;
             case Screen::Simulation: DrawSimulation(); break;
             case Screen::Multiplayer: break;   // oben behandelt
         }
@@ -627,8 +695,12 @@ private:
         // bis 55 % der Breite: der Text bleibt lesbar, rechts sieht man die Welt.
         DrawRectangleGradientH(0, 0, static_cast<int>(W * 0.55f), static_cast<int>(H), Color{10, 12, 20, 235},
                                Color{10, 12, 20, 0});
-        // Fünf Knöpfe: etwas höher anfangen und etwas flacher als früher (vier
-        // Knöpfe), damit auch bei 960x540 alles über die Fußzeile passt.
+        // Sechs Knöpfe: Titel bei 12 % der Höhe, Knöpfe 54 px hoch mit 12 px
+        // Abstand. Platzrechnung (alles mal s, und s ist höchstens Höhe / 900):
+        // 160 (Titel) + 6 * 66 (Knöpfe) + 24 + 3 * 28 (Erklärtext) = 664 * s,
+        // also höchstens 74 % der Höhe; mit den 12 % oben endet der Text bei
+        // spätestens 86 % – die Fußzeile beginnt erst bei 95 % (H - 44 * s).
+        // So passt es bei jeder Fenstergröße ab 960x540.
         float x = 90 * s;
         float y = H * 0.12f;
         Text("MONDSCHÜRFER", x, y, 80 * s, ACCENT);
@@ -637,22 +709,24 @@ private:
         // ButtonList zeichnet die Knöpfe, verarbeitet Maus und Pfeiltasten/Enter
         // (menuSel_ = per Tastatur gewählter Knopf) und liefert den Index des
         // gedrückten Knopfs oder -1. "Fortsetzen" ist nur mit Spielstand aktiv.
-        std::vector<std::string> items = {"Neues Spiel", "Fortsetzen", "Mehrspieler", "Simulation (spielt selbst)", "Beenden"};
-        std::vector<bool> enabled = {true, hasSave_, true, true, true};
+        std::vector<std::string> items = {"Neues Spiel", "Fortsetzen", "Mehrspieler", "Simulation (spielt selbst)", "Optionen",
+                                          "Beenden"};
+        std::vector<bool> enabled = {true, hasSave_, true, true, true, true};
         float bw = 420 * s, bh = 54 * s, gap = 12 * s;
         int choice = ButtonList(items, enabled, menuSel_, x + bw * 0.5f, y + 160 * s, bw, bh, gap, 26 * s);
-        if (choice >= 0 && choice <= 3) g_audio.Play(Sfx::UiConfirm);
+        if (choice >= 0 && choice <= 4) g_audio.Play(Sfx::UiConfirm);
         switch (choice) {
             case 0: NewGame(); break;
             case 1: Continue(); break;
             case 2: EnterMultiplayer(MultiplayerOptions{}); break;
             case 3: StartSimulation(); break;
-            case 4: quit_ = true; break;
+            case 4: OpenOptions(Screen::Menu); break;
+            case 5: quit_ = true; break;
             default: break;
         }
 
-        // Kurze Spielerklärung unter den fünf Knöpfen
-        float iy = y + 160 * s + 5 * (bh + gap) + 24 * s;
+        // Kurze Spielerklärung unter den Knöpfen
+        float iy = y + 160 * s + static_cast<float>(items.size()) * (bh + gap) + 24 * s;
         const char* info[] = {
             "Scanne den Mond nach Kristallen, baue sie ab und verkaufe sie an der Handelsstation.",
             "Rüste dein Schiff in der Werft auf. Vorsicht vor Piraten!",
@@ -660,7 +734,9 @@ private:
         };
         for (int i = 0; i < 3; ++i) Text(info[i], x, iy + i * 28 * s, 20 * s, Color{200, 206, 220, 230});
 
-        Text("Grafik und Ton: Kenney (CC0)  -  www.kenney.nl", x, H - 44 * s, 18 * s, MUTED);
+        // Mitwirkende, kurz (ausführlich in README.md, "Lizenzen und Mitwirkende").
+        // "·" (Mittelpunkt) ist in der eingebauten Schrift enthalten.
+        Text("Grafik und Ton: Kenney (CC0)  ·  Musik: dekker187", x, H - 44 * s, 18 * s, MUTED);
         TextRight(g_audio.Muted() ? "M Ton aus    F11 Vollbild" : "M Ton an    F11 Vollbild", W - 24 * s, H - 44 * s, 18 * s, MUTED);
     }
 
@@ -699,22 +775,34 @@ private:
     // ESC/P schließt die Pause wieder, aber erst zwei Frames nach dem Öffnen
     // (siehe pauseFrames_ in Frame), sonst würde derselbe Tastendruck sie
     // öffnen und gleich wieder schließen.
+    // Aufbau von oben: Überschrift, vier Knöpfe, darunter die Tastenhilfe.
+    // Die Höhe des Fensters ergibt sich aus diesen Teilen (ControlsHeight
+    // aus Hud.hpp), damit Knöpfe und Tastenhilfe sich nie überlappen.
     void DrawPause() {
         const float s = Scale();
         const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
         DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
-        Rectangle r{W * 0.5f - 300 * s, H * 0.5f - 280 * s, 600 * s, 560 * s};
+        std::vector<std::string> items = {"Weiterspielen", "Optionen", "Speichern & zum Hauptmenü", "Hauptmenü ohne Speichern"};
+        const float bh = 54 * s, gap = 12 * s, listTop = 100 * s;   // Knöpfe (listTop relativ zur Oberkante)
+        const float helpSize = 18 * s;
+        // Tastenhilfe 26 px unter dem letzten Knopf: n Knöpfe belegen n * (bh + gap) - gap
+        const float helpTop = listTop + static_cast<float>(items.size()) * (bh + gap) - gap + 26 * s;
+        const float ph = helpTop + ControlsHeight(helpSize) + 16 * s;
+        Rectangle r{W * 0.5f - 300 * s, H * 0.5f - ph * 0.5f, 600 * s, ph};
         Panel(r);
         TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);
-        std::vector<std::string> items = {"Weiterspielen", "Speichern & zum Hauptmenü", "Hauptmenü ohne Speichern"};
-        int c = ButtonList(items, {true, true, true}, pauseSel_, W * 0.5f, r.y + 100 * s, 440 * s, 54 * s, 12 * s, 24 * s);
+        int c = ButtonList(items, {true, true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
         if (pauseFrames_ > 1 && (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P))) c = 0;
         if (c == 0) {
             screen_ = Screen::Playing;
             g_audio.Play(Sfx::PauseClose);
-        } else if (c == 1) { SaveGame(world_); BackToMenu(); return; }
-        else if (c == 2) BackToMenu();
-        DrawControls(r.x + 70 * s, r.y + 320 * s, 18 * s);
+        } else if (c == 1) {
+            g_audio.Play(Sfx::UiConfirm);
+            OpenOptions(Screen::Paused);
+            return;
+        } else if (c == 2) { SaveGame(world_); BackToMenu(); return; }
+        else if (c == 3) BackToMenu();
+        DrawControls(r.x + 70 * s, r.y + helpTop, helpSize);
     }
 
     // Simulation: HUD im Simulationsmodus, Stationsfenster nur zum Ansehen
@@ -740,6 +828,7 @@ private:
     // Testskripte ihn getrennt von anderen Ausgaben mitlesen können; fflush
     // sorgt dafür, dass die Zeile sofort erscheint und nicht im Puffer wartet.
     void HandleTestOptions() {
+        if (opt_.musicTest) MusicTest();
         if (!opt_.screenshot.empty() && opt_.shotAt >= 0.0f && elapsed_ >= opt_.shotAt && !shotTaken_) {
             TakeScreenshot(opt_.screenshot.c_str());
             shotTaken_ = true;
@@ -773,6 +862,43 @@ private:
         if (opt_.quitAfter > 0.0f && elapsed_ >= opt_.quitAfter) quit_ = true;
     }
 
+    // --music-test (nur für Tests, siehe TestOptions): fester Ablauf, der
+    // jeden Musik-Fall einmal auslöst. Die Zeitpunkte liegen so weit
+    // auseinander, dass jede Blende (Einblenden 1,5 s, Ausblenden 1 s)
+    // fertig ist, bevor die nächste Aktion kommt:
+    //    3 s  neues Spiel           -> Menümusik aus-, Spielmusik einblenden
+    //    6 s  Optionen: Musik aus   -> Spielmusik aus, beide pausiert
+    //    8 s  Optionen: Musik an    -> Spielmusik setzt an derselben Stelle fort
+    //   10 s  Optionen: 20 %        -> Lautstärke sofort niedriger
+    //   11 s  zurück ins Hauptmenü  -> Menümusik setzt fort, wo sie bei 3 s war
+    //   13 s  Optionen öffnen       -> Menümusik läuft weiter (kein Wechsel)
+    // Die Aktionen gehen über dieselben Funktionen wie ein Spieler
+    // (OptionsScreen::SetMusicOn/SetVolume, NewGame, BackToMenu, OpenOptions).
+    // Alle 0,25 s eine Zeile "MUSICTEST t=... <Audio::MusicReport>".
+    void MusicTest() {
+        static const float kAt[] = {3.0f, 6.0f, 8.0f, 10.0f, 11.0f, 13.0f};
+        static const char* kWhat[] = {"neues Spiel", "Musik aus", "Musik an", "Lautstärke 20 %", "Hauptmenü", "Optionen"};
+        constexpr int kSteps = static_cast<int>(sizeof(kAt) / sizeof(kAt[0]));
+        while (musicTestStep_ < kSteps && elapsed_ >= kAt[musicTestStep_]) {
+            fprintf(stderr, "MUSICTEST t=%.2f aktion=\"%s\"\n", elapsed_, kWhat[musicTestStep_]);
+            switch (musicTestStep_) {
+                case 0: NewGame(); break;
+                case 1: options_.SetMusicOn(false); break;
+                case 2: options_.SetMusicOn(true); break;
+                case 3: options_.SetVolume(0.2f, true); break;
+                case 4: BackToMenu(); break;
+                case 5: OpenOptions(Screen::Menu); break;
+                default: break;
+            }
+            ++musicTestStep_;
+        }
+        if (elapsed_ - lastMusicReport_ >= 0.25f) {
+            lastMusicReport_ = elapsed_;
+            fprintf(stderr, "MUSICTEST t=%.2f screen=%d %s\n", elapsed_, static_cast<int>(screen_), g_audio.MusicReport().c_str());
+            fflush(stderr);
+        }
+    }
+
     // ========================================================================
     // Zustand
     // ========================================================================
@@ -780,6 +906,8 @@ private:
     World world_;                             // Einzelspiel, Simulation oder Menü-Hintergrund
     std::unique_ptr<MultiplayerScreen> mp_;   // nur im Mehrspieler vorhanden
     Screen screen_ = Screen::Menu;
+    OptionsScreen options_;                   // Optionen aus Hauptmenü und Pause
+    Screen optionsReturn_ = Screen::Menu;     // wohin "Zurück" aus den Optionen führt (Menu oder Paused)
     Camera3D cam_{};
     Vector3 camTarget_{};      // geglätteter Blickpunkt am Boden (folgt dem Schiff)
     float zoom_ = 1.1f;        // Faktor für den Kameraabstand (Mausrad)
@@ -789,6 +917,8 @@ private:
     float lastReport_ = 0.0f;
     float simStarted_ = 0.0f;
     float lastShot_ = 0.0f;
+    float lastMusicReport_ = 0.0f;   // --music-test: Zeit der letzten MUSICTEST-Zeile
+    int musicTestStep_ = 0;          // --music-test: nächster Schritt des Ablaufs
     int shotIndex_ = 0;
     int pauseFrames_ = 0;      // Frames seit dem Öffnen der Pause
     int menuSel_ = 0;          // per Tastatur gewählter Knopf im Hauptmenü
@@ -860,6 +990,7 @@ int main(int argc, char** argv) {
         else if (a == "--pirates") opt.pirates = atoi(next().c_str());
         else if (a == "--hp") opt.hp = static_cast<float>(atof(next().c_str()));
         else if (a == "--balance") opt.balance = atoll(next().c_str());
+        else if (a == "--music-test") opt.musicTest = true;
         else if (a == "--dump-model-bounds") opt.dumpModelBounds = true;
         else if (a == "--mp-connect") opt.mp.connect = next();
         else if (a == "--mp-name") opt.mp.name = next();
@@ -921,7 +1052,14 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // Einstellungsdatei neben der .exe lesen (Serveradresse, Spielername,
+    // Musik). Fehlt sie: Standardwerte (Musik an, Lautstärke 50 %).
+    g_clientConfig.Load();
     g_audio.Init(g_assets.AssetDir()); // ohne Audiogerät läuft das Spiel stumm weiter
+    // Musik-Einstellungen aus der Datei übernehmen. Auch ohne Audiogerät,
+    // damit die Optionen die richtigen Werte anzeigen.
+    g_audio.SetMusicEnabled(g_clientConfig.musicEnabled);
+    g_audio.SetMusicVolume(g_clientConfig.musicVolume);
 
     // --norender: so schnell wie möglich rechnen (0 = keine Bildraten-Grenze)
     if (opt.noRender) SetTargetFPS(0);

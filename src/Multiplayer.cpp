@@ -222,9 +222,9 @@ std::vector<net::PlayerEntry> SortedPlayers(const std::vector<net::PlayerEntry>&
 // Lebenszyklus und Zustandswechsel
 // ===========================================================================
 MultiplayerScreen::MultiplayerScreen(const MultiplayerOptions& opt) : opt_(opt) {
-    config_.Load();   // fehlt die Datei: Standardwerte (localhost:7777)
-
-    addressField_.text = config_.server;
+    // g_clientConfig hat main() schon beim Start geladen (fehlt die Datei:
+    // Standardwerte, also localhost:7777).
+    addressField_.text = g_clientConfig.server;
     addressField_.placeholder = "z. B. localhost:7777";
     addressField_.maxChars = 120;
     addressField_.accept = AddressChar;
@@ -279,8 +279,8 @@ void MultiplayerScreen::StartConnect() {
     }
     // Adresse gleich merken – auch wenn der Server gerade nicht läuft, will
     // man sie beim nächsten Mal nicht wieder eintippen.
-    config_.server = addr;
-    config_.Save();
+    g_clientConfig.server = addr;
+    g_clientConfig.Save();
 
     if (net_.State() != NetState::Disconnected) net_.Disconnect();
     if (!net_.Connect(addr)) {
@@ -302,6 +302,7 @@ void MultiplayerScreen::BackToAddress(const std::string& reason) {
     authPending_ = false;
     spectatePending_ = false;
     paused_ = false;
+    optionsOpen_ = false;
     goalAnimT_ = -1.0f;
     addressField_.focused = true;
     SetStatus(reason, BAD);
@@ -318,7 +319,7 @@ void MultiplayerScreen::EnterLobby() {
 
 void MultiplayerScreen::EnterLogin() {
     SetPhase(Phase::Login);
-    if (nameField_.text.empty()) nameField_.text = config_.name;   // zuletzt benutzter Name
+    if (nameField_.text.empty()) nameField_.text = g_clientConfig.name;   // zuletzt benutzter Name
     // Fokus dorthin, wo noch etwas fehlt
     nameField_.focused = nameField_.text.empty();
     passwordField_.focused = !nameField_.focused;
@@ -329,6 +330,7 @@ void MultiplayerScreen::EnterPlaying() {
     SetPhase(Phase::Playing);
     authPending_ = false;
     paused_ = false;
+    optionsOpen_ = false;
     dockFrames_ = 0;
     undockSentT_ = -1.0f;
     snapCam_ = true;
@@ -341,8 +343,8 @@ void MultiplayerScreen::EnterPlaying() {
 
     // Erfolgreich angemeldet: Namen für das nächste Mal speichern (nie das Passwort!)
     // und das Passwort aus dem Speicher löschen – es wird nicht mehr gebraucht.
-    config_.name = net_.MyName().empty() ? Trim(nameField_.text) : net_.MyName();
-    config_.Save();
+    g_clientConfig.name = net_.MyName().empty() ? Trim(nameField_.text) : net_.MyName();
+    g_clientConfig.Save();
     std::fill(passwordField_.text.begin(), passwordField_.text.end(), '\0');
     passwordField_.text.clear();
 }
@@ -597,7 +599,7 @@ void MultiplayerScreen::Update(float frameDt) {
             net_.Disconnect();
             g_assets.SetMoonColor(MoonColor::Grey);
             SetPhase(Phase::Address);
-            addressField_.text = config_.server;
+            addressField_.text = g_clientConfig.server;
             StartConnect();
         }
     } else {
@@ -842,6 +844,11 @@ void MultiplayerScreen::UpdateAudio(float dt) {
             g_audio.PlayAt(e, e.pos);
         }
     }
+    // Musik: Spielmusik beim Spielen (auch in Pause und Optionen) und beim
+    // Zuschauen, sonst (Adresse, Lobby, Anmeldung) die Menümusik. Beim
+    // Wechsel blendet g_audio.Update weich über.
+    const bool inGame = phase_ == Phase::Playing || phase_ == Phase::Spectating;
+    g_audio.SetMusicTrack(inGame ? MusicTrack::Game : MusicTrack::Menu);
     g_audio.Update(dt, loops);
 }
 
@@ -1008,7 +1015,7 @@ void MultiplayerScreen::DrawLobby() {
     iy += rowH;
     InfoRow("Insgesamt abgeliefert", Num(info.totalDelivered), ix, iy, iw, ts, ACCENT);
     iy += rowH;
-    InfoRow("Server", config_.server, ix, iy, iw, ts);
+    InfoRow("Server", g_clientConfig.server, ix, iy, iw, ts);
     iy += rowH;
     InfoRow("Ping", Fmt("%.0f ms", net_.PingMs()), ix, iy, iw, ts);
 
@@ -1143,7 +1150,18 @@ void MultiplayerScreen::DrawPlaying() {
     }
     DrawNoShip(w);
     if (goalAnimT_ >= 0.0f) DrawGoalAnimation();
-    if (paused_) DrawPause();
+    // Pause: entweder das Pausenmenü oder – nach "Optionen" – die Optionen.
+    // Schließen sie sich (Zurück/ESC), geht es zurück ins Pausenmenü;
+    // pauseFrames_ = 0 verhindert, dass dieselbe ESC-Taste dort gleich
+    // auch noch "Weiterspielen" auslöst.
+    if (paused_) {
+        if (!optionsOpen_) {
+            DrawPause();
+        } else if (options_.Draw()) {
+            optionsOpen_ = false;
+            pauseFrames_ = 0;
+        }
+    }
 }
 
 // Name eines Spielers zu einem Schiff: über Ship::playerId (aus dem Snapshot)
@@ -1316,30 +1334,45 @@ void MultiplayerScreen::DrawGoalAnimation() {
     if (t > 1.0f) TextCentered("Enter: weiter", W * 0.5f, y0 + bandH - 32 * s, 16 * s, fade(MUTED));
 }
 
+// Aufbau von oben: Überschrift, Hinweis, drei Knöpfe, Hinweis zum Abmelden,
+// Tastenhilfe. Die Fensterhöhe ergibt sich aus diesen Teilen (ControlsHeight
+// aus Hud.hpp), damit Knöpfe und Tastenhilfe sich nie überlappen.
 void MultiplayerScreen::DrawPause() {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
-    Rectangle r{W * 0.5f - 300 * s, H * 0.5f - 270 * s, 600 * s, 540 * s};
+    std::vector<std::string> items = {"Weiterspielen", "Optionen", "Abmelden & zum Hauptmenü"};
+    const float bh = 54 * s, gap = 12 * s, listTop = 126 * s;   // Knöpfe (listTop relativ zur Oberkante)
+    // n Knöpfe belegen n * (bh + gap) - gap; darunter 18 px Abstand, Hinweiszeile (16 px) und 16 px Abstand
+    const float noteTop = listTop + static_cast<float>(items.size()) * (bh + gap) - gap + 18 * s;
+    const float helpTop = noteTop + 32 * s;
+    const float helpSize = 18 * s;
+    const float ph = helpTop + ControlsHeight(helpSize) + 16 * s;
+    Rectangle r{W * 0.5f - 300 * s, H * 0.5f - ph * 0.5f, 600 * s, ph};
     Panel(r);
     TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);
     TextCentered("Das Spiel läuft auf dem Server weiter!", W * 0.5f, r.y + 86 * s, 20 * s, MUTED);
-    std::vector<std::string> items = {"Weiterspielen", "Abmelden & zum Hauptmenü"};
-    int c = ButtonList(items, {true, true}, pauseSel_, W * 0.5f, r.y + 126 * s, 440 * s, 54 * s, 12 * s, 24 * s);
+    int c = ButtonList(items, {true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
     // ESC im selben Frame, in dem die Pause geöffnet wurde, darf sie nicht gleich schließen
     if (pauseFrames_ > 1 && (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P))) c = 0;
     if (c == 0) {
         paused_ = false;
         g_audio.Play(Sfx::PauseClose);
     } else if (c == 1) {
+        // Optionen: ab dem nächsten Frame statt des Pausenmenüs (DrawPlaying)
+        g_audio.Play(Sfx::UiConfirm);
+        optionsOpen_ = true;
+        options_.Open();
+        return;
+    } else if (c == 2) {
         net_.Disconnect();   // Leave: der Server speichert den Fortschritt sofort
         wantsMenu_ = true;
     }
     // Die Pause gibt es nur im freien Flug, also gilt hier immer: Das Schiff
     // bleibt nach dem Abmelden noch 10 s im All (GameServer::LogoutPlayer).
-    TextCentered("Abmelden im All: Dein Schiff bleibt noch 10 s schutzlos stehen.", W * 0.5f, r.y + 250 * s, 16 * s,
+    TextCentered("Abmelden im All: Dein Schiff bleibt noch 10 s schutzlos stehen.", W * 0.5f, r.y + noteTop, 16 * s,
                  MUTED);
-    DrawControls(r.x + 70 * s, r.y + 276 * s, 18 * s);
+    DrawControls(r.x + 70 * s, r.y + helpTop, helpSize);
 }
 
 // --- (e) Zuschauen ---------------------------------------------------------------------------
