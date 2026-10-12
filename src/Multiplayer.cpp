@@ -500,7 +500,11 @@ void MultiplayerScreen::HandleNetwork() {
 // ===========================================================================
 // Update
 // ===========================================================================
-void MultiplayerScreen::Update(float dt) {
+void MultiplayerScreen::Update(float frameDt) {
+    // frameDt ist die echte Bildzeit. Ungekürzt braucht sie nur die
+    // Eingabeuhr im NetClient (Schritt 2). Kamera, Animationen und Zähler hier
+    // rechnen wie im Einzelspieler mit höchstens 1/20 s pro Frame.
+    const float dt = std::min(frameDt, 1.0f / 20.0f);
     elapsed_ += dt;
     ++phaseFrames_;
 
@@ -519,7 +523,7 @@ void MultiplayerScreen::Update(float dt) {
     // --- 2. Netzwerk: Pakete abarbeiten, Eingaben senden, Welt nachführen --------
     // Muss in JEDER Phase laufen, sonst würden z. B. die Lobby-Infos nicht
     // aktualisiert und die Verbindung liefe in eine Zeitüberschreitung.
-    net_.Update(dt, held, scan, interact);
+    net_.Update(frameDt, held, scan, interact);
 
     // --- 3. Was ist passiert? -------------------------------------------------------
     HandleNetwork();
@@ -1331,6 +1335,10 @@ void MultiplayerScreen::DrawPause() {
         net_.Disconnect();   // Leave: der Server speichert den Fortschritt sofort
         wantsMenu_ = true;
     }
+    // Die Pause gibt es nur im freien Flug, also gilt hier immer: Das Schiff
+    // bleibt nach dem Abmelden noch 10 s im All (GameServer::LogoutPlayer).
+    TextCentered("Abmelden im All: Dein Schiff bleibt noch 10 s schutzlos stehen.", W * 0.5f, r.y + 250 * s, 16 * s,
+                 MUTED);
     DrawControls(r.x + 70 * s, r.y + 276 * s, 18 * s);
 }
 

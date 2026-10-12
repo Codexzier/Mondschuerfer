@@ -75,7 +75,7 @@
 //   3. Ende: Jeder Bot meldet sich mit Leave ab und trennt die Verbindung
 //      sauber (der Server speichert dabei das Konto); danach Abschlussbericht.
 //
-// Zustände eines Bots (enum Phase), Protokoll wie in DESIGN Abschnitt 3:
+// Zustände eines Bots (enum Phase), Protokoll wie in docs/Mehrspieler.md, Abschnitt 3:
 //   Waiting -> Connecting -> Lobby (wartet auf ServerInfo)
 //     Spieler:   -> DerivingKey -> Registering --Welcome--> InGame
 //                                      \--Error NameTaken--> AwaitChallenge
@@ -163,7 +163,7 @@ constexpr double REPORT_INTERVAL = 10.0;     // kurze Zwischenmeldung
 constexpr double MAX_INPUT_BACKLOG = 0.25;   // so weit darf der Eingabetakt zurückfallen, dann neu ansetzen
 constexpr int MAX_INPUTS_PER_UPDATE = 4;     // höchstens so viele Schritte auf einmal nachholen
 
-// --- Verhalten angedockt (DESIGN 3.5 und 9) ---
+// --- Verhalten angedockt (docs/Mehrspieler.md, Abschnitt 4: Tastendrücke als Zähler) ---
 constexpr double DOCK_ACTION_DELAY = 0.3;    // nach dem Andocken: reparieren oder aufrüsten ...
 constexpr double UNDOCK_DELAY = 1.0;         // ... und nach ~1 s wieder abdocken
 constexpr double UNDOCK_REPEAT = 2.0;        // immer noch angedockt? Abdocken noch einmal schicken
@@ -702,7 +702,7 @@ void LoadTest::StartDueBots(double now) {
 }
 
 void LoadTest::Connect(Bot& b) {
-    // Die Protokollversion geht als "Verbindungsdaten" mit (DESIGN 3.1). Ein
+    // Die Protokollversion geht als "Verbindungsdaten" mit (docs/Mehrspieler.md, Abschnitt 3). Ein
     // Server mit anderer Version antwortet mit Error{VersionMismatch}.
     ENetPeer* peer = enet_host_connect(host_, &address_, net::CHANNEL_COUNT, net::PROTOCOL_VERSION);
     b.connectStartedAt = Now();
@@ -716,8 +716,8 @@ void LoadTest::Connect(Bot& b) {
     }
     peer->data = &b;   // so findet HandleEvent zu jedem ENet-Ereignis den Bot
     b.peer = peer;
-    // Zeitüberschreitungen wie beim Spiel (DESIGN 3.9). Für den
-    // Verbindungsaufbau selbst gilt zusätzlich CONNECT_TIMEOUT (UpdateBot).
+    // Zeitüberschreitungen wie beim Spiel (5..15 s, wie GameServer::OnConnect).
+    // Für den Verbindungsaufbau selbst gilt zusätzlich CONNECT_TIMEOUT (UpdateBot).
     enet_peer_timeout(peer, 32, 5000, 15000);
     SetPhase(b, Phase::Connecting);
 }
@@ -838,7 +838,8 @@ void LoadTest::UpdatePlayer(Bot& b, double now) {
             b.dockActionSent = true;
         }
         // Abdocken NUR als DockAction, nicht über den Interaktions-Zähler
-        // (DESIGN 9). Der Snapshot, der "abgedockt" zeigt, kommt erst eine
+        // (Schutzregel nach dem Abdocken, docs/Mehrspieler.md Abschnitt 4).
+        // Der Snapshot, der "abgedockt" zeigt, kommt erst eine
         // Paketlaufzeit später – bis dahin nicht ständig erneut senden.
         if (now - b.dockedSince >= UNDOCK_DELAY && (b.undockSentAt < 0.0 || now - b.undockSentAt >= UNDOCK_REPEAT)) {
             net::DockActionMsg a;
@@ -877,7 +878,7 @@ void LoadTest::SendInput(Bot& b) {
             turn = std::clamp(AngleDiff(b.yaw, want) * 2.0f, -1.0f, 1.0f);
         }
     }
-    // Tastendrücke als fortlaufende Zähler (DESIGN 3.5). Der Server wertet
+    // Tastendrücke als fortlaufende Zähler (docs/Mehrspieler.md, Abschnitt 4). Der Server wertet
     // die erste Eingabe nur als Ausgangsstand – Beginn bei 0 ist richtig.
     b.scanT -= dt;
     if (b.scanT <= 0.0f) {
@@ -915,7 +916,7 @@ void LoadTest::SendInput(Bot& b) {
     }
 }
 
-// Konto anlegen (DESIGN 3.3). Gibt es den Namen schon, antwortet der Server
+// Konto anlegen (docs/Mehrspieler.md, Abschnitt 8). Gibt es den Namen schon, antwortet der Server
 // mit NameTaken und der Bot meldet sich an (OnError -> StartLogin).
 void LoadTest::SendRegister(Bot& b) {
     net::RegisterMsg m;
@@ -925,7 +926,7 @@ void LoadTest::SendRegister(Bot& b) {
     SetPhase(b, Phase::Registering);
 }
 
-// Anmelden (DESIGN 3.4): Name schicken, auf die Herausforderung warten
+// Anmelden (docs/Mehrspieler.md, Abschnitt 8): Name schicken, auf die Herausforderung warten
 void LoadTest::StartLogin(Bot& b) {
     net::LoginStartMsg m;
     m.name = b.name;
@@ -1168,7 +1169,7 @@ void LoadTest::OnServerInfo(Bot& b, const net::ServerInfoMsg& m) {
         SetPhase(b, Phase::AwaitWelcome);
         return;
     }
-    // Schlüssel = PBKDF2(Passwort, Salz aus Server-Salz und Name), DESIGN 3.3.
+    // Schlüssel = PBKDF2(Passwort, Salz aus Server-Salz und Name) (docs/Mehrspieler.md, Abschnitt 8).
     // Im Hilfs-Thread rechnen (siehe Dateikopf). Die Lambda-Funktion bekommt
     // KOPIEN aller Werte, damit sie nichts aus dem Haupt-Thread anfasst.
     const std::string password = opt_.password;
@@ -1233,7 +1234,7 @@ void LoadTest::OnChallenge(Bot& b, const net::LoginChallengeMsg& m) {
 void LoadTest::OnWelcome(Bot& b, const net::WelcomeMsg& m) {
     if (b.phase == Phase::InGame) {
         // Erneutes Welcome = Welt wurde neu aufgebaut (Einstellungen auf der
-        // Webseite geändert, DESIGN 3.8). Eingaben laufen einfach weiter: Die
+        // Webseite geändert, docs/Mehrspieler.md Abschnitt 12). Eingaben laufen einfach weiter: Die
         // fortlaufende seq ist für den Server in jedem Fall gültig.
         ++rewelcomes_;
         return;
@@ -1267,7 +1268,7 @@ void LoadTest::OnSnapshot(Bot& b, const net::SnapshotMsg& m) {
 
     // Reihenfolge und Verluste: tick ist der Simulationsschritt des Servers.
     // Spieler bekommen jeden 2., Zuschauer jeden 3. Schritt einen Snapshot
-    // (DESIGN 3.6/3.7). Größere Abstände = unterwegs verlorene Pakete (oder
+    // (docs/Mehrspieler.md, Abschnitte 4 und 9). Größere Abstände = unterwegs verlorene Pakete (oder
     // ein Server, der nicht mehr mitkommt). Unzuverlässige Pakete können sich
     // auch überholen: Ein älterer als der letzte wird verworfen, wie im Spiel.
     if (b.anyTick) {

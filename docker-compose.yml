@@ -27,7 +27,8 @@
 #
 # SICHERHEIT (Kurzfassung, Begründungen jeweils unten)
 #   - Spielport 7777/UDP ist von außen erreichbar (dafür ist er da).
-#   - Die Verwaltungsseite ist nur auf DIESEM Rechner erreichbar (127.0.0.1).
+#   - Die Verwaltungsseite ist nur auf DIESEM Rechner erreichbar (127.0.0.1),
+#     außer man setzt WEB_PUBLISH_ADDRESS in .env (Heimnetz, unverschlüsselt).
 #   - Der Container läuft als Nicht-root-Benutzer, mit schreibgeschütztem
 #     Dateisystem (nur /data ist beschreibbar) und ohne Sonderrechte.
 #   - Ohne ADMIN_USER/ADMIN_PASSWORD startet Compose gar nicht erst.
@@ -72,10 +73,11 @@ services:
       #   1. SSH-Tunnel (nichts öffnen):  ssh -L 8080:127.0.0.1:8080 benutzer@server
       #      und dann auf dem eigenen Rechner http://localhost:8080 öffnen.
       #   2. Über das Internet: das Profil "online" unten (Caddy mit HTTPS).
-      #   3. Bewusst im Heimnetz öffnen (unverschlüsselt!): Zeile ändern in
-      #      "8080:8080" (alle Netzwerkkarten) oder "192.168.1.20:8080:8080"
-      #      (nur diese Adresse des Rechners). Nie so ins Internet weiterleiten.
-      - "127.0.0.1:8080:8080"
+      #   3. Bewusst im Heimnetz öffnen (unverschlüsselt!): in .env
+      #      WEB_PUBLISH_ADDRESS=0.0.0.0 (alle Netzwerkkarten) oder z. B.
+      #      WEB_PUBLISH_ADDRESS=192.168.1.20 (nur diese Adresse des Rechners).
+      #      Nie so ins Internet weiterleiten.
+      - "${WEB_PUBLISH_ADDRESS:-127.0.0.1}:8080:8080"
 
     volumes:
       # Datenordner: Konten, Bestenliste, Einstellungen der Webseite, Server-Salz.
@@ -129,6 +131,10 @@ services:
       MONDSCHUERFER_WEB_BIND: "0.0.0.0"   # im Container nötig (Docker reicht Anfragen über eine eigene Netzwerkkarte herein)
       MONDSCHUERFER_DATA: /data           # Volume (siehe oben)
       MONDSCHUERFER_WEB_ROOT: /app/web    # HTML/JS/CSS der Webseite im Image
+      # Nur von diesem Dienst (Name im Docker-Netz) wird der Header X-Real-IP
+      # als echte Besucheradresse übernommen (Sperre nach Fehlversuchen hinter
+      # Caddy, siehe server/Caddyfile). Läuft Caddy nicht, gilt niemand als Proxy.
+      MONDSCHUERFER_TRUSTED_PROXY: caddy
 
     # --- Sicherheitsgrenzen ---------------------------------------------------
     # Ganzes Dateisystem des Containers schreibgeschützt. Der Server schreibt

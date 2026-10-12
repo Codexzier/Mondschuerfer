@@ -284,7 +284,9 @@
                         <!-- /HARDWARE-EMPFEHLUNG -->
                         <p class="hint">
                             Die Simulation braucht pro Schritt meist nur Bruchteile einer Millisekunde. Der Engpass ist
-                            fast immer das Netzwerk (Upload ca. 10–15 KB/s pro Spieler). Auf dem eigenen System messen:
+                            fast immer das Netzwerk: Der Upload pro Spieler wächst mit der Spielerzahl, weil jeder mehr Schiffe
+                            in seiner Umgebung sieht (ca. 9 KB/s bei 16, ca. 13 KB/s bei 32, ca. 25 KB/s bei 64 Spielern;
+                            siehe Spalte „Bemerkung“). Auf dem eigenen System messen:
                             <code>mondschuerfer-server --benchmark 64</code>
                         </p>
                     </div>

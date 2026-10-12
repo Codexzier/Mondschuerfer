@@ -69,6 +69,8 @@ public:
     // in diesem Frame gedrückt (E / F). Arbeitet Netzwerknachrichten ab,
     // schickt Eingaben (30/s), sagt das eigene Schiff voraus, interpoliert die
     // anderen und aktualisiert Partikel in der Spiegelwelt.
+    // dt = echte Bildzeit, NICHT auf 1/20 s gekürzt: Die Eingabeuhr muss genau
+    // 30 Eingaben pro Sekunde erzeugen, so viele, wie der Server verbraucht.
     void Update(float dt, const ShipInput& held, bool scanPressed, bool interactPressed);
 
     // Stationsfenster: Anfrage an den Server

@@ -29,6 +29,10 @@ struct WebConfig {
     std::string user;          // ADMIN_USER
     std::string password;      // ADMIN_PASSWORD
     std::string webRoot = "web";
+    // Vertrauenswürdiger Reverse-Proxy (Name oder IP, z. B. "caddy"); leer =
+    // keiner. Nur von dieser Adresse wird der Header "X-Real-IP" (echte
+    // Adresse des Besuchers) übernommen, siehe WebContext::ClientAddress.
+    std::string trustedProxy;
 };
 
 class WebServer {

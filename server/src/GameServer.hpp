@@ -4,7 +4,7 @@
 //
 // Was macht er?
 //   - Öffnet einen ENet-Host (UDP-Port, Standard 7777) und spricht mit allen
-//     Clients nach dem Protokoll aus shared/Protocol.hpp (Ablauf: DESIGN bzw.
+//     Clients nach dem Protokoll aus shared/Protocol.hpp (Ablauf: docs/Mehrspieler.md bzw.
 //     Kommentar in Protocol.hpp).
 //   - Rechnet die gemeinsame Spielwelt (shared/World.hpp) mit festen 30
 //     Schritten pro Sekunde. Jeder Spieler steuert sein Schiff über
@@ -53,6 +53,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 // ENet-Typen nur vorwärts deklarieren (vollständig in <enet/enet.h>).
@@ -66,6 +67,8 @@ struct ServerConfig {
     GameSettings settings;          // Startwerte: defaults oder settings.txt (Webseite)
     // Höchstens so viele gleichzeitige Verbindungen von EINER öffentlichen
     // IP-Adresse (Schutz davor, dass ein Einzelner alle Plätze belegt).
+    // Gilt auch für halboffene Verbindungen (GuardHalfOpenPeers) und für
+    // gerade schließende (OnConnect).
     // 0 = unbegrenzt. Lokale/private Adressen (127.x, 10.x, 172.16-31.x,
     // 192.168.x) sind ausgenommen: LAN, Docker-Weiterleitung, Lasttest.
     int maxConnectionsPerIp = 8;
@@ -141,6 +144,8 @@ private:
         bool countersKnown = false;
         uint8_t lastScanPresses = 0, lastInteractPresses = 0;
         net::InputRecord held;              // zuletzt angewendete Eingabe (wenn nichts Neues kommt)
+        int queueMinInWindow = 1 << 30;     // kürzeste Schlange im laufenden Fenster (ApplyInputs)
+        int queueWindowSteps = 0;           // Schritte im laufenden Fenster
         uint64_t noInteractUntilTick = 0;   // kurz nach dem Abdocken "Interaktion" ignorieren (sonst sofort wieder angedockt)
 
         // --- Senden ---
@@ -159,6 +164,17 @@ private:
 
         bool isBot = false;
         BotBrain bot;
+    };
+
+    // Spieler, der sich außerhalb einer Station abgemeldet hat: Sein Schiff
+    // bleibt noch LOGOUT_GRACE Sekunden ohne Steuerung in der Welt und kann
+    // abgeschossen werden (siehe LogoutPlayer). Die Verbindung ist schon weg.
+    struct Departing {
+        int playerId = -1;
+        Account* account = nullptr;
+        std::string name;
+        double until = 0.0;         // Now(), ab dem das Schiff verschwindet
+        int deaths = 0;             // PlayerState::deaths beim Abmelden (erhöht = abgeschossen)
     };
 
     // --- Zeit -------------------------------------------------------------------
@@ -186,6 +202,7 @@ private:
 
     // --- Netzwerk -------------------------------------------------------------------
     void ServiceNetwork(uint32_t timeoutMs);
+    void GuardHalfOpenPeers();
     void OnConnect(_ENetPeer* peer, uint32_t data);
     void OnReceive(Client& c, const uint8_t* data, size_t len);
     void OnDisconnect(Client& c);
@@ -199,8 +216,13 @@ private:
     void BadPacket(Client& c, const char* what);
     void FailLogin(Client& c, net::ErrorCode code);
 
-    void LoginPlayer(Client& c, Account* account, const std::string& name);
-    void LogoutPlayer(Client& c, const char* reason, bool saveNow);
+    // resumePlayerId >= 0: das noch in der Welt verbliebene Schiff übernehmen (Departing)
+    void LoginPlayer(Client& c, Account* account, const std::string& name, int resumePlayerId = -1);
+    // allowGrace = false: Schiff sofort entfernen (Server wird beendet)
+    void LogoutPlayer(Client& c, const char* reason, bool saveNow, bool allowGrace = true);
+    void UpdateDeparting(bool finishAll);
+    void FinishDeparting(const Departing& d);
+    bool CrashOnLogout(PlayerState& ps);
     void StoreProgress(Client& c);
     void SaveAll();
 
@@ -223,8 +245,9 @@ private:
     // --- Zählen und Schutzmaßnahmen ---------------------------------------------------
     int PlayersOnline() const;
     int SpectatorsOnline() const;
-    bool NameLocked(const std::string& lowerName, double now);
-    void RecordNameFailure(const std::string& lowerName, double now);
+    bool LoginBlocked(const std::string& lowerName, uint32_t ip, double now);
+    void RecordLoginFailure(const std::string& lowerName, bool accountExists, const Client& c, double now);
+    void RememberTrustedIp(const std::string& lowerName, uint32_t ip);
     bool RegistrationAllowed(uint32_t ip, double now);
     void RecordRegistration(uint32_t ip, double now);
 
@@ -249,6 +272,7 @@ private:
     bool enetReady_ = false;
     bool benchmark_ = false;
     std::vector<std::unique_ptr<Client>> clients_;
+    std::vector<Departing> departing_;
     uint32_t nextConnId_ = 1;
     int nextPlayerId_ = 1;
     uint64_t tick_ = 0;
@@ -256,9 +280,15 @@ private:
     long long savedTotalDelivered_ = -1;
     net::Key32 dummyKey_{};             // für unbekannte Namen (gleicher Rechenweg wie bei echten Konten)
 
-    // Fehlversuche je Name (Kleinbuchstaben) und neue Konten je IP: Zeitpunkte (Now())
-    std::map<std::string, std::deque<double>> loginFailures_;
+    // Fehlversuche bei der Anmeldung und neue Konten: Zeitpunkte (Now()) je
+    // Schlüssel (siehe LoginBlocked). Namen in Kleinbuchstaben, IPs wie ENet.
+    std::map<std::pair<std::string, uint32_t>, std::deque<double>> failuresByNameIp_;
+    std::map<std::string, std::deque<double>> failuresByName_;
+    std::map<uint32_t, std::deque<double>> failuresByIp_;
+    std::map<std::string, std::vector<uint32_t>> trustedIps_;   // erfolgreiche Anmeldungen seit Serverstart
     std::map<uint32_t, std::deque<double>> registrations_;
+    double lastTableFullLog_ = -1e9;
+    uint64_t halfOpenDropped_ = 0;      // verworfene halboffene Verbindungen (Meldung 1x pro Minute)
 
     // Messwerte für den Status (werden jede Sekunde ausgewertet und geleert)
     std::chrono::steady_clock::time_point startTime_;

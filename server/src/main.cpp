@@ -62,7 +62,10 @@ extern "C" void OnSignal(int) {
 struct Options {
     int port = net::DEFAULT_PORT;
     int webPort = 8080;
-    std::string webBind = "0.0.0.0";
+    // Standard: nur dieser Rechner. Docker setzt 0.0.0.0 selbst (docker-compose.yml),
+    // weil Anfragen dort über eine eigene Netzwerkkarte des Containers kommen.
+    std::string webBind = "127.0.0.1";
+    std::string trustedProxy;      // Reverse-Proxy, dessen X-Real-IP gilt (z. B. "caddy")
     std::string dataDir = "data";
     std::string webRoot;           // leer = <Ordner der Programmdatei>/web
     bool noWeb = false;
@@ -127,6 +130,7 @@ void ReadEnvironment(Options& o) {
     Env("MONDSCHUERFER_WEB_BIND", o.webBind);
     Env("MONDSCHUERFER_DATA", o.dataDir);
     Env("MONDSCHUERFER_WEB_ROOT", o.webRoot);
+    Env("MONDSCHUERFER_TRUSTED_PROXY", o.trustedProxy);
     EnvInt("MAX_CONNECTIONS_PER_IP", o.maxPerIp, 0, 1000);
     Env("ADMIN_USER", o.adminUser);
     Env("ADMIN_PASSWORD", o.adminPassword);
@@ -157,8 +161,10 @@ void PrintUsage() {
         << "Aufruf: mondschuerfer-server [Optionen]\n\n"
         << "  --port N           UDP-Port für das Spiel (Standard 7777, Umgebung MONDSCHUERFER_PORT)\n"
         << "  --web-port N       TCP-Port der Verwaltungsseite (Standard 8080, MONDSCHUERFER_WEB_PORT)\n"
-        << "  --web-bind ADRESSE Adresse der Verwaltungsseite (Standard 0.0.0.0, MONDSCHUERFER_WEB_BIND;\n"
-        << "                     ohne Docker 127.0.0.1 = nur dieser Rechner)\n"
+        << "  --web-bind ADRESSE Adresse der Verwaltungsseite (Standard 127.0.0.1 = nur dieser Rechner,\n"
+        << "                     MONDSCHUERFER_WEB_BIND; 0.0.0.0 = alle Netzwerkkarten, unverschlüsselt!)\n"
+        << "  --trusted-proxy NAME  Reverse-Proxy (Name oder IP), dessen Header X-Real-IP als Adresse\n"
+        << "                     des Besuchers gilt (MONDSCHUERFER_TRUSTED_PROXY; Docker: caddy)\n"
         << "  --data ORDNER      Datenordner (Standard ./data, MONDSCHUERFER_DATA)\n"
         << "  --web-root ORDNER  Dateien der Webseite (Standard <Programmordner>/web, MONDSCHUERFER_WEB_ROOT)\n"
         << "  --no-web           Verwaltungsseite nicht starten\n"
@@ -221,6 +227,9 @@ int ParseArguments(int argc, char** argv, Options& o) {
         } else if (arg == "--data") {
             if (!next("Ordner")) return 1;
             o.dataDir = value;
+        } else if (arg == "--trusted-proxy") {
+            if (!next("Name")) return 1;
+            o.trustedProxy = value;
         } else if (arg == "--web-root") {
             if (!next("Ordner")) return 1;
             o.webRoot = value;
@@ -317,6 +326,7 @@ int main(int argc, char** argv) {
     wc.port = opt.webPort;
     wc.user = opt.adminUser;
     wc.password = opt.adminPassword;
+    wc.trustedProxy = opt.trustedProxy;
     wc.webRoot = opt.webRoot.empty() ? (ExecutableDir(argc > 0 ? argv[0] : nullptr) / "web").string() : opt.webRoot;
     if (!opt.noWeb) {
         // WebServer::Start prüft selbst, ob Benutzer/Passwort sicher genug sind,

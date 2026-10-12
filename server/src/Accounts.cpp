@@ -404,6 +404,24 @@ bool Accounts::Load(std::string& error) {
                 for (int u = 0; u < cfg::UP_COUNT && std::getline(is, part, ','); ++u)
                     ParseInt(part, p.upgrades[u], 0, cfg::UPGRADE_LEVELS);
             }
+            else if (k == "pos") {
+                // "x,z,yaw,seed". Nur übernehmen, wenn alle vier Teile gültig
+                // sind; ob der Ort in der Karte liegt, prüft RestoreProgress.
+                std::istringstream is(v);
+                std::string part[4];
+                double x = 0, z = 0, yaw = 0;
+                long long seed = 0;
+                int n = 0;
+                while (n < 4 && std::getline(is, part[n], ',')) ++n;
+                if (n == 4 && ParseDouble(part[0], x) && ParseDouble(part[1], z) && ParseDouble(part[2], yaw) &&
+                    ParseI64(part[3], seed) && seed >= 0 && seed <= 0xFFFFFFFFLL) {
+                    p.hasPos = true;
+                    p.posX = static_cast<float>(x);
+                    p.posZ = static_cast<float>(z);
+                    p.yaw = static_cast<float>(yaw);
+                    p.posSeed = static_cast<uint32_t>(seed);
+                }
+            }
             // unbekannte Felder (z. B. aus einer neueren Version) werden ignoriert
         }
         // Ohne gültigen Namen und Schlüssel ist das Konto unbrauchbar: überspringen
@@ -515,6 +533,8 @@ void Accounts::SaveAccounts() {
         out += " kills=" + std::to_string(p.kills);
         out += " deaths=" + std::to_string(p.deaths);
         out += " goals=" + std::to_string(p.goals);
+        if (p.hasPos)
+            out += " pos=" + NumText(p.posX) + "," + NumText(p.posZ) + "," + NumText(p.yaw) + "," + std::to_string(p.posSeed);
         out += "\n";
     }
     QueueWrite(PathOf(ACCOUNTS_FILE), std::move(out), false, "Konten");

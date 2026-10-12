@@ -27,6 +27,19 @@
 	# Neustart des Containers. Was nicht läuft, kann nicht angegriffen werden.
 	admin off
 
+	# Zeitgrenzen gegen absichtlich langsame Verbindungen ("Slowloris"): Wer
+	# die Kopfzeilen oder den Inhalt einer Anfrage nicht innerhalb von 10 s
+	# vollständig schickt, wird getrennt. Erst dann reicht Caddy die Anfrage
+	# an den Mondschürfer-Server weiter, dessen 4 Arbeits-Threads so nie von
+	# trödelnden Besuchern blockiert werden.
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 10s
+			idle 2m
+		}
+	}
+
 	# Optional: E-Mail-Adresse für Let's Encrypt (Warnungen, falls ein
 	# Zertifikat einmal nicht verlängert werden kann). Raute entfernen und
 	# Adresse eintragen:
@@ -40,7 +53,16 @@
 	# Caddy gibt den ursprünglichen Host-Header unverändert weiter – das ist
 	# wichtig, denn der Server vergleicht ihn bei Änderungen (POST) mit dem
 	# Origin-Header des Browsers (Schutz gegen Cross-Site-Request-Forgery).
-	reverse_proxy server:8080
+	reverse_proxy server:8080 {
+		# Echte Adresse des Besuchers mitschicken. Der Server sperrt nach
+		# falschen Anmeldungen pro Adresse; ohne diesen Header sähe er für alle
+		# Besucher nur die Adresse von Caddy, und ein Angreifer könnte alle
+		# gemeinsam aussperren. Caddy ÜBERSCHREIBT einen vom Besucher selbst
+		# mitgeschickten X-Real-IP, fälschen lässt er sich also nicht. Der
+		# Server glaubt ihn nur, wenn die Anfrage von Caddy kommt
+		# (MONDSCHUERFER_TRUSTED_PROXY=caddy in docker-compose.yml).
+		header_up X-Real-IP {remote_host}
+	}
 
 	# Antworten komprimieren (die Statusabfrage alle 2 s wird kleiner)
 	encode zstd gzip

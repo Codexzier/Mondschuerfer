@@ -294,6 +294,10 @@ schnelle Läufe), `--nohud`, `--shot-every Sekunden` (Bildserie), `--cam PX PY P
 (Gesamtablieferung = Ausbaustufe der Stationen). Die Bedeutung jeder Option steht bei `TestOptions` in
 `src/main.cpp`.
 
+Für Entwickler: `--dump-model-bounds > shared/ModelBounds.inc` misst alle Modelle in `assets/models`
+neu und gibt die Tabelle aus, aus der der Server die Größe der Stationen kennt (nötig, wenn Modelle
+hinzukommen oder sich ändern).
+
 **Mehrspieler-Testoptionen** (starten direkt im Mehrspieler-Bildschirm, z. B. für automatische Tests
 mit mehreren Spielen auf einem Rechner):
 

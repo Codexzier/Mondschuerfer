@@ -74,12 +74,31 @@ void StatBar(float x, float y, float w, const char* label, const std::string& va
 // Matrizen wie BeginMode3D (View- und Projektionsmatrix der Kamera) in
 // Bildschirmpixel um. Das Ergebnis kann auch außerhalb des Fensters liegen
 // (negativ oder größer als Breite/Höhe) – genau das nutzt der Randpfeil.
-// Bekannte Schwäche: Für Punkte HINTER der Kamera (hinter ihrer Bildebene)
-// liefert die Projektion gespiegelte Koordinaten, weil dabei durch einen
-// negativen Wert geteilt wird. Mit der Spielkamera (30 hoch, 27 nach +z,
-// Zoom 1) betrifft das Stationen, die mehr als etwa 50 Einheiten in +z-
-// Richtung ("unten" im Bild) liegen: Ihr Randpfeil zeigt dann nach oben
-// statt nach unten.
+// Vorsicht: Für Punkte HINTER der Kamera (hinter ihrer Bildebene) liefert
+// die Projektion gespiegelte Koordinaten, weil dabei durch einen negativen
+// Wert geteilt wird. Mit der Spielkamera (30 hoch, 27 nach +z, Zoom 1)
+// betrifft das Stationen, die mehr als etwa 50 Einheiten in +z-Richtung
+// ("unten" im Bild) liegen. Für sie wird die Richtung des Randpfeils deshalb
+// aus der Lage am Boden berechnet (ArrowDirection).
+// Richtung (in Bildschirmkoordinaten, y nach unten) von der Bildmitte zu
+// einem Weltpunkt, der nicht im Bild ist. Liegt er vor der Kamera, ist das
+// einfach der projizierte Punkt minus Bildmitte. Liegt er dahinter, wäre die
+// Projektion gespiegelt; dann zählt nur die Lage am Boden (x/z) relativ zum
+// Kameraziel: "vorwärts" ist die Blickrichtung der Kamera am Boden (im Bild
+// oben), "rechts" steht senkrecht dazu (im Bild rechts).
+Vector2 ArrowDirection(const Camera3D& cam, Vector3 point, Vector2 projected, Vector2 center) {
+    const Vector3 look = Vector3Subtract(cam.target, cam.position);
+    const bool behind = Vector3DotProduct(Vector3Subtract(point, cam.position), look) <= 0.0f;
+    if (!behind) return Vector2Subtract(projected, center);
+    Vector2 fwd{look.x, look.z};
+    if (Vector2Length(fwd) < 1e-4f) fwd = {0.0f, -1.0f};   // Kamera genau senkrecht: -z gilt als oben
+    fwd = Vector2Normalize(fwd);
+    const Vector2 right{-fwd.y, fwd.x};
+    const Vector2 delta{point.x - cam.target.x, point.z - cam.target.z};
+    // Bildschirm: x = Anteil nach rechts, y = Anteil nach hinten (y wächst nach unten)
+    return {Vector2DotProduct(delta, right), -Vector2DotProduct(delta, fwd)};
+}
+
 void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) {
     const float s = Scale();
     const Station& st = w.stations[idx];
@@ -125,7 +144,7 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
         // max(1, ...) verhindert eine Division durch 0, wenn d genau
         // waagerecht oder senkrecht ist.
         Vector2 c{W * 0.5f, H * 0.5f};
-        Vector2 d = Vector2Subtract(p, c);
+        Vector2 d = ArrowDirection(cam, top, p, c);
         float kx = (W * 0.5f - margin) / std::max(1.0f, fabsf(d.x));
         float ky = (H * 0.5f - margin) / std::max(1.0f, fabsf(d.y));
         float k = std::min(kx, ky);

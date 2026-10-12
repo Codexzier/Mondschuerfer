@@ -97,13 +97,14 @@ using Clock = std::chrono::steady_clock;
 // ===========================================================================
 // Einstellungen des Clients
 // ===========================================================================
-constexpr double CONNECT_TIMEOUT = 5.0;       // s bis "Server nicht erreichbar" (DESIGN 4)
+constexpr double CONNECT_TIMEOUT = 5.0;       // s bis "Server nicht erreichbar"
 constexpr double LOGIN_TIMEOUT = 10.0;        // s ohne Antwort auf Register/Login/Spectate
 constexpr int DISCONNECT_WAIT_MS = 300;       // so lange auf die Bestätigung der Trennung warten
 constexpr double SERVER_ERROR_GRACE = 5.0;    // s: Trennung kurz nach einem Error gehört zu diesem Error
 constexpr float MAX_FRAME_DT = 0.25f;         // längere Frames (Fenster verschoben ...) werden gekürzt
+constexpr float MAX_VIEW_DT = 1.0f / 20.0f;   // Darstellung (Partikel, Korrektur) wie im Einzelspieler
 constexpr size_t MAX_PENDING_INPUTS = 90;     // höchstens 3 s unbestätigte Eingaben aufheben
-constexpr float CORRECTION_RATE = 10.0f;      // Korrekturversatz *= exp(-10 * dt) (DESIGN 4)
+constexpr float CORRECTION_RATE = 10.0f;      // Korrekturversatz *= exp(-10 * dt) (docs/Mehrspieler.md 6.2)
 constexpr float CORRECTION_SNAP = 8.0f;       // m: größere Abweichung wird nicht geblendet, sondern gesprungen
 constexpr float REMOTE_TELEPORT = 15.0f;      // m zwischen zwei Snapshots: nicht interpolieren
 constexpr size_t MAX_FRAMES = 32;             // gepufferte Snapshots für die Interpolation (~2 s)
@@ -291,7 +292,9 @@ struct NetClient::Impl {
     bool worldReady = false;
     bool worldRebuilt = false;         // für TakeWorldRebuilt()
     net::WelcomeMsg welcome;
-    float welcomeServerTime = 0.0f;    // Snapshots bis einschließlich dieser Zeit gehören zur alten Welt
+    uint32_t welcomeTick = 0;          // Snapshots bis einschließlich dieses Schritts gehören zur alten Welt
+    uint32_t tickBase = 0;             // Schritt des ersten Welcome dieser Verbindung = Zeit 0 (TickTime)
+    bool haveTickBase = false;
     int myId = -1;                     // eigene Spieler-ID, -1 = Zuschauer/keine
     std::string myName;
     net::ModelIds models{};            // Variantennummer (Netz) -> Modell-ID
@@ -333,7 +336,7 @@ struct NetClient::Impl {
 
     // --- Fremde Schiffe: Interpolation ------------------------------------------------------
     struct Frame {
-        float serverTime = 0.0f;
+        double serverTime = 0.0;           // aus dem Schrittzähler (TickTime)
         std::vector<net::SnapShip> ships;
     };
     std::deque<Frame> frames;                         // gepufferte Snapshots, älteste zuerst
@@ -371,7 +374,15 @@ struct NetClient::Impl {
     void HandlePlayers(const net::PlayersMsg& m);
     void HandleHighscores(const net::HighscoresMsg& m);
 
-    void SyncTime(float serverTime);
+    void SyncTime(double serverTime);
+    // Serverzeit in Sekunden aus dem Schrittzähler, gezählt ab dem ersten
+    // Welcome dieser Verbindung. Ganze Zahlen statt float: bleibt auch nach
+    // Tagen auf die Mikrosekunde genau (ein float hätte nach 12 Tagen nur
+    // noch eine Auflösung von 1/8 s). "tick - tickBase" rechnet modulo 2^32
+    // und ist deshalb auch beim Überlauf des Zählers richtig.
+    double TickTime(uint32_t tick) const {
+        return static_cast<double>(static_cast<uint32_t>(tick - tickBase)) / net::TICK_RATE;
+    }
     void ApplyMe(const net::SnapMe& me);
     void StepOwnShip(const ShipInput& held);
     void UpdateOwnDisplay(float dt);
@@ -419,7 +430,9 @@ void NetClient::Impl::ResetSession() {
     worldReady = false;
     worldRebuilt = false;
     welcome = net::WelcomeMsg{};
-    welcomeServerTime = 0.0f;
+    welcomeTick = 0;
+    tickBase = 0;
+    haveTickBase = false;
     myId = -1;
     myName.clear();
     players.clear();
@@ -547,7 +560,7 @@ void NetClient::Impl::CloseConnection(bool graceful) {
 }
 
 // Anmeldung/Zuschauen hat nicht geklappt: Die Verbindung bleibt, der Spieler
-// kann es in der Lobby erneut versuchen (DESIGN 3.3/3.4).
+// kann es in der Lobby erneut versuchen (docs/Mehrspieler.md Abschnitt 8).
 void NetClient::Impl::BackToLobby(const std::string& err) {
     error = err;
     loginKind = LoginKind::None;
@@ -616,7 +629,7 @@ void NetClient::Impl::CheckTimeouts() {
 
 void NetClient::Impl::OnConnect() {
     connected = true;
-    // Zeitüberschreitung wie auf dem Server (DESIGN 3.9): Antwortet die
+    // Zeitüberschreitung wie auf dem Server (GameServer::OnConnect): Antwortet die
     // Gegenseite 5–15 s lang nicht, meldet ENet DISCONNECT.
     if (peer) enet_peer_timeout(peer, 32, 5000, 15000);
     // Der Zustand bleibt Connecting, bis ServerInfo kommt (erst dann wissen
@@ -722,7 +735,7 @@ void NetClient::Impl::HandleError(const net::ErrorMsg& m) {
     if (!m.text.empty()) text += " (" + m.text + ")";
 
     // Bei diesen Fehlern trennt der Server die Verbindung (falsche Version:
-    // DESIGN 3.1; Server wird beendet: GameServer::Shutdown). Also gar nicht
+    // docs/Mehrspieler.md Abschnitt 3; Server wird beendet: GameServer::Shutdown). Also gar nicht
     // erst in der Lobby bleiben, sondern selbst sauber aufräumen.
     if (m.code == net::ErrorCode::VersionMismatch) text = "Verbindung abgelehnt: " + text;
     if (m.code == net::ErrorCode::ServerShutdown) text = "Verbindung beendet: " + text;
@@ -802,11 +815,18 @@ void NetClient::Impl::HandleWelcome(const net::WelcomeMsg& m) {
     // neuen Welt beginnen wieder bei 1 und dürfen nicht mit alten Snapshots
     // vermischt werden. Eingabenummer und Tastenzähler laufen dagegen weiter:
     // Der Server merkt sich deren Stand auch über den Neuaufbau hinweg.
-    welcomeServerTime = m.serverTime;
+    // Die Zeitachse beginnt beim ersten Welcome und läuft über spätere
+    // Welcomes (Neuaufbau der Karte) hinweg weiter. Würde sie neu bei 0
+    // beginnen, liefe die Darstellungszeit scheinbar rückwärts.
+    if (!haveTickBase) {
+        tickBase = m.tick;
+        haveTickBase = true;
+    }
+    welcomeTick = m.tick;
     frames.clear();
     bullets.clear();
     ResetPrediction();
-    SyncTime(m.serverTime);
+    SyncTime(TickTime(m.tick));
 }
 
 // Zeitabgleich mit dem Server. Jeder Snapshot trägt die Serverzeit, zu der er
@@ -814,8 +834,8 @@ void NetClient::Impl::HandleWelcome(const net::WelcomeMsg& m) {
 // Versatzes zwischen beiden Uhren (inklusive Laufzeit im Netz). Einzelne
 // Messungen schwanken (Netz-Jitter), daher wird geglättet. Springt die
 // Messung sehr weit (Neuverbindung, langer Hänger), fangen wir neu an.
-void NetClient::Impl::SyncTime(float serverTime) {
-    const double sample = static_cast<double>(serverTime) - Now();
+void NetClient::Impl::SyncTime(double serverTime) {
+    const double sample = serverTime - Now();
     if (!timeSynced || std::fabs(sample - timeOffset) > TIME_SYNC_RESET) {
         timeOffset = sample;
         timeSynced = true;
@@ -828,24 +848,25 @@ void NetClient::Impl::SyncTime(float serverTime) {
 void NetClient::Impl::HandleSnapshot(net::SnapshotMsg& m) {
     if (!worldReady) return;
     // Snapshots, die vor dem (erneuten) Welcome verschickt wurden, beschreiben
-    // noch die alte Welt. Sie tragen höchstens die Serverzeit des Welcome
-    // (der Server schickt Welcome und den nächsten Snapshot im selben Schritt
-    // bzw. danach mit größerer Zeit).
-    if (m.serverTime <= welcomeServerTime + 1e-4f) return;
+    // noch die alte Welt. Sie tragen höchstens den Schritt des Welcome (der
+    // Server zählt tick erst nach dem Welcome weiter, bevor er den nächsten
+    // Snapshot baut). Vergleich über die Differenz: auch beim Überlauf richtig.
+    if (static_cast<int32_t>(m.tick - welcomeTick) <= 0) return;
     // Unzuverlässiger Kanal: Pakete können vertauscht oder doppelt ankommen.
     // Ein älterer Snapshot als der zuletzt verarbeitete bringt nichts Neues.
     if (anyTick && m.tick <= lastTick) return;
     lastTick = m.tick;
     anyTick = true;
 
-    SyncTime(m.serverTime);
+    const double serverTime = TickTime(m.tick);
+    SyncTime(serverTime);
     world.totalDelivered = m.totalDelivered;
     totalDelivered = m.totalDelivered;
 
     // Fremde Schiffe in den Puffer (gezeichnet werden sie zeitversetzt, siehe
     // UpdateRemoteShips)
     Frame f;
-    f.serverTime = m.serverTime;
+    f.serverTime = serverTime;
     f.ships = std::move(m.ships);
     frames.push_back(std::move(f));
     while (frames.size() > MAX_FRAMES) frames.pop_front();
@@ -942,7 +963,7 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
         pred.faction = Faction::Player;
         pred.model = models.player;
         pred.playerId = myId;
-        pred.turnRate = 2.9f;
+        pred.turnRate = cfg::PLAYER_TURN_RATE;   // wie World::MakeShip
         ownShipActive = true;
         fireCd = 0.0f;
         lastHp = -1.0f;
@@ -1037,7 +1058,7 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     }
 }
 
-// Lagerstätten: Die Liste ersetzt die alte vollständig (DESIGN 3.6). Bekannte
+// Lagerstätten: Die Liste ersetzt die alte vollständig (docs/Mehrspieler.md Abschnitt 4). Bekannte
 // behalten ihren Einblend-Fortschritt, neue wachsen aus dem Boden (revealT = 0).
 void NetClient::Impl::HandleDeposits(const net::DepositsMsg& m) {
     if (!worldReady) return;
@@ -1176,6 +1197,12 @@ void NetClient::Impl::StepOwnShip(const ShipInput& held) {
     rec.seq = ++seq;
     rec.thrust = std::isfinite(held.thrust) ? std::clamp(held.thrust, -1.0f, 1.0f) : 0.0f;
     rec.turn = std::isfinite(held.turn) ? std::clamp(held.turn, -1.0f, 1.0f) : 0.0f;
+    // Auf die Prozent-Stufen runden, in denen die Eingabe übertragen wird
+    // (Protocol.cpp, Encode(InputMsg)). So rechnet die Vorhersage mit genau
+    // den Werten, die beim Server ankommen (wichtig bei Gamepad-Sticks;
+    // Tasten liefern ohnehin nur -1, 0 oder 1).
+    rec.thrust = static_cast<float>(std::lround(rec.thrust * 100.0f)) / 100.0f;
+    rec.turn = static_cast<float>(std::lround(rec.turn * 100.0f)) / 100.0f;
     rec.fire = held.fire;
     rec.scanPresses = scanPresses;
     rec.interactPresses = interactPresses;
@@ -1293,8 +1320,8 @@ void NetClient::Impl::UpdateRemoteShips() {
         // Normalfall: A und B umschließen die Darstellungszeit
         fa = &frames[ia];
         fb = &frames[ia + 1];
-        const float span = fb->serverTime - fa->serverTime;
-        alpha = span > 1e-5f ? std::clamp(static_cast<float>((renderTime - fa->serverTime) / span), 0.0f, 1.0f) : 1.0f;
+        const double span = fb->serverTime - fa->serverTime;
+        alpha = span > 1e-5 ? std::clamp(static_cast<float>((renderTime - fa->serverTime) / span), 0.0f, 1.0f) : 1.0f;
     } else if (frames.size() >= 2) {
         // Darstellungszeit liegt schon NACH dem neuesten Snapshot: Es fehlen
         // Daten (meist zwei verlorene Snapshots hintereinander). Würden die
@@ -1304,9 +1331,9 @@ void NetClient::Impl::UpdateRemoteShips() {
         // MAX_EXTRAPOLATION Sekunden; danach bleiben sie doch stehen.
         fa = &frames[frames.size() - 2];
         fb = &frames.back();
-        const float span = fb->serverTime - fa->serverTime;
+        const double span = fb->serverTime - fa->serverTime;
         const double ahead = std::min<double>(renderTime - fb->serverTime, MAX_EXTRAPOLATION);
-        alpha = span > 1e-5f ? 1.0f + static_cast<float>(ahead / span) : 1.0f;
+        alpha = span > 1e-5 ? 1.0f + static_cast<float>(ahead / span) : 1.0f;
     } else {
         fa = fb = &frames.back();    // nur ein Snapshot bekannt: dort zeigen
     }
@@ -1314,7 +1341,7 @@ void NetClient::Impl::UpdateRemoteShips() {
     scratchIndex.clear();
     if (fa != fb)
         for (size_t i = 0; i < fa->ships.size(); ++i) scratchIndex[fa->ships[i].id] = i;
-    const float span = fb->serverTime - fa->serverTime;
+    const float span = static_cast<float>(fb->serverTime - fa->serverTime);   // höchstens ~1 s: float genügt
 
     world.ships.reserve(1 + fb->ships.size());
     for (const net::SnapShip& b : fb->ships) {
@@ -1572,7 +1599,7 @@ void NetClient::Update(float dt, const ShipInput& held, bool scanPressed, bool i
         // Tastendrücke als Zähler (siehe Protocol.hpp). Angedockt NICHT
         // zählen: F/ESC im Stationsfenster gehen als DockAction an den
         // Server; ein zusätzlicher Interaktions-Druck würde nach dem Abdocken
-        // sofort wieder andocken (DESIGN 9).
+        // sofort wieder andocken (docs/Mehrspieler.md Abschnitt 4).
         if (scanPressed) ++d.scanPresses;
         if (interactPressed && d.world.Me().dockedAt < 0) ++d.interactPresses;
         d.accumulator += dt;
@@ -1582,13 +1609,16 @@ void NetClient::Update(float dt, const ShipInput& held, bool scanPressed, bool i
         }
     }
 
-    // 3. Darstellung der Spiegelwelt
+    // 3. Darstellung der Spiegelwelt. Hier mit gekürzter Zeit wie im
+    // Einzelspieler: Ein langer Frame soll Partikel nicht auf einen Schlag
+    // weit springen lassen.
     if (d.worldReady) {
-        d.world.time += dt;
+        const float viewDt = std::min(dt, MAX_VIEW_DT);
+        d.world.time += viewDt;
         d.UpdateRemoteShips();
         d.UpdateBullets();
-        if (d.state == NetState::Playing) d.UpdateOwnDisplay(dt);
-        d.world.UpdateCosmetics(dt);
+        if (d.state == NetState::Playing) d.UpdateOwnDisplay(viewDt);
+        d.world.UpdateCosmetics(viewDt);
     }
 
     // Eingaben sofort verschicken, nicht erst beim nächsten Frame

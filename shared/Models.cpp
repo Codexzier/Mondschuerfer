@@ -13,12 +13,12 @@
 // Nummer; dabei werden einmalig die Abmessungen in kBounds gesucht und neben
 // der ID abgelegt. Spätere Abfragen sind nur noch ein Nachschlagen.
 //
-// Hinweis zu ModelBounds.inc: Laut ihrem Kopf entsteht sie mit
-// "Mondschuerfer --dump-model-bounds". Diese Option ist im Spiel (src/main.cpp)
-// aber derzeit NICHT eingebaut. Kommen neue Modelle hinzu, muss die Tabelle
-// anders erzeugt werden: jedes GLB mit raylib laden (LoadModel),
-// GetModelBoundingBox aufrufen und die Box um (-2, 0, -1.5) verschieben (so
-// wie in Assets::Ensure, src/Assets.cpp).
+// Hinweis zu ModelBounds.inc: Sie entsteht mit
+// "Mondschuerfer --dump-model-bounds > shared/ModelBounds.inc" (DumpModelBounds
+// in src/main.cpp). Das Spiel lädt dazu jedes GLB mit raylib, misst es mit
+// GetModelBoundingBox und verschiebt die Box um (-2, 0, -1.5), genau wie beim
+// normalen Laden (Assets::Ensure, src/Assets.cpp). Kommen neue Modelle hinzu,
+// die Tabelle so neu erzeugen.
 //
 // Abhängigkeiten: Standardbibliothek (mutex, unordered_map), raylib.h nur
 // für die Datentypen Vector3/BoundingBox.

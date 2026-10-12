@@ -70,20 +70,43 @@ namespace {
 // ===========================================================================
 
 // --- Netzwerk ---
-constexpr size_t PEER_COUNT = limits::MAX_PLAYERS_LIMIT + limits::MAX_SPECTATORS + 8;   // + Lobby-Reserve
+// ENet-Plätze ("Peers"). Bewusst viel mehr, als Spieler und Zuschauer
+// brauchen: ENet belegt einen Platz schon beim ersten Verbindungspaket, noch
+// bevor die Verbindung steht ("halboffen"). Wer viele solche Pakete schickt,
+// könnte sonst alle Plätze belegen. Wie viele wirklich mitspielen, begrenzen
+// maxPlayers, MAX_SPECTATORS und MAX_LOBBY_CONNECTIONS. Ein freier Platz
+// kostet rund 460 Byte, alle 1024 zusammen also etwa 0,5 MB.
+constexpr size_t PEER_COUNT = 1024;
+constexpr int MAX_LOBBY_CONNECTIONS = 128;        // verbunden, aber (noch) nicht angemeldet
+// Halboffene Verbindungen (Handschlag nicht beendet) nach 1,5..3 s aufgeben
+// statt nach ENets Standard von 30 s. Ein ehrlicher Client antwortet in
+// Bruchteilen einer Sekunde (siehe GuardHalfOpenPeers).
+constexpr enet_uint32 HALF_OPEN_TIMEOUT_MIN_MS = 1500;
+constexpr enet_uint32 HALF_OPEN_TIMEOUT_MAX_MS = 3000;
 constexpr size_t MAX_PACKET_SIZE = 64 * 1024;     // ENet-Standard wären 32 MB pro Paket (Speicherangriff)
 constexpr size_t MAX_WAITING_DATA = 256 * 1024;   // unverarbeitete Daten pro Verbindung
-constexpr int INPUT_QUEUE_MAX = 6;                // DESIGN 3.5: ältere Eingaben verwerfen
+constexpr int INPUT_QUEUE_MAX = 6;                // ältere Eingaben verwerfen (HandleInput)
+// Regelung der Eingabe-Warteschlange (ApplyInputs): Liegen eine Sekunde lang
+// IMMER mehr als INPUT_QUEUE_TARGET Eingaben bereit, wird eine übersprungen.
+constexpr int INPUT_QUEUE_TARGET = 1;
+constexpr int INPUT_QUEUE_WINDOW = net::TICK_RATE;   // Schritte (= 1 s)
 constexpr int MAX_BAD_PACKETS = 50;               // danach wird getrennt
 constexpr int MAX_MSGS_PER_SECOND = 240;          // normal: 30 Input/s + ein paar zuverlässige
 constexpr int FLOOD_DISCONNECT = 2000;            // so viele pro Sekunde -> trennen
 constexpr double LOBBY_TIMEOUT = 15.0 * 60.0;     // so lange darf man ohne Anmeldung verbunden sein
+// Abmelden außerhalb einer Station: So lange bleibt das Schiff noch ohne
+// Steuerung in der Welt und kann abgeschossen werden (LogoutPlayer).
+constexpr double LOGOUT_GRACE = 10.0;
 
-// --- Anmeldung (DESIGN 3.4) ---
-constexpr int MAX_LOGIN_FAILURES_PER_CONNECTION = 5;
-constexpr int MAX_LOGIN_FAILURES_PER_NAME = 10;
+// --- Anmeldung (docs/Mehrspieler.md Abschnitt 8, siehe LoginBlocked) ---
+// Alle Grenzen gelten für ein Zeitfenster von 10 Minuten.
+constexpr int MAX_LOGIN_FAILURES_PER_CONNECTION = 5;   // dann wird getrennt
+constexpr int MAX_LOGIN_FAILURES_PER_NAME_IP = 10;     // ein Konto von einer Adresse aus
+constexpr int MAX_LOGIN_FAILURES_PER_NAME = 100;       // ein Konto insgesamt ("Notbremse")
+constexpr int MAX_LOGIN_FAILURES_PER_IP = 30;          // eine öffentliche Adresse, alle Konten zusammen
 constexpr double LOGIN_FAILURE_WINDOW = 10.0 * 60.0;
-constexpr size_t MAX_TRACKED_NAMES = 20000;       // Speicherschutz für die Fehlversuchsliste
+constexpr size_t MAX_TRACKED_FAILURES = 20000;    // Speicherschutz für jede der Fehlversuchslisten
+constexpr size_t MAX_TRUSTED_IPS_PER_NAME = 4;    // Adressen mit erfolgreicher Anmeldung je Konto
 constexpr int MAX_REGISTRATIONS_PER_IP = 10;      // neue Konten je öffentlicher IP ...
 constexpr double REGISTRATION_WINDOW = 3600.0;    // ... pro Stunde
 
@@ -129,6 +152,29 @@ std::string IpText(const ENetAddress& a) {
     char buf[64] = {0};
     if (enet_address_get_host_ip(&a, buf, sizeof(buf)) != 0) return "?";
     return buf;
+}
+
+// Listen von Zeitpunkten (Fehlversuche, neue Konten) je Schlüssel, z. B.
+// Name oder Adresse. Die Schablone (template) funktioniert für jede
+// Schlüsselart, die std::map kennt.
+// Wie viele Einträge für key liegen im Zeitfenster? Ältere werden dabei entfernt.
+template <typename Key>
+int CountRecent(std::map<Key, std::deque<double>>& m, const Key& key, double now, double window) {
+    auto it = m.find(key);
+    if (it == m.end()) return 0;
+    auto& dq = it->second;
+    while (!dq.empty() && now - dq.front() > window) dq.pop_front();
+    return static_cast<int>(dq.size());
+}
+
+// Alle Listen ausdünnen und leere Schlüssel löschen (Housekeeping, 1x pro Minute).
+template <typename Key>
+void PruneTimes(std::map<Key, std::deque<double>>& m, double now, double window) {
+    for (auto it = m.begin(); it != m.end();) {
+        auto& dq = it->second;
+        while (!dq.empty() && now - dq.front() > window) dq.pop_front();
+        it = dq.empty() ? m.erase(it) : std::next(it);
+    }
 }
 
 // FNV-1a: schnelle Prüfsumme, um festzustellen, ob sich eine Nachricht
@@ -205,7 +251,7 @@ net::NetEvent SoundToNet(const SoundEvent& e) {
     return ev;
 }
 
-// Sortierung der Spielerliste (DESIGN 3.6): Runde absteigend, dann Kontostand absteigend
+// Sortierung der Spielerliste: Runde absteigend, dann Kontostand absteigend
 template <typename T>
 void SortByProgress(std::vector<T>& v) {
     std::stable_sort(v.begin(), v.end(), [](const T& a, const T& b) {
@@ -250,7 +296,10 @@ double GameServer::Now() const {
 // ab seiner ersten Begrüßung bei 0 los. Warum nicht einfach die Laufzeit des
 // Servers? serverTime ist eine 32-Bit-Kommazahl (float). Nach einigen Tagen
 // Laufzeit wäre sie zu ungenau für die Interpolation im Client (Abstände von
-// 1/15 s). Eine Sitzung dauert dagegen selten länger als ein paar Stunden.
+// 1/15 s). Der Client rechnet seine Zeitachse deshalb aus dem ganzzahligen
+// Schrittzähler (tick in Welcome und Snapshot), denn auch eine Zuschauer-
+// Anzeige kann tagelang verbunden bleiben. serverTime dient nur noch der
+// Kontrolle (z. B. im Lasttest).
 float GameServer::ClientTime(const Client& c) const {
     return static_cast<float>(static_cast<double>(tick_ - c.timeBaseTick) * static_cast<double>(net::TICK_DT));
 }
@@ -289,6 +338,11 @@ bool GameServer::Start(std::string& error) {
     }
     host_->maximumPacketSize = MAX_PACKET_SIZE;
     host_->maximumWaitingData = MAX_WAITING_DATA;
+    // host_->duplicatePeers (ENets eigene Grenze pro Adresse) bleibt bewusst
+    // unverändert: Sie gälte auch für lokale Adressen, und hinter der
+    // Docker-Weiterleitung oder beim Lasttest kommen alle Clients von EINER
+    // solchen Adresse. Die Grenze pro öffentlicher Adresse setzen
+    // GuardHalfOpenPeers (halboffene) und OnConnect (fertige Verbindungen) um.
 
     InitWorld();
     lastCpuSeconds_ = ProcessCpuSeconds();
@@ -340,6 +394,7 @@ void GameServer::Run(const std::atomic<bool>& stop) {
         if (now < next) continue;
 
         const auto t0 = Clock::now();
+        GuardHalfOpenPeers();
         Step();
         enet_host_flush(host_);   // alles sofort abschicken, nicht erst beim nächsten Warten
         tickMs_.push_back(std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
@@ -357,9 +412,11 @@ void GameServer::Run(const std::atomic<bool>& stop) {
 void GameServer::Shutdown() {
     if (!host_) return;
     Log("Server wird beendet: speichere alle Spieler ...");
-    // Alle Spieler wie beim Abmelden behandeln (Absturz läuft -> zählt als Absturz)
+    // Alle Spieler wie beim Abmelden behandeln (Absturz läuft -> zählt als
+    // Absturz), aber ohne die 10-s-Frist im All: Die Welt endet ja jetzt.
+    UpdateDeparting(true);
     for (auto& up : clients_)
-        if (up->role == Role::Player) LogoutPlayer(*up, "Server wird beendet", false);
+        if (up->role == Role::Player) LogoutPlayer(*up, "Server wird beendet", false, false);
     accounts_.SetTotalDelivered(world_.totalDelivered);
     accounts_.SaveAccounts();
     accounts_.SaveHighscores();
@@ -408,7 +465,7 @@ void GameServer::Shutdown() {
 // ===========================================================================
 void GameServer::Step() {
     // Einstellungen von der Webseite immer zu Beginn eines Schritts anwenden
-    // (DESIGN 3.8), nie mitten in der Simulation.
+    // (docs/Mehrspieler.md Abschnitt 12), nie mitten in der Simulation.
     ApplySettingsRequest();
 
     for (auto& up : clients_)
@@ -418,6 +475,7 @@ void GameServer::Step() {
     const int stageBefore = world_.lastStage;
     world_.Update(net::TICK_DT);
     ++tick_;
+    UpdateDeparting(false);
 
     // world.time ist ein float und wächst endlos. Nach ~12 Tagen wäre er so
     // groß, dass "+ 1/30 s" nichts mehr ändert. Er wird nur für das leichte
@@ -445,17 +503,39 @@ void GameServer::Step() {
 }
 
 // Pro Spieler und Schritt GENAU EINE Eingabe aus der Warteschlange verbrauchen
-// (DESIGN 3.5). Warum eine Warteschlange und nicht einfach "die neueste"?
+// (docs/Mehrspieler.md Abschnitt 4). Warum eine Warteschlange und nicht einfach "die neueste"?
 // Der Client sagt sein Schiff voraus, indem er jede Eingabe genau einen
 // Schritt lang anwendet. Wendet der Server dieselben Eingaben in derselben
 // Reihenfolge an, landet das Schiff dort, wo der Client es erwartet. Kommen
 // Pakete gebündelt an (Netz-"Ruckler"), gleicht die Schlange das aus.
+//
+// Die Schlange darf aber nicht dauerhaft lang bleiben: Nach einem Ruckler
+// kommen die zurückgehaltenen Pakete auf einmal an, und weil Client und
+// Server beide genau 30 Eingaben pro Sekunde erzeugen bzw. verbrauchen,
+// bliebe dieser Vorrat für immer liegen. Jede Eingabe käme dann z. B. 150 ms
+// später zur Wirkung (Schüsse, Andocken, die Position, die andere sehen).
+// Deshalb wird die Länge geregelt: Lagen eine Sekunde lang IMMER mehr als
+// INPUT_QUEUE_TARGET Eingaben bereit, wird die älteste übersprungen. Höchstens
+// eine pro Sekunde, damit es sanft geht. Tastendrücke gehen dabei nicht
+// verloren (Zähler, siehe unten), ein Schuss wird an die nächste Eingabe
+// weitergegeben. Der Client merkt nur eine kleine Korrektur beim Abgleich
+// (ackSeq springt um zwei statt um eins).
 void GameServer::ApplyInputs() {
     for (auto& up : clients_) {
         Client& c = *up;
         if (c.role != Role::Player) continue;
         PlayerState* ps = world_.FindPlayer(c.playerId);
         if (!ps) continue;
+        c.queueMinInWindow = std::min(c.queueMinInWindow, static_cast<int>(c.inputs.size()));
+        if (++c.queueWindowSteps >= INPUT_QUEUE_WINDOW) {
+            if (c.queueMinInWindow > INPUT_QUEUE_TARGET && c.inputs.size() >= 2) {
+                const bool fire = c.inputs.front().fire;
+                c.inputs.pop_front();
+                if (fire) c.inputs.front().fire = true;
+            }
+            c.queueMinInWindow = 1 << 30;
+            c.queueWindowSteps = 0;
+        }
         ShipInput in;
         if (!c.inputs.empty()) {
             const net::InputRecord rec = c.inputs.front();
@@ -518,7 +598,7 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
         }
     }
 
-    // --- Töne: nur für Spieler; Zuschauer hören nichts (DESIGN 3.7) ---
+    // --- Töne: nur für Spieler; Zuschauer hören nichts (docs/Mehrspieler.md Abschnitt 9) ---
     for (const SoundEvent& e : world_.sounds) {
         const net::NetEvent ev = SoundToNet(e);
         for (View& v : players) {
@@ -716,15 +796,25 @@ void GameServer::Housekeeping() {
         }
     }
     if (tick_ % (60 * net::TICK_RATE) == 0) {
-        for (auto it = loginFailures_.begin(); it != loginFailures_.end();) {
-            auto& dq = it->second;
-            while (!dq.empty() && now - dq.front() > LOGIN_FAILURE_WINDOW) dq.pop_front();
-            it = dq.empty() ? loginFailures_.erase(it) : std::next(it);
+        PruneTimes(failuresByNameIp_, now, LOGIN_FAILURE_WINDOW);
+        PruneTimes(failuresByName_, now, LOGIN_FAILURE_WINDOW);
+        PruneTimes(failuresByIp_, now, LOGIN_FAILURE_WINDOW);
+        PruneTimes(registrations_, now, REGISTRATION_WINDOW);
+
+        // Für den Betreiber: Hinweise auf einen Angriff auf die Verbindungsplätze
+        // (höchstens eine Meldung pro Minute, nicht eine pro Paket).
+        if (host_) {
+            size_t used = 0;
+            for (size_t i = 0; i < host_->peerCount; ++i)
+                if (host_->peers[i].state != ENET_PEER_STATE_DISCONNECTED) ++used;
+            if (used * 10 >= host_->peerCount * 9)
+                Log(Fmt("Warnung: %zu von %zu Verbindungsplätzen belegt (Angriff mit halboffenen Verbindungen?)", used,
+                        host_->peerCount));
         }
-        for (auto it = registrations_.begin(); it != registrations_.end();) {
-            auto& dq = it->second;
-            while (!dq.empty() && now - dq.front() > REGISTRATION_WINDOW) dq.pop_front();
-            it = dq.empty() ? registrations_.erase(it) : std::next(it);
+        if (halfOpenDropped_ > 0) {
+            Log(Fmt("%llu halboffene Verbindung(en) in der letzten Minute verworfen (zu viele von einer Adresse)",
+                    static_cast<unsigned long long>(halfOpenDropped_)));
+            halfOpenDropped_ = 0;
         }
     }
 }
@@ -773,6 +863,48 @@ void GameServer::ServiceNetwork(uint32_t timeoutMs) {
     }
 }
 
+// Halboffene Verbindungen. ENet legt einen Peer schon an, wenn
+// das erste Verbindungspaket kommt (Zustand ACKNOWLEDGING_CONNECT). Das
+// CONNECT-Ereignis (OnConnect) kommt erst, wenn der Client den Handschlag
+// bestätigt hat; bis dahin weiß der Server nichts von diesem Peer. Wer nur
+// Verbindungspakete schickt und nie antwortet, würde mit ENets Standardwerten
+// jeden Platz 30 s lang belegen. Darum hier vor jedem Schritt:
+//   1. Pro öffentlicher Adresse höchstens maxConnectionsPerIp Peers (fertige
+//      und halboffene zusammen); überzählige halboffene werden sofort
+//      verworfen. Lokale Adressen sind wie in OnConnect ausgenommen.
+//   2. Jeder übrige halboffene Peer bekommt eine kurze Zeitgrenze: Nach
+//      höchstens 3 s ohne Antwort gibt ENet ihn auf.
+// Grenze des Schutzes: Bei UDP kann ein Angreifer die Absenderadresse
+// fälschen, jedes Paket mit einer anderen. Dagegen hilft Punkt 1 nicht, nur
+// Punkt 2: Um alle 1024 Plätze dauerhaft zu belegen, bräuchte es dann ständig
+// über 300 gefälschte Pakete pro Sekunde. Vollständig ließe sich das nur mit
+// einem "Cookie" im Handschlag (Änderung an ENet) oder einem VPN verhindern
+// (server/README.md).
+void GameServer::GuardHalfOpenPeers() {
+    if (!host_) return;
+    const bool limitPerIp = config_.maxConnectionsPerIp > 0;
+    std::map<uint32_t, int> perIp;   // öffentliche Adresse -> belegte Plätze
+    if (limitPerIp) {
+        // Zuerst die fertigen (auch die gerade schließenden) Verbindungen zählen
+        for (size_t i = 0; i < host_->peerCount; ++i) {
+            const ENetPeer& p = host_->peers[i];
+            if (p.state >= ENET_PEER_STATE_CONNECTION_SUCCEEDED && !IsLocalAddress(p.address.host)) ++perIp[p.address.host];
+        }
+    }
+    for (size_t i = 0; i < host_->peerCount; ++i) {
+        ENetPeer* p = &host_->peers[i];
+        if (p->state != ENET_PEER_STATE_ACKNOWLEDGING_CONNECT) continue;
+        if (limitPerIp && !IsLocalAddress(p->address.host) && ++perIp[p->address.host] > config_.maxConnectionsPerIp) {
+            // Platz sofort freigeben. Der Absender erfährt nichts davon; ein
+            // ehrlicher Client würde es nach einigen Sekunden erneut versuchen.
+            enet_peer_reset(p);
+            ++halfOpenDropped_;
+            continue;
+        }
+        enet_peer_timeout(p, 32, HALF_OPEN_TIMEOUT_MIN_MS, HALF_OPEN_TIMEOUT_MAX_MS);
+    }
+}
+
 GameServer::Client* GameServer::FindClient(ENetPeer* peer) {
     return peer ? static_cast<Client*>(peer->data) : nullptr;
 }
@@ -785,7 +917,7 @@ void GameServer::RemoveClient(Client& c) {
 }
 
 void GameServer::OnConnect(ENetPeer* peer, uint32_t data) {
-    // Zeitüberschreitung (DESIGN 3.9): nach 5..15 s ohne Antwort gilt der
+    // Zeitüberschreitung: nach 5..15 s ohne Antwort gilt der
     // Client als weg; ENet meldet dann DISCONNECT.
     enet_peer_timeout(peer, 32, 5000, 15000);
 
@@ -810,9 +942,12 @@ void GameServer::OnConnect(ENetPeer* peer, uint32_t data) {
         return;
     }
     if (config_.maxConnectionsPerIp > 0 && !IsLocalAddress(c.ip)) {
+        // Auch schließende Verbindungen zählen mit: Sie belegen ihren Platz
+        // noch einige Sekunden. Sonst könnte man durch ständiges Neuverbinden
+        // trotz Ablehnung beliebig viele Plätze belegen.
         int same = 0;
         for (const auto& o : clients_)
-            if (o->ip == c.ip && !o->closing) ++same;
+            if (o->ip == c.ip) ++same;
         if (same > config_.maxConnectionsPerIp) {
             SendError(c, net::ErrorCode::ServerFull, "Zu viele Verbindungen von deiner Adresse.");
             Log(Fmt("Verbindung #%u (%s) abgelehnt: mehr als %d Verbindungen von dieser Adresse", c.connId,
@@ -820,6 +955,18 @@ void GameServer::OnConnect(ENetPeer* peer, uint32_t data) {
             Disconnect(c);
             return;
         }
+    }
+    // Wartebereich (Lobby) begrenzen: Spieler und Zuschauer haben eigene
+    // Grenzen, die Lobby sonst nur die Zahl der ENet-Plätze.
+    int lobby = 0;
+    for (const auto& o : clients_)
+        if (o->role == Role::Lobby && !o->closing) ++lobby;
+    if (lobby > MAX_LOBBY_CONNECTIONS) {
+        SendError(c, net::ErrorCode::ServerFull, "Der Server ist gerade ausgelastet. Bitte gleich noch einmal versuchen.");
+        Log(Fmt("Verbindung #%u (%s) abgelehnt: schon %d Verbindungen ohne Anmeldung", c.connId, c.ipText.c_str(),
+                MAX_LOBBY_CONNECTIONS));
+        Disconnect(c);
+        return;
     }
     Send(c, net::Encode(MakeServerInfo()), true);
     Log(Fmt("Verbindung #%u von %s (%d verbunden)", c.connId, c.ipText.c_str(), static_cast<int>(clients_.size())));
@@ -956,7 +1103,7 @@ void GameServer::HandleRegister(Client& c, const net::RegisterMsg& m) {
     RecordRegistration(c.ip, now);
     accounts_.SaveAccounts();
     Log(Fmt("Neues Konto: %s (Verbindung #%u, %s)", acc->name.c_str(), c.connId, c.ipText.c_str()));
-    // DESIGN 3.3: nach dem Anlegen direkt angemeldet
+    // nach dem Anlegen direkt angemeldet (kein zweiter Anmeldeschritt)
     LoginPlayer(c, acc, acc->name);
 }
 
@@ -997,8 +1144,8 @@ void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
     const bool validName = net::ValidPlayerName(c.challengeName);
     const double now = Now();
 
-    if (validName && NameLocked(lower, now)) {
-        // Dieses Konto wurde in den letzten 10 Minuten zu oft falsch angemeldet.
+    if (LoginBlocked(lower, c.ip, now)) {
+        // Zu viele Fehlversuche in den letzten 10 Minuten (siehe LoginBlocked).
         // Den Beweis gar nicht erst prüfen.
         FailLogin(c, net::ErrorCode::TooManyAttempts);
         return;
@@ -1011,7 +1158,7 @@ void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
     const crypto::Digest expected = crypto::LoginProof(key, c.nonce, lower);
     const bool ok = crypto::ConstantTimeEqual(expected.data(), m.proof.data(), expected.size()) && acc != nullptr;
     if (!ok) {
-        if (validName) RecordNameFailure(lower, now);
+        RecordLoginFailure(lower, acc != nullptr, c, now);
         FailLogin(c, net::ErrorCode::WrongLogin);
         return;
     }
@@ -1026,6 +1173,19 @@ void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
     if (PlayersOnline() >= settings_.maxPlayers) {
         SendError(c, net::ErrorCode::ServerFull);
         return;
+    }
+    // Ist das Schiff vom letzten Abmelden noch in der Welt (Departing)? Dann
+    // übernimmt die neue Verbindung genau dieses Schiff, z. B. nach einem
+    // kurzen WLAN-Aussetzer.
+    for (size_t i = 0; i < departing_.size(); ++i) {
+        if (departing_[i].account != acc) continue;
+        const int id = departing_[i].playerId;
+        departing_.erase(departing_.begin() + static_cast<long>(i));
+        if (world_.FindPlayer(id)) {
+            LoginPlayer(c, acc, acc->name, id);
+            return;
+        }
+        break;
     }
     LoginPlayer(c, acc, acc->name);
 }
@@ -1050,7 +1210,7 @@ void GameServer::HandleInput(Client& c, const net::InputMsg& m) {
 void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
     if (c.role != Role::Player) return;
     PlayerState* ps = world_.FindPlayer(c.playerId);
-    // Nur gültig, wenn wirklich angedockt (DESIGN 3.5)
+    // Nur gültig, wenn wirklich angedockt
     if (!ps || ps->dockedAt < 0 || ps->dockedAt >= static_cast<int>(world_.stations.size())) return;
     const Station& st = world_.stations[ps->dockedAt];
     switch (m.action) {
@@ -1075,12 +1235,17 @@ void GameServer::HandleLeave(Client& c) {
     Disconnect(c);
 }
 
-// Spieler in die Welt holen: Schiff an einer Handelsstation, Fortschritt aus
-// dem Konto, dann Begrüßung und alle Listen schicken (DESIGN 3.4).
-void GameServer::LoginPlayer(Client& c, Account* account, const std::string& name) {
-    const int id = NewPlayerId();
-    PlayerState& ps = world_.AddPlayer(id, name);
-    if (account) RestoreProgress(ps, account->progress);
+// Spieler in die Welt holen: neues Schiff (an einer Handelsstation oder dort,
+// wo es beim letzten Abmelden war, siehe RestoreProgress) mit dem Fortschritt
+// aus dem Konto, oder das noch im All verbliebene Schiff übernehmen
+// (resumePlayerId, siehe LogoutPlayer). Dann Begrüßung und alle Listen
+// schicken (docs/Mehrspieler.md Abschnitt 3).
+void GameServer::LoginPlayer(Client& c, Account* account, const std::string& name, int resumePlayerId) {
+    PlayerState* resumed = resumePlayerId >= 0 ? world_.FindPlayer(resumePlayerId) : nullptr;
+    const int id = resumed ? resumePlayerId : NewPlayerId();
+    PlayerState& ps = resumed ? *resumed : world_.AddPlayer(id, name);
+    if (account && !resumed) RestoreProgress(ps, account->progress);
+    if (account && c.peer) RememberTrustedIp(ToLowerAscii(account->name), c.ip);
 
     c.role = Role::Player;
     c.playerId = id;
@@ -1095,6 +1260,8 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
     c.ackSeq = 0;
     c.countersKnown = false;
     c.held = net::InputRecord{};
+    c.queueMinInWindow = 1 << 30;
+    c.queueWindowSteps = 0;
     c.lastShipId = ps.shipId;
     c.lastDeaths = ps.deaths;
     if (const Ship* s = world_.PlayerShip(ps)) c.lastPos = s->pos;
@@ -1105,7 +1272,9 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
                                                account->progress.upgrades[2] + account->progress.upgrades[3] > 0);
     if (account) account->lastLogin = UnixNow();
     if (!c.isBot) {
-        if (returning)
+        if (resumed)
+            world_.Notify(ps, "Willkommen zurück, " + name + "! Dein Schiff war noch im All.", Color{200, 220, 255, 255});
+        else if (returning)
             world_.Notify(ps, "Willkommen zurück, " + name + "! Dein Fortschritt wurde geladen.", Color{200, 220, 255, 255});
         else
             world_.Notify(ps, "Willkommen, " + name + "! Finde Kristalle mit dem Scanner [E].", Color{255, 200, 120, 255});
@@ -1120,30 +1289,84 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
             c.connId, c.ipText.c_str()));
 }
 
-// Spieler aus der Welt nehmen und seinen Fortschritt sichern.
+// Abmelden, während das Schiff abstürzt: zählt wie ein Absturz (docs/Mehrspieler.md Abschnitt 13).
+// Sonst könnte man sich durch schnelles Abmelden vor dem Verlust retten.
+// Rückgabe true, wenn der Fortschritt zurückgesetzt wurde.
+bool GameServer::CrashOnLogout(PlayerState& ps) {
+    Ship* s = world_.PlayerShip(ps);
+    if (!s || !s->crashing) return false;
+    world_.ResetProgress(ps);
+    ++ps.deaths;
+    s->cargo = 0;
+    return true;
+}
+
+// Spieler abmelden und seinen Fortschritt sichern (auch bei Verbindungsabbruch).
 // saveNow = false: der Aufrufer speichert danach selbst (Beenden: einmal für alle).
-void GameServer::LogoutPlayer(Client& c, const char* reason, bool saveNow) {
+//
+// Angedockt (oder ohne Schiff) verschwindet der Spieler sofort aus der Welt.
+// Draußen im All bleibt sein Schiff dagegen noch LOGOUT_GRACE (10 s) ohne
+// Steuerung stehen und kann abgeschossen werden (Liste departing_, siehe
+// UpdateDeparting). Ohne diese Frist könnte man sich mitten im Gefecht mit
+// einem Tastendruck in Sicherheit bringen, und die Regel "abgeschossen ->
+// Fortschritt von vorn" wäre wirkungslos. Zusammen mit der gespeicherten
+// Position (CaptureProgress) ist Abmelden auch keine Abkürzung zur Station.
+void GameServer::LogoutPlayer(Client& c, const char* reason, bool saveNow, bool allowGrace) {
     bool crashed = false;
+    bool lingers = false;
     if (PlayerState* ps = world_.FindPlayer(c.playerId)) {
-        // Abmelden während das Schiff abstürzt: zählt wie ein Absturz (DESIGN 5).
-        // Sonst könnte man sich durch schnelles Abmelden vor dem Verlust retten.
-        Ship* s = world_.PlayerShip(*ps);
-        if (s && s->crashing) {
-            world_.ResetProgress(*ps);
-            ++ps->deaths;
-            s->cargo = 0;
-            crashed = true;
-        }
+        crashed = CrashOnLogout(*ps);
         StoreProgress(c);
-        world_.RemovePlayer(c.playerId);
+        const Ship* s = world_.PlayerShip(*ps);
+        if (allowGrace && c.account && s && !crashed && ps->dockedAt < 0) {
+            ps->input = ShipInput{};   // keine Steuerung mehr: Schiff treibt aus
+            departing_.push_back({c.playerId, c.account, c.name, Now() + LOGOUT_GRACE, ps->deaths});
+            lingers = true;
+        } else {
+            world_.RemovePlayer(c.playerId);
+        }
     }
     if (saveNow) accounts_.SaveAccounts();
     Log(c.name + " abgemeldet (" + reason + ", Sitzung " + FormatDuration(Now() - c.sessionStart) + ")" +
-        (crashed ? " – während des Absturzes: Fortschritt zurückgesetzt" : ""));
+        (crashed ? " – während des Absturzes: Fortschritt zurückgesetzt" : "") +
+        (lingers ? " – Schiff bleibt noch 10 s im All" : ""));
     c.role = Role::Lobby;
     c.playerId = -1;
     c.account = nullptr;
     c.inputs.clear();
+}
+
+// Einmal pro Schritt (und mit finishAll vor Neuaufbau und Beenden): Schiffe
+// abgemeldeter Spieler entfernen, deren Frist abgelaufen ist oder die
+// abgeschossen wurden. Ein abgeschossenes Schiff hat World::PlayerShipLost
+// schon behandelt (Fortschritt zurückgesetzt, deaths erhöht).
+void GameServer::UpdateDeparting(bool finishAll) {
+    if (departing_.empty()) return;
+    const double now = Now();
+    for (size_t i = 0; i < departing_.size();) {
+        const Departing& d = departing_[i];
+        const PlayerState* ps = world_.FindPlayer(d.playerId);
+        const Ship* s = ps ? world_.PlayerShip(*ps) : nullptr;
+        const bool done = finishAll || now >= d.until || !ps || !s || s->crashing || ps->deaths != d.deaths;
+        if (!done) {
+            ++i;
+            continue;
+        }
+        FinishDeparting(d);
+        departing_.erase(departing_.begin() + static_cast<long>(i));
+    }
+}
+
+void GameServer::FinishDeparting(const Departing& d) {
+    PlayerState* ps = world_.FindPlayer(d.playerId);
+    if (!ps) return;
+    CrashOnLogout(*ps);   // Frist lief mitten im Absturz ab: zählt als Absturz
+    const bool lost = ps->deaths != d.deaths;
+    d.account->progress = CaptureProgress(*ps);
+    world_.RemovePlayer(d.playerId);
+    accounts_.SaveAccounts();
+    Log(lost ? d.name + ": Schiff nach dem Abmelden abgeschossen – Fortschritt zurückgesetzt"
+             : d.name + ": Schiff hat die Welt verlassen");
 }
 
 void GameServer::Send(Client& c, const std::vector<uint8_t>& bytes, bool reliable) {
@@ -1184,6 +1407,7 @@ void GameServer::SendWelcome(Client& c) {
     m.settings = settings_;
     m.totalDelivered = world_.totalDelivered;
     m.serverTime = ClientTime(c);
+    m.tick = static_cast<uint32_t>(tick_);
     Send(c, net::Encode(m), true);
 }
 
@@ -1215,7 +1439,7 @@ net::ServerInfoMsg GameServer::MakeServerInfo() const {
     return m;
 }
 
-// Momentaufnahme für einen Client (DESIGN 3.6 / 3.7). Positionen werden erst
+// Momentaufnahme für einen Client (docs/Mehrspieler.md Abschnitte 4 und 7). Positionen werden erst
 // beim Kodieren (Protocol.cpp) auf Zentimeter quantisiert; hier stehen die
 // genauen Werte aus der Welt.
 net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
@@ -1442,30 +1666,80 @@ int GameServer::SpectatorsOnline() const {
     return n;
 }
 
-bool GameServer::NameLocked(const std::string& lowerName, double now) {
-    auto it = loginFailures_.find(lowerName);
-    if (it == loginFailures_.end()) return false;
-    auto& dq = it->second;
-    while (!dq.empty() && now - dq.front() > LOGIN_FAILURE_WINDOW) dq.pop_front();
-    return static_cast<int>(dq.size()) >= MAX_LOGIN_FAILURES_PER_NAME;
+// Darf dieser Anmeldeversuch überhaupt geprüft werden? (docs/Mehrspieler.md Abschnitt 8)
+// Drei Zähler für Fehlversuche, jeweils über die letzten 10 Minuten:
+//   1. pro (Konto, Absender-Adresse): höchstens 10. Gesperrt wird nur dieser
+//      Absender für dieses Konto. Ein Fremder kann den echten Besitzer damit
+//      nicht aussperren (die Namen aller Spieler sind ja öffentlich).
+//   2. pro öffentlicher Adresse: höchstens 30, über alle Namen zusammen.
+//      Bremst das Durchprobieren eines Passworts bei vielen Konten.
+//   3. pro Konto insgesamt: höchstens 100 ("Notbremse" gegen Raten von sehr
+//      vielen Adressen aus). Sie gilt nicht für Adressen, von denen aus sich
+//      der Besitzer seit dem Serverstart schon erfolgreich angemeldet hat.
+// Lokale Adressen (Heimnetz) zählen nur bei 1 und 3.
+// Während einer Sperre wird der Beweis gar nicht erst geprüft: Sonst könnte
+// ein Angreifer trotz Sperre weiterraten und an der Antwort erkennen, ob er
+// richtig lag.
+bool GameServer::LoginBlocked(const std::string& lowerName, uint32_t ip, double now) {
+    if (CountRecent(failuresByNameIp_, {lowerName, ip}, now, LOGIN_FAILURE_WINDOW) >= MAX_LOGIN_FAILURES_PER_NAME_IP)
+        return true;
+    if (!IsLocalAddress(ip) && CountRecent(failuresByIp_, ip, now, LOGIN_FAILURE_WINDOW) >= MAX_LOGIN_FAILURES_PER_IP)
+        return true;
+    if (CountRecent(failuresByName_, lowerName, now, LOGIN_FAILURE_WINDOW) >= MAX_LOGIN_FAILURES_PER_NAME) {
+        auto it = trustedIps_.find(lowerName);
+        const bool trusted = it != trustedIps_.end() && std::find(it->second.begin(), it->second.end(), ip) != it->second.end();
+        if (!trusted) return true;
+    }
+    return false;
 }
 
-void GameServer::RecordNameFailure(const std::string& lowerName, double now) {
-    // Speicherschutz: Wer tausende verschiedene Namen durchprobiert, soll den
-    // Speicher nicht füllen können (die Liste wird jede Minute ausgedünnt).
-    if (loginFailures_.size() >= MAX_TRACKED_NAMES && !loginFailures_.count(lowerName)) return;
-    auto& dq = loginFailures_[lowerName];
-    dq.push_back(now);
-    while (static_cast<int>(dq.size()) > MAX_LOGIN_FAILURES_PER_NAME) dq.pop_front();
+// Fehlversuch merken. Zähler 1 und 3 nur für Konten, die es gibt: So bleibt
+// die Liste klein (höchstens so viele Einträge wie Konten bzw. 30 pro
+// Adresse), und niemand kann sie mit erfundenen Namen füllen. Läuft eine
+// Liste trotzdem voll, bleiben die anderen Zähler wirksam.
+// Erreicht ein Zähler gerade seine Grenze, steht das einmal im Log, damit
+// der Betreiber einen Angriff bemerkt (nicht bei jedem weiteren Paket).
+void GameServer::RecordLoginFailure(const std::string& lowerName, bool accountExists, const Client& c, double now) {
+    auto record = [&](auto& map, const auto& key, int limit, const std::string& message) {
+        if (map.size() >= MAX_TRACKED_FAILURES && !map.count(key)) {
+            if (now - lastTableFullLog_ > 60.0) {
+                Log("Warnung: Liste der Fehlversuche ist voll (sehr viele Anmeldeversuche?)");
+                lastTableFullLog_ = now;
+            }
+            return;
+        }
+        auto& dq = map[key];
+        dq.push_back(now);
+        while (static_cast<int>(dq.size()) > limit) dq.pop_front();   // mehr braucht die Prüfung nicht
+        if (static_cast<int>(dq.size()) == limit && now - dq.front() <= LOGIN_FAILURE_WINDOW) Log(message);
+    };
+    if (!IsLocalAddress(c.ip))
+        record(failuresByIp_, c.ip, MAX_LOGIN_FAILURES_PER_IP,
+               Fmt("Adresse %s: %d fehlgeschlagene Anmeldungen in 10 min – weitere Versuche von dort vorerst gesperrt",
+                   c.ipText.c_str(), MAX_LOGIN_FAILURES_PER_IP));
+    if (!accountExists) return;
+    record(failuresByNameIp_, std::make_pair(lowerName, c.ip), MAX_LOGIN_FAILURES_PER_NAME_IP,
+           Fmt("Anmeldung für \"%s\" von %s gesperrt (%d Fehlversuche in 10 min)", lowerName.c_str(), c.ipText.c_str(),
+               MAX_LOGIN_FAILURES_PER_NAME_IP));
+    record(failuresByName_, lowerName, MAX_LOGIN_FAILURES_PER_NAME,
+           Fmt("Konto \"%s\": %d Fehlversuche in 10 min von verschiedenen Adressen – Anmeldung nur noch von bekannten "
+               "Adressen",
+               lowerName.c_str(), MAX_LOGIN_FAILURES_PER_NAME));
+}
+
+// Nach einer erfolgreichen Anmeldung: Diese Adresse gilt für das Konto als
+// bekannt (Ausnahme von der Notbremse in LoginBlocked). Nur im Speicher, die
+// letzten 4 Adressen je Konto.
+void GameServer::RememberTrustedIp(const std::string& lowerName, uint32_t ip) {
+    auto& v = trustedIps_[lowerName];
+    v.erase(std::remove(v.begin(), v.end(), ip), v.end());
+    v.push_back(ip);
+    if (v.size() > MAX_TRUSTED_IPS_PER_NAME) v.erase(v.begin());
 }
 
 bool GameServer::RegistrationAllowed(uint32_t ip, double now) {
     if (IsLocalAddress(ip)) return true;
-    auto it = registrations_.find(ip);
-    if (it == registrations_.end()) return true;
-    auto& dq = it->second;
-    while (!dq.empty() && now - dq.front() > REGISTRATION_WINDOW) dq.pop_front();
-    return static_cast<int>(dq.size()) < MAX_REGISTRATIONS_PER_IP;
+    return CountRecent(registrations_, ip, now, REGISTRATION_WINDOW) < MAX_REGISTRATIONS_PER_IP;
 }
 
 void GameServer::RecordRegistration(uint32_t ip, double now) {
@@ -1503,6 +1777,15 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     if (Ship* s = world_.PlayerShip(ps)) {
         s->cargo = std::clamp(p.cargo, 0, s->cargoMax);
         if (p.hp > 0.0f) s->hp = std::clamp(p.hp, 1.0f, s->maxHp);
+        // Dort weitermachen, wo man sich abgemeldet hat, statt an der
+        // Handelsstation (SpawnPlayerShip). Nur in derselben Welt (Seed) und
+        // innerhalb der Karte; sonst bleibt es beim Platz an der Station.
+        if (p.hasPos && p.posSeed == world_.seed && std::isfinite(p.posX) && std::isfinite(p.posZ) &&
+            std::isfinite(p.yaw) && std::fabs(p.posX) <= cfg::WORLD_HALF && std::fabs(p.posZ) <= cfg::WORLD_HALF) {
+            s->pos = {p.posX, cfg::SHIP_ALTITUDE, p.posZ};
+            s->yaw = p.yaw;
+            s->vel = {0, 0, 0};
+        }
     }
 }
 
@@ -1515,6 +1798,11 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     if (s && !s->crashing) {
         p.cargo = s->cargo;
         p.hp = s->hp;
+        p.hasPos = true;   // auch angedockt: das Schiff steht dann neben der Station
+        p.posX = s->pos.x;
+        p.posZ = s->pos.z;
+        p.yaw = s->yaw;
+        p.posSeed = world_.seed;
     } else {
         p.cargo = 0;     // kein Schiff / Absturz: Ladung ist verloren
         p.hp = -1.0f;    // nächstes Schiff hat vollen Schild
@@ -1595,9 +1883,10 @@ void GameServer::RemoveSurplusPirates() {
     Log(Fmt("%d Pirat(en) entfernt (jetzt höchstens %d)", static_cast<int>(removeIds.size()), world_.settings.enemyShips));
 }
 
-// Stationen oder Mondfarbe geändert (DESIGN 3.8): neue Welt mit neuem Seed.
+// Stationen oder Mondfarbe geändert (docs/Mehrspieler.md Abschnitt 12): neue Welt mit neuem Seed.
 // Alle Spieler behalten ihren Fortschritt und starten an einer Handelsstation.
 void GameServer::RebuildWorld() {
+    UpdateDeparting(true);   // Schiffe abgemeldeter Spieler gehören zur alten Welt
     struct Keep {
         Client* c;
         PlayerProgress progress;
@@ -1608,13 +1897,8 @@ void GameServer::RebuildWorld() {
         if (c.role != Role::Player) continue;
         PlayerState* ps = world_.FindPlayer(c.playerId);
         if (!ps) continue;
-        Ship* s = world_.PlayerShip(*ps);
-        if (s && s->crashing) {
-            // wie beim Abmelden: ein laufender Absturz wird nicht "weggezaubert"
-            world_.ResetProgress(*ps);
-            ++ps->deaths;
-            s->cargo = 0;
-        }
+        // wie beim Abmelden: ein laufender Absturz wird nicht "weggezaubert"
+        CrashOnLogout(*ps);
         StoreProgress(c);
         keep.push_back({&c, CaptureProgress(*ps)});
     }
@@ -1633,8 +1917,10 @@ void GameServer::RebuildWorld() {
     for (Keep& k : keep) {
         Client& c = *k.c;
         PlayerState& ps = world_.AddPlayer(c.playerId, c.name);   // gleiche ID wie vorher
-        RestoreProgress(ps, k.progress);
+        RestoreProgress(ps, k.progress);   // gespeicherte Position gilt nicht (anderer Seed)
         c.inputs.clear();
+        c.queueMinInWindow = 1 << 30;
+        c.queueWindowSteps = 0;
         c.lastShipId = ps.shipId;
         c.lastDeaths = ps.deaths;
         if (const Ship* s = world_.PlayerShip(ps)) c.lastPos = s->pos;

@@ -71,6 +71,15 @@ struct PlayerProgress {
     int kills = 0;
     int deaths = 0;
     int goals = 0;                              // so oft das Ziel erreicht
+    // Ort des Schiffs beim Abmelden. Beim nächsten Anmelden geht es genau dort
+    // weiter, statt an einer Handelsstation: Abmelden + Anmelden ist damit
+    // keine Abkürzung zur Station (sonst spart man den Rückflug und die Zeit
+    // fehlt in der Bestenliste). Gilt nur in der Welt, zu der er gehört
+    // (posSeed = Welt-Seed); nach einem Neuaufbau der Karte könnte an der
+    // Stelle jetzt eine Station stehen.
+    bool hasPos = false;
+    float posX = 0.0f, posZ = 0.0f, yaw = 0.0f;
+    uint32_t posSeed = 0;
 };
 
 struct Account {

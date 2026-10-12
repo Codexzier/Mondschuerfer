@@ -1,4 +1,41 @@
-// Umsetzung des Netzwerkprotokolls: Bytes schreiben/lesen, Nachrichten kodieren/dekodieren.
+// ---------------------------------------------------------------------------
+// Protocol.cpp – Umsetzung des Netzwerkprotokolls: Nachrichten in Bytes
+// verwandeln (Encode) und zurück (Decode). Die Nachrichten selbst und der
+// Ablauf einer Sitzung sind in Protocol.hpp beschrieben.
+//
+// Wer benutzt diese Datei?
+//   - server/src/GameServer.cpp: dekodiert, was Clients schicken, und kodiert
+//     ServerInfo, Welcome, Snapshots, Ereignisse, Listen.
+//   - src/NetClient.cpp (Spiel) und server/src/LoadTest.cpp (Lasttest): genau
+//     umgekehrt.
+//
+// Weg einer Nachricht:
+//   Encode(msg) -> std::vector<uint8_t> -> ENet-Paket -> Netz -> ENet-Paket
+//   -> PeekType (erstes Byte = MsgType) -> Reader -> Decode(reader, msg)
+//
+// Drei Regeln, die überall gelten:
+//   1. Encode und Decode einer Nachricht schreiben bzw. lesen dieselben
+//      Felder in GENAU derselben Reihenfolge und Größe. Es gibt keine
+//      Feldnamen im Datenstrom, nur die Reihenfolge. Wer ein Feld ergänzt,
+//      ändert beide Funktionen und erhöht PROTOCOL_VERSION (Protocol.hpp):
+//      Ein altes Spiel würde die neuen Bytes sonst falsch zuordnen.
+//   2. Zahlen werden "Little Endian" geschrieben: das niedrigste Byte zuerst.
+//      Das wird von Hand gemacht (Schieben und Maskieren) und ist deshalb auf
+//      jedem Rechner gleich, egal wie dessen Prozessor Zahlen im Speicher ablegt.
+//   3. Der Reader traut den Daten nicht. Jedes Lesen prüft, ob noch genug
+//      Bytes da sind (Need); fehlt etwas, liefert er 0 und merkt sich den
+//      Fehler (ok() == false). Längenangaben von Listen werden gegen MAX_LIST
+//      geprüft, Aufzählungswerte gegen ihren Bereich. Decode liefert dann
+//      false, und der Empfänger verwirft die ganze Nachricht.
+//
+// Quantisierung: Viele Werte werden nicht als float (4 Byte), sondern als
+// kleinere ganze Zahl übertragen (z. B. Position in Zentimetern als int16).
+// Das spart etwa die Hälfte der Bytes in jedem Snapshot. Die Faktoren stehen
+// bei den Funktionen QPos, QAngle usw. und bei den Ereignissen unten;
+// docs/Mehrspieler.md (Abschnitt 7) rechnet ein Beispiel durch.
+//
+// Abhängigkeiten: Protocol.hpp, Models.hpp (Modell-IDs für die Varianten).
+// ---------------------------------------------------------------------------
 #include "Protocol.hpp"
 #include "Models.hpp"
 #include <algorithm>
@@ -38,6 +75,8 @@ bool ValidPlayerName(const std::string& name) {
 
 // ===========================================================================
 // Writer / Reader
+// Writer hängt Bytes an buf an. Reader liest der Reihe nach (pos_) aus
+// einem fremden Puffer und prüft vorher die Länge (Need).
 // ===========================================================================
 void Writer::U16(uint16_t v) {
     buf.push_back(static_cast<uint8_t>(v & 0xFF));
@@ -61,6 +100,8 @@ void Writer::F32(float v) {
     U32(bits);
 }
 
+// Text: ein Längenbyte (0..255), danach die Bytes ohne abschließende 0.
+// Längere Texte werden abgeschnitten; Namen und Meldungen sind viel kürzer.
 void Writer::Str(const std::string& s) {
     const size_t n = std::min<size_t>(s.size(), 255);
     U8(static_cast<uint8_t>(n));
@@ -69,6 +110,9 @@ void Writer::Str(const std::string& s) {
 
 void Writer::Bytes(const uint8_t* data, size_t n) { buf.insert(buf.end(), data, data + n); }
 
+// Sind noch n Bytes zu lesen? Wenn nicht: Fehler merken (ab dann liefert
+// jedes weitere Lesen 0). "len_ - pos_ < n" statt "pos_ + n > len_", damit
+// auch ein riesiges n keinen Überlauf der Rechnung erzeugt.
 bool Reader::Need(size_t n) {
     if (!ok_ || len_ - pos_ < n) {
         ok_ = false;
@@ -131,9 +175,12 @@ void Reader::Bytes(uint8_t* out, size_t n) {
 }
 
 // ===========================================================================
-// Quantisierung
+// Quantisierung (Hin = Q..., Zurück = D...)
 // ===========================================================================
 namespace {
+// Kommazahl -> ganze Zahl vom Typ T: erst auf [lo, hi] begrenzen, dann
+// runden. Ohne das Begrenzen würde z. B. 400 in einem int8_t "überlaufen"
+// und als völlig anderer Wert ankommen. NaN/unendlich werden zu 0.
 template <typename T>
 T ClampRound(float v, float lo, float hi) {
     if (!std::isfinite(v)) v = 0.0f;
@@ -142,11 +189,18 @@ T ClampRound(float v, float lo, float hi) {
 }
 } // namespace
 
+// Position (x oder z) in Zentimetern als int16: Auflösung 1 cm, Bereich
+// ±327,67 Einheiten. Die Karte reicht nur von -150 bis +150.
 int16_t QPos(float v) { return ClampRound<int16_t>(v * 100.0f, -32767.0f, 32767.0f); }
 float DPos(int16_t q) { return static_cast<float>(q) / 100.0f; }
+// Geschwindigkeit in cm/s: Auflösung 0,01, Bereich ±327 Einheiten/s
+// (Geschosse sind mit ~70/s die schnellsten Objekte).
 int16_t QVel(float v) { return ClampRound<int16_t>(v * 100.0f, -32767.0f, 32767.0f); }
 float DVel(int16_t q) { return static_cast<float>(q) / 100.0f; }
 
+// Winkel: ein voller Kreis (2π) wird auf 65536 Stufen verteilt, also etwa
+// 0,0055 Grad pro Stufe. Vorher in 0..2π bringen; "& 0xFFFF" macht aus
+// genau 65536 (= 2π) wieder 0.
 uint16_t QAngle(float rad) {
     if (!std::isfinite(rad)) rad = 0.0f;
     const float twoPi = 2.0f * PI;
@@ -156,14 +210,19 @@ uint16_t QAngle(float rad) {
     return static_cast<uint16_t>(q & 0xFFFF);
 }
 
+// Zurück in -π..π (so rechnet die Spiellogik mit Winkeln).
 float DAngle(uint16_t q) {
     float a = static_cast<float>(q) / 65536.0f * 2.0f * PI;
     if (a > PI) a -= 2.0f * PI;
     return a;
 }
 
+// Anteil 0..1 (Schild in Prozent, Schub-Anzeige, Treffer-Aufblitzen) in
+// 256 Stufen: für Balken und Effekte mehr als genau genug.
 uint8_t QUnit(float v) { return ClampRound<uint8_t>(v * 255.0f, 0.0f, 255.0f); }
 float DUnit(uint8_t q) { return static_cast<float>(q) / 255.0f; }
+// Höhe über dem Boden in 1/20 Einheiten (5 cm), Bereich 0..12,75. Schiffe
+// fliegen auf 3,2; nur abstürzende sinken bis 0.
 uint8_t QHeight(float y) { return ClampRound<uint8_t>(y * 20.0f, 0.0f, 255.0f); }
 float DHeight(uint8_t q) { return static_cast<float>(q) / 20.0f; }
 
@@ -273,6 +332,9 @@ std::vector<uint8_t> Encode(const InputMsg& m) {
     for (size_t i = first; i < m.records.size(); ++i) {
         const InputRecord& in = m.records[i];
         w.U32(in.seq);
+        // Schub und Drehung -1..1 in Prozent (int8 -100..100). Der Client
+        // rechnet seine Vorhersage mit genau diesen gerundeten Werten
+        // (NetClient::StepOwnShip), damit Server und Client gleich rechnen.
         w.I8(ClampRound<int8_t>(in.thrust * 100.0f, -100.0f, 100.0f));
         w.I8(ClampRound<int8_t>(in.turn * 100.0f, -100.0f, 100.0f));
         w.U8(in.fire ? 1 : 0);
@@ -381,6 +443,7 @@ std::vector<uint8_t> Encode(const WelcomeMsg& m) {
     WriteSettings(w, m.settings);
     w.I64(m.totalDelivered);
     w.F32(m.serverTime);
+    w.U32(m.tick);
     return w.buf;
 }
 
@@ -393,6 +456,7 @@ bool Decode(Reader& r, WelcomeMsg& m) {
     ReadSettings(r, m.settings);
     m.totalDelivered = r.I64();
     m.serverTime = r.F32();
+    m.tick = r.U32();
     return r.ok();
 }
 
@@ -420,6 +484,9 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.F32(e.maxHp);
         w.U8(QUnit(e.hitFlash));
         w.U8(QUnit(e.thrustVisual));
+        // Mehrere Ja/Nein-Werte in EINEM Byte ("Bitfeld"): Bit 0 (Wert 1) =
+        // stürzt ab, Bit 1 (2) = Scanner an, Bit 2 (4) = baut ab. Decode
+        // prüft jedes Bit mit "flags & Wert".
         uint8_t flags = 0;
         if (e.crashing) flags |= 1;
         if (e.scanOn) flags |= 2;
@@ -456,12 +523,16 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U8(QUnit(s.hpFrac));
         w.U8(QUnit(s.thrustVisual));
         w.U8(QUnit(s.hitFlash));
+        // Bitfeld wie oben: 1 = stürzt ab, 2 = feindlich, 4 = baut ab,
+        // 8 = angedockt
         uint8_t flags = 0;
         if (s.crashing) flags |= 1;
         if (s.hostile) flags |= 2;
         if (s.mining) flags |= 4;
         if (s.docked) flags |= 8;
         w.U8(flags);
+        // Das Abbauziel nur, wenn das Schiff gerade abbaut (spart 4 Byte je
+        // Schiff). Decode liest es nur dann, wenn Bit 4 gesetzt ist.
         if (s.mining) {
             w.I16(QPos(s.mineX));
             w.I16(QPos(s.mineZ));
@@ -489,6 +560,8 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U8(k.variant);
         w.U16(k.amount);
         w.U16(k.initial);
+        // Alter des Wracks in ganzen Sekunden (verschwindet nach 300 s; für
+        // die Darstellung genügt diese Genauigkeit)
         w.U16(ClampU16(static_cast<int64_t>(k.age)));
     }
     return w.buf;
@@ -609,6 +682,7 @@ std::vector<uint8_t> Encode(const DepositsMsg& m) {
         w.I16(QPos(d.x));
         w.I16(QPos(d.z));
         w.U16(QAngle(d.yaw));
+        // Größe der Lagerstätte in 1/20-Schritten (0,05), höchstens 12,75
         w.U8(ClampRound<uint8_t>(d.scale * 20.0f, 0.0f, 255.0f));
         w.U8(d.variant);
         w.U16(d.amount);
@@ -650,6 +724,8 @@ std::vector<uint8_t> Encode(const EventsMsg& m) {
                 w.I16(QPos(e.x));
                 w.I16(QPos(e.z));
                 w.U8(QUnit(std::min(1.0f, e.volume)));
+                // Verzögerung in 1/50 s (20 ms), höchstens 255/50 = 5,1 s.
+                // Die längste im Spiel ist die Siegesfanfare mit 1,3 s.
                 w.U8(ClampRound<uint8_t>(e.delay * 50.0f, 0.0f, 255.0f));
                 w.I32(e.sourceShip);
                 break;
@@ -657,6 +733,7 @@ std::vector<uint8_t> Encode(const EventsMsg& m) {
                 w.I16(QPos(e.x));
                 w.U8(QHeight(e.y));
                 w.I16(QPos(e.z));
+                // Explosionsgröße in 1/50-Schritten, höchstens 5,1 (größte: 2,0)
                 w.U8(ClampRound<uint8_t>(e.size * 50.0f, 0.0f, 255.0f));
                 break;
             case EventKind::Sparks:
@@ -759,6 +836,7 @@ std::vector<uint8_t> Encode(const PlayersMsg& m) {
         w.F32(p.shipTime);
         w.F32(p.roundTime);
         for (uint8_t u : p.upgrades) w.U8(u);
+        // Bitfeld: 1 = hat ein Schiff (nicht abgestürzt), 2 = angedockt
         uint8_t flags = 0;
         if (p.alive) flags |= 1;
         if (p.docked) flags |= 2;
@@ -829,6 +907,9 @@ bool Decode(Reader& r, HighscoresMsg& m) {
 
 // ===========================================================================
 // Modellvarianten
+// Statt einer Modell-ID (die je Programm anders vergeben sein könnte, siehe
+// Models.hpp) geht nur eine kleine Nummer übers Netz: die Stelle in einer
+// festen Liste. Unbekannte Nummern werden zur ersten Variante.
 // ===========================================================================
 ModelIds DefaultModelIds() {
     ModelIds m;

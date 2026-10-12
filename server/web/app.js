@@ -3,7 +3,7 @@
 
    WAS PASSIERT HIER?
      1. Alle 2 Sekunden fragt die Seite GET /api/status ab (siehe
-        server/src/WebServer.cpp, Aufbau des JSON: DESIGN Abschnitt 6) und
+        server/src/WebServer.cpp, Aufbau des JSON: docs/Mehrspieler.md Abschnitt 11) und
         zeichnet daraus Auslastung, Spielerliste, Bestenliste und Formular neu.
      2. Das Formular "Spielparameter" schickt Änderungen per POST an
         /api/settings bzw. /api/settings/reset.

@@ -346,6 +346,8 @@ void World::UpdateAi(Ship& s, float dt) {
                     int take = std::min(s.cargoMax - s.cargo, dep->amount);
                     dep->amount -= take;
                     s.cargo += take;
+                    // Menge geändert: Der Server schickt die Liste neu (wie bei Spielern, World::FinishMining).
+                    if (take > 0) ++depositRevision;
                     s.mining = false;
                     s.targetDeposit = -1;
                     s.ai = s.cargo >= s.cargoMax * 0.8f ? AiState::GoSell : AiState::GoMine;

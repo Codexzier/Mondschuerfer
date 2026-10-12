@@ -137,6 +137,7 @@ Startmeldung steht, woher die Werte kommen (`Einstellungen : aus settings.txt �
 | `MOON_COLOR` | `grey` | `grey`/`grau`, `orange`, `blue`/`blau` |
 | `MAX_PLAYERS` | `16` | gleichzeitig angemeldete Spieler, 1–64 (plus bis zu 16 Zuschauer) |
 | `MAX_CONNECTIONS_PER_IP` | `8` | max. Verbindungen je öffentlicher IP-Adresse, `0` = unbegrenzt; Heimnetz-Adressen sind ausgenommen |
+| `WEB_PUBLISH_ADDRESS` | leer (= `127.0.0.1`) | Verwaltungsseite im Heimnetz freigeben, z. B. `0.0.0.0` (unverschlüsselt, siehe [Sicherheit](#die-verwaltungsseite)) |
 | `DOMAIN` | leer | nur für das Profil `online` (HTTPS mit Caddy), z. B. `mond.example.org` |
 
 Nur für den Betrieb **ohne Docker** interessant (im Container fest eingestellt, in
@@ -146,7 +147,8 @@ Nur für den Betrieb **ohne Docker** interessant (im Container fest eingestellt,
 |---|---|---|---|
 | `MONDSCHUERFER_PORT` | `--port N` | `7777` (UDP) | `7777` |
 | `MONDSCHUERFER_WEB_PORT` | `--web-port N` | `8080` (TCP) | `8080` |
-| `MONDSCHUERFER_WEB_BIND` | `--web-bind ADRESSE` | `0.0.0.0` (alle Netzwerkkarten) | `0.0.0.0` |
+| `MONDSCHUERFER_WEB_BIND` | `--web-bind ADRESSE` | `127.0.0.1` (nur dieser Rechner) | `0.0.0.0` |
+| `MONDSCHUERFER_TRUSTED_PROXY` | `--trusted-proxy NAME` | leer (keiner) | `caddy` |
 | `MONDSCHUERFER_DATA` | `--data ORDNER` | `./data` | `/data` |
 | `MONDSCHUERFER_WEB_ROOT` | `--web-root ORDNER` | `<Programmordner>/web` | `/app/web` |
 | – | `--no-web` | Webseite aus | – |
@@ -277,12 +279,19 @@ anschließen. Bricht das Bauen auf einem Pi mit wenig Speicher ab („Killed“)
 - **Standard: nur lokal.** `docker-compose.yml` gibt Port 8080 nur auf `127.0.0.1` frei. Zugriff
   von woanders: [SSH-Tunnel](#4-ports-firewall-und-router), VPN oder das Profil `online`.
   **Port 8080 nie im Router freigeben.**
+- **Im Heimnetz freigeben** (z. B. Raspberry Pi ohne Bildschirm): in `.env`
+  `WEB_PUBLISH_ADDRESS=0.0.0.0` setzen und `docker compose up -d` ausführen. Dann ist die Seite
+  unter `http://<LAN-Adresse>:8080` erreichbar – **unverschlüsselt**, also nur in einem Netz, dem
+  du vertraust. Der Webserver hat nur 4 Arbeits-Threads; wer Port 8080 direkt erreicht, kann ihn
+  mit wenigen absichtlich langsamen Verbindungen („Slowloris“) blockieren. Hinter Caddy (Profil
+  `online`) passiert das nicht, weil Caddy Anfragen erst vollständig annimmt und Zeitgrenzen setzt.
 - **Passwortregeln:** mindestens 10 Zeichen, keine Standardwörter/Platzhalter, nicht gleich dem
   Benutzernamen. Sonst verweigert der Server den Start der Webseite (das Spiel läuft trotzdem) und
   schreibt den Grund ins Log. Empfehlung: 20+ zufällige Zeichen aus einem Passwortmanager.
 - **Sperre bei Fehlversuchen:** Nach 5 falschen Anmeldungen ist die IP-Adresse 60 Sekunden
   gesperrt (Antwort 429), jede weitere Sperre dauert doppelt so lange, höchstens 15 Minuten.
-  Eine erfolgreiche Anmeldung setzt den Zähler absichtlich nicht zurück.
+  Erst nach 30 Minuten ohne Fehlversuch ist alles vergessen. Eine erfolgreiche Anmeldung setzt
+  den Zähler absichtlich nicht zurück.
 - **Schutz gegen fremde Webseiten (CSRF):** Änderungen werden nur angenommen, wenn sie von der
   Seite selbst kommen (eigener Header, Origin- und Host-Prüfung). Dazu kommen
   Sicherheits-Header (Content-Security-Policy, kein Einbetten in fremde Seiten, kein Zwischenspeichern).
@@ -306,11 +315,16 @@ ohne Profil angefasst).
 
 Gut zu wissen:
 
-- Hinter dem Proxy sehen alle Anfragen für den Server so aus, als kämen sie von Caddy (der
-  Header `X-Forwarded-For` wird absichtlich nicht ausgewertet, weil man ihn fälschen kann).
-  Die Sperre nach Fehlversuchen gilt dann für **alle** gemeinsam: Ein Angreifer kann zwar nicht
-  schneller raten, dich aber bis zu 15 Minuten aussperren. Der lokale Zugang (`127.0.0.1:8080`,
-  SSH-Tunnel) hat einen eigenen Zähler und funktioniert weiter.
+- Hinter dem Proxy kämen alle Anfragen für den Server von derselben Adresse (der von Caddy).
+  Dann gälte die Sperre nach Fehlversuchen für **alle** gemeinsam, und ein Angreifer könnte dich
+  mit einem falschen Versuch nach jeder Sperre dauerhaft aussperren. Deshalb schickt Caddy die
+  echte Adresse des Besuchers im Header `X-Real-IP` mit (`server/Caddyfile`), und der Server
+  übernimmt ihn **nur** von Caddy (`MONDSCHUERFER_TRUSTED_PROXY=caddy` in `docker-compose.yml`;
+  der Name wird im Docker-Netz aufgelöst). Von jedem anderen Absender wird der Header ignoriert,
+  denn sonst könnte sich jeder für jeden Versuch eine neue Adresse ausdenken. Der lokale Zugang
+  (`127.0.0.1:8080`, SSH-Tunnel) hat ohnehin einen eigenen Zähler.
+- Caddy schützt außerdem gegen absichtlich langsame Verbindungen („Slowloris“): Er nimmt eine
+  Anfrage erst vollständig an (Zeitgrenzen im `Caddyfile`), bevor er sie weiterreicht.
 - Einen **anderen Reverse-Proxy** (nginx, Traefik …) kann man genauso benutzen. Wichtig: Er muss
   den **Host-Header unverändert** weitergeben, sonst lehnt die Origin-Prüfung jede Änderung ab
   (nginx: `proxy_set_header Host $http_host;`; Caddy macht das automatisch).
@@ -326,9 +340,21 @@ Gut zu wissen:
 - **Anmelden mit Challenge-Response:** Der Server schickt eine frische Zufallszahl (Nonce), das
   Spiel antwortet mit `HMAC(Schlüssel, Nonce + Name)`. Wer eine Anmeldung mitschneidet, kann sie
   nicht wiederverwenden – die nächste Nonce ist eine andere.
-- **Begrenzungen:** höchstens 5 Fehlversuche pro Verbindung (dann Trennung), höchstens 10 pro
-  Konto in 10 Minuten, höchstens 10 neue Konten pro Stunde und öffentlicher IP-Adresse,
+- **Begrenzungen bei der Anmeldung** (Zeitfenster jeweils 10 Minuten):
+  - höchstens 5 Fehlversuche pro Verbindung, dann Trennung;
+  - höchstens 10 Fehlversuche für ein Konto **von einer Adresse aus**. Gesperrt wird nur diese
+    Adresse für dieses Konto – ein Fremder kann den echten Besitzer so nicht aussperren;
+  - höchstens 30 Fehlversuche pro öffentlicher Adresse über alle Konten zusammen;
+  - höchstens 100 Fehlversuche pro Konto insgesamt („Notbremse“ gegen Raten von vielen Adressen
+    aus). Sie gilt nicht für Adressen, von denen sich der Besitzer seit dem Serverstart schon
+    erfolgreich angemeldet hat;
+  - jede Sperre steht einmal im Log (`docker compose logs`) mit Name und Adresse.
+- **Weitere Grenzen:** höchstens 10 neue Konten pro Stunde und öffentlicher IP-Adresse,
   höchstens 10.000 Konten insgesamt.
+- **Abmelden im Gefecht hilft nicht:** Wer sich außerhalb einer Station abmeldet (oder die
+  Verbindung verliert), dessen Schiff bleibt noch 10 Sekunden ohne Steuerung im All und kann
+  abgeschossen werden. Beim nächsten Anmelden geht es dort weiter, wo das Schiff war – nicht an
+  der Handelsstation. Wer sich innerhalb der 10 Sekunden wieder anmeldet, übernimmt sein Schiff.
 - **Grenzen dieses Verfahrens** (bewusst einfach gehalten, siehe `shared/Crypto.hpp`):
   - Beim **Anlegen** eines Kontos geht der Schlüssel unverschlüsselt übers Netz. Wer genau
     diesen Moment mitliest, kann sich später als dieser Spieler anmelden (das Passwort selbst
@@ -350,7 +376,16 @@ Gut zu wissen:
 - hat Obergrenzen für Prozesse (64) und Arbeitsspeicher (256 MB) und begrenzte Log-Dateien;
 - enthält keinen Compiler und keine Zugangsdaten (die kommen erst beim Start aus `.env`).
 - Weitere Schutzgrenzen im Server: Pakete max. 64 KB, max. 240 Nachrichten pro Sekunde und
-  Verbindung, Trennung nach 50 kaputten Paketen, Trennung nach 15 Minuten ohne Anmeldung.
+  Verbindung, Trennung nach 50 kaputten Paketen, Trennung nach 15 Minuten ohne Anmeldung,
+  höchstens 128 Verbindungen ohne Anmeldung gleichzeitig.
+- **Halboffene Verbindungen:** UDP kennt keinen Verbindungsaufbau; ENet belegt einen Platz schon
+  beim ersten Paket. Der Server hat deshalb 1024 Plätze, gibt unbeantwortete Verbindungsversuche
+  nach höchstens 3 Sekunden auf und lässt pro öffentlicher Adresse höchstens
+  `MAX_CONNECTIONS_PER_IP` Verbindungen zu (auch halboffene). **Grenze:** Mit gefälschten
+  Absenderadressen (bei UDP möglich) könnte ein Angreifer mit über 300 Paketen pro Sekunde
+  trotzdem alle Plätze belegt halten; der Server meldet das im Log („Verbindungsplätze
+  belegt“). Vollständig schützt dagegen nur ein **VPN** (siehe oben), weil der Spielport dann
+  nicht offen im Internet steht.
 
 `ADMIN_PASSWORD` steht als Umgebungsvariable im Container und ist für jeden sichtbar, der Docker
 bedienen darf (`docker inspect`). Wer Docker bedienen darf, hat aber ohnehin volle Kontrolle über
@@ -489,8 +524,8 @@ ADMIN_USER=mondverwalter ADMIN_PASSWORD='hier-ein-langes-passwort' \
 - `MONDSCHUERFER_CLIENT=OFF` lässt das Spiel (und damit raylib) weg; `MONDSCHUERFER_SERVER=ON`
   baut Server und Lasttest. Beides zusammen geht auch (Standard ist Client an, Server aus).
 - Die Webseite wird beim Bauen nach `build/srv/server/web` kopiert und dort automatisch gefunden.
-- `--web-bind 127.0.0.1` ist ohne Docker wichtig: Der Standard `0.0.0.0` würde die Webseite
-  (unverschlüsselt) im ganzen Netz anbieten.
+- `--web-bind 127.0.0.1` ist ohne Docker schon der Standard (nur dieser Rechner). Mit
+  `--web-bind 0.0.0.0` wäre die Webseite unverschlüsselt im ganzen Netz erreichbar.
 - **Windows** (CLion oder Visual Studio): in den CMake-Optionen `-DMONDSCHUERFER_SERVER=ON` setzen,
   Ziel `mondschuerfer-server` bauen. Beenden mit Strg+C (der Server speichert vorher).
 - Alle Optionen: `mondschuerfer-server --help`.

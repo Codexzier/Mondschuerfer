@@ -77,6 +77,12 @@ constexpr float MINING_RANGE = 6.5f;
 // andockt. Stationen haben dabei Vorrang vor Lagerstätten und Wracks.
 constexpr float DOCK_RANGE = 15.0f;
 
+// Drehgeschwindigkeit des Spielerschiffs in rad/s (2,9 rad/s ≈ 166 Grad pro
+// Sekunde). An einer Stelle festgelegt, weil Server (World::MakeShip) und
+// Client-Vorhersage (NetClient) exakt denselben Wert brauchen; sonst würde
+// das vorhergesagte Schiff bei jeder Drehung vom Server abweichen.
+constexpr float PLAYER_TURN_RATE = 2.9f;
+
 // Waffen
 // PLAYER_FIRE_INTERVAL und PLAYER_DAMAGE werden derzeit nirgends benutzt: Die
 // echten Werte des Spielerschiffs kommen aus WEAPON_RATE[0] / WEAPON_DAMAGE[0]

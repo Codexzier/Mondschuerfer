@@ -105,16 +105,12 @@ bool SaveExists() {
 // Algorithmus std::remove aus <algorithm>).
 void DeleteSave() { std::remove(SavePath().c_str()); }
 
-// Schreibt den ganzen Spielstand neu (trunc = alte Datei vorher leeren).
-// Simulation (Autopilot) wird nie gespeichert, ein beendetes Spiel auch nicht
-// (main.cpp löscht den Spielstand nach Sieg/Absturz). Ob das Schiff gerade
-// abstürzt, prüft der Aufrufer (App::OnExit).
+// Schreibt den ganzen Spielstand in die Datei file (trunc = vorher leeren).
 // Die Reihenfolge der Zeilen ist für LoadGame wichtig, siehe dort.
 // Zahlen werden mit der Standardgenauigkeit der Streams (6 gültige Stellen)
 // geschrieben – für Positionen und Zeiten in einem Spiel genau genug.
-bool SaveGame(const World& w) {
-    if (w.simulation || w.outcome != Outcome::None) return false;
-    std::ofstream f(SavePath(), std::ios::trunc);
+static bool WriteSaveFile(const std::string& file, const World& w) {
+    std::ofstream f(file, std::ios::trunc);
     if (!f) return false;
     // Einzelspieler: eigenes Schiff ist ships[0], eigener Spieler players[0]
     const Ship& p = w.Player();
@@ -160,8 +156,38 @@ bool SaveGame(const World& w) {
     // derzeit nicht, es liest einfach bis zum Dateiende).
     f << "end\n";
     // Ein Stream wird "falsch", wenn ein Schreibvorgang fehlgeschlagen ist
-    // (z. B. Datenträger voll).
+    // (z. B. Datenträger voll). close() übergibt den Rest des Puffers an das
+    // Betriebssystem; auch dabei kann noch etwas schiefgehen.
+    f.close();
     return static_cast<bool>(f);
+}
+
+// Spielstand speichern. Simulation (Autopilot) wird nie gespeichert, ein
+// beendetes Spiel auch nicht (main.cpp löscht den Spielstand nach
+// Sieg/Absturz). Ob das Schiff gerade abstürzt, prüft der Aufrufer
+// (App::OnExit).
+// Sicher speichern: erst eine Hilfsdatei ".tmp" vollständig schreiben, dann
+// umbenennen. Bricht das Schreiben mittendrin ab (Spiel abgestürzt, Platte
+// voll), bleibt der alte Spielstand unversehrt, statt halb überschrieben zu sein.
+bool SaveGame(const World& w) {
+    if (w.simulation || w.outcome != Outcome::None) return false;
+    const std::string path = SavePath();
+    const std::string tmp = path + ".tmp";
+    if (!WriteSaveFile(tmp, w)) {
+        std::remove(tmp.c_str());
+        return false;
+    }
+    // Linux/macOS: rename ersetzt die alte Datei in einem Schritt. Unter
+    // Windows schlägt rename fehl, wenn es das Ziel schon gibt: dann die alte
+    // Datei löschen und noch einmal versuchen.
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+        std::remove(path.c_str());
+        if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+            std::remove(tmp.c_str());
+            return false;
+        }
+    }
+    return true;
 }
 
 // Laden in zwei Durchgängen durch die Datei:

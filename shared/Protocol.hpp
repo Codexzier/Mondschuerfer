@@ -47,7 +47,8 @@ namespace net {
 // ---------------------------------------------------------------------------
 // Konstanten
 // ---------------------------------------------------------------------------
-constexpr uint16_t PROTOCOL_VERSION = 1;
+// Version 2: Welcome enthält den Simulationsschritt (tick), siehe WelcomeMsg.
+constexpr uint16_t PROTOCOL_VERSION = 2;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -252,6 +253,11 @@ struct WelcomeMsg {
     GameSettings settings;
     int64_t totalDelivered = 0;
     float serverTime = 0.0f;
+    // Simulationsschritt des Servers beim Welcome (wie SnapshotMsg::tick).
+    // Der Client rechnet seine Zeitachse aus diesen ganzen Zahlen statt aus
+    // serverTime: Ein float wird nach Tagen zu ungenau für die Interpolation,
+    // ein Schrittzähler nie (NetClient::Impl::TickTime).
+    uint32_t tick = 0;
 };
 
 // Eigener Zustand (nur für Spieler) – genau genug für die Vorhersage

@@ -76,6 +76,7 @@
 #include <ctime>
 #include <memory>
 #include <string>
+#include <vector>
 
 // Text, Button, Scale, die Farben ACCENT/MUTED/TEXT ... stammen aus src/Ui.hpp
 using namespace ui;
@@ -120,6 +121,7 @@ struct TestOptions {
     bool thrustTest = false;       // --thrust-test: Vollschub nach rechts (+x) und Dauerfeuer
     int pirates = 0;               // --pirates N: N Piraten dicht beim Spieler erzeugen
     float hp = -1.0f;              // --hp H: Schildstand vorgeben (z. B. Warnton unter 30 %)
+    bool dumpModelBounds = false;  // --dump-model-bounds: Tabelle für shared/ModelBounds.inc ausgeben und beenden
     long long balance = -1;        // --balance N: Kontostand vorgeben
     // Mehrspieler (--mp-connect ADRESSE startet direkt im Mehrspieler-Bildschirm,
     // --mp-name/--mp-pass melden automatisch an, --mp-register legt das Konto an,
@@ -193,9 +195,10 @@ public:
     }
 
     // Ein Frame (Reihenfolge siehe Dateikopf). dt = Sekunden seit dem letzten
-    // Frame, von main() auf höchstens 1/20 s begrenzt. Liefert false, wenn das
+    // Frame, von main() auf höchstens 1/20 s begrenzt; rawDt = dieselbe Zeit
+    // ungekürzt (nur für den Mehrspieler, siehe unten). Liefert false, wenn das
     // Spiel beendet werden soll ("Beenden" im Menü oder --quit-after).
-    bool Frame(float dt) {
+    bool Frame(float dt, float rawDt) {
         elapsed_ += dt;
         ui::BeginFrame();
         // F11: randloses Fenster in Bildschirmgröße <-> normales Fenster.
@@ -228,7 +231,13 @@ public:
                 // Netzwerk, Eingaben und Kamera des Mehrspielers. Will der Spieler
                 // zurück ins Hauptmenü, wird das Objekt in BackToMenu zerstört
                 // (das trennt die Verbindung).
-                mp_->Update(dt);
+                // Hier die UNGEKÜRZTE Bildzeit: Die Eingabeuhr im NetClient muss
+                // mit der Uhr des Servers Schritt halten (30 Eingaben pro
+                // Sekunde, auch bei weniger als 20 Bildern pro Sekunde). Sonst
+                // fehlen dem Server Eingaben, und das eigene Schiff wird ständig
+                // zurechtgerückt. Gegen zu große Schritte schützt sich NetClient
+                // selbst (feste 1/30-s-Schritte, höchstens 0,25 s pro Frame).
+                mp_->Update(rawDt);
                 if (mp_->WantsMenu()) BackToMenu();
                 break;
         }
@@ -796,6 +805,35 @@ private:
 // ===========================================================================
 // main: Kommandozeile, Fenster, Assets, Hauptschleife
 // ===========================================================================
+// --dump-model-bounds: Abmessungen aller Modelle in assets/models als Tabelle
+// ausgeben, im Format von shared/ModelBounds.inc. Aufruf:
+//   Mondschuerfer --dump-model-bounds > shared/ModelBounds.inc
+// Nötig, wenn Modelle hinzukommen oder sich ändern: Der Server lädt keine
+// Modelle und kennt die Größe der Stationen nur aus dieser Tabelle.
+// Die Zahlen werden mit 9 gültigen Stellen geschrieben ("%.9g"). Das reicht,
+// damit jeder float exakt wieder eingelesen wird; so rechnen Spiel und Server
+// mit genau denselben Werten wie beim Laden der Modelle.
+static void DumpModelBounds() {
+    FilePathList files = LoadDirectoryFilesEx((g_assets.AssetDir() + "models").c_str(), ".glb", false);
+    std::vector<std::string> names;
+    for (unsigned i = 0; i < files.count; ++i) names.push_back(GetFileNameWithoutExt(files.paths[i]));
+    UnloadDirectoryFiles(files);
+    std::sort(names.begin(), names.end());
+    auto num = [](float v) {
+        std::string s = TextFormat("%.9g", v);
+        if (s.find_first_of(".e") == std::string::npos) s += ".0";   // "0" -> "0.0f" (sonst kein float-Literal)
+        return s + "f";
+    };
+    printf("// Automatisch erzeugt: Abmessungen (BoundingBox) aller Modelle des Kenney Space Kit.\n");
+    printf("// Erzeugen mit:  Mondschuerfer --dump-model-bounds > shared/ModelBounds.inc\n");
+    printf("// Format: {Dateiname ohne .glb, {min x, y, z}, {max x, y, z}} im Kit-Raster (Ursprung korrigiert).\n");
+    for (const auto& n : names) {
+        const BoundingBox b = g_assets.Bounds(g_assets.Id(n));
+        printf("    {\"%s\", {%s, %s, %s}, {%s, %s, %s}},\n", n.c_str(), num(b.min.x).c_str(), num(b.min.y).c_str(),
+               num(b.min.z).c_str(), num(b.max.x).c_str(), num(b.max.y).c_str(), num(b.max.z).c_str());
+    }
+}
+
 int main(int argc, char** argv) {
     // Kommandozeile auswerten. Alle Optionen sind für automatische Tests;
     // ohne Optionen startet das normale Spiel im Hauptmenü. next() holt den
@@ -822,6 +860,7 @@ int main(int argc, char** argv) {
         else if (a == "--pirates") opt.pirates = atoi(next().c_str());
         else if (a == "--hp") opt.hp = static_cast<float>(atof(next().c_str()));
         else if (a == "--balance") opt.balance = atoll(next().c_str());
+        else if (a == "--dump-model-bounds") opt.dumpModelBounds = true;
         else if (a == "--mp-connect") opt.mp.connect = next();
         else if (a == "--mp-name") opt.mp.name = next();
         else if (a == "--mp-pass") opt.mp.password = next();
@@ -875,6 +914,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (opt.dumpModelBounds) {
+        DumpModelBounds();
+        g_assets.Shutdown();
+        CloseWindow();
+        return 0;
+    }
+
     g_audio.Init(g_assets.AssetDir()); // ohne Audiogerät läuft das Spiel stumm weiter
 
     // --norender: so schnell wie möglich rechnen (0 = keine Bildraten-Grenze)
@@ -887,9 +933,10 @@ int main(int argc, char** argv) {
     // Laden) nicht einen riesigen Simulationsschritt erzeugt, in dem Schiffe
     // durch Hindernisse "tunneln" oder Geschosse übersprungen werden.
     while (!WindowShouldClose()) {
-        float dt = std::min(GetFrameTime(), 1.0f / 20.0f);
-        if (!opt.screenshot.empty() || opt.report || opt.shotEvery > 0.0f) dt = 1.0f / 60.0f; // deterministisch für Tests
-        if (!app.Frame(dt)) break;
+        float rawDt = GetFrameTime();
+        float dt = std::min(rawDt, 1.0f / 20.0f);
+        if (!opt.screenshot.empty() || opt.report || opt.shotEvery > 0.0f) dt = rawDt = 1.0f / 60.0f; // deterministisch für Tests
+        if (!app.Frame(dt, rawDt)) break;
     }
     // Aufräumen in umgekehrter Reihenfolge des Ladens: erst speichern bzw.
     // beim Server abmelden, dann Ton, Grafik und zuletzt das Fenster

@@ -321,7 +321,7 @@ void WriteSettings(JsonWriter& w, const GameSettings& g) {
     w.EndObject();
 }
 
-// Komplette Antwort für GET /api/status (Aufbau: DESIGN.md Abschnitt 6).
+// Komplette Antwort für GET /api/status (erklärt in docs/Mehrspieler.md, Abschnitt 11).
 // Die Daten stammen aus der Kopie, die der Spiel-Thread einmal pro Sekunde in
 // SharedState ablegt. Hier wird nichts berechnet, nur umgeformt.
 std::string BuildStatusJson(const ServerStatus& s) {
@@ -960,7 +960,7 @@ public:
 
     // --- Pre-Routing: Anmeldung und Sperre (läuft in einem Arbeits-Thread) ----
     httplib::Server::HandlerResponse Authenticate(const httplib::Request& req, httplib::Response& res) {
-        const std::string client = ClientKey(req.remote_addr);
+        const std::string client = ClientKey(ClientAddress(req));
         const Clock::time_point now = Clock::now();
 
         if (const int wait = guard_.SecondsLocked(client, now)) {
@@ -1121,7 +1121,77 @@ private:
         return has;
     }
 
+    // Absenderadresse für die Sperrliste. Normalerweise req.remote_addr.
+    // Hinter Caddy (Profil "online") wäre das aber für ALLE Besucher die
+    // Adresse des Caddy-Containers: Ein Angreifer könnte dann mit ein paar
+    // Fehlversuchen alle aussperren, auch den Admin, und zwar immer wieder.
+    // Deshalb: Kommt die Anfrage vom vertrauenswürdigen Proxy
+    // (config_.trustedProxy, in docker-compose.yml "caddy"), gilt die Adresse,
+    // die er im Header "X-Real-IP" mitschickt (server/Caddyfile setzt ihn).
+    // Von jedem anderen Absender wird der Header ignoriert, sonst könnte sich
+    // jeder für jeden Versuch eine neue Adresse ausdenken.
+    std::string ClientAddress(const httplib::Request& req) {
+        if (config_.trustedProxy.empty() || !IsTrustedProxy(req.remote_addr)) return req.remote_addr;
+        const std::string real = req.get_header_value("X-Real-IP");
+        unsigned char buf[16];
+        if (inet_pton(AF_INET, real.c_str(), buf) == 1 || inet_pton(AF_INET6, real.c_str(), buf) == 1) return real;
+        return req.remote_addr;
+    }
+
+    // Ist addr eine Adresse des Proxys? Der Name wird über DNS aufgelöst (in
+    // Docker liefert der eingebaute DNS die Adresse des Containers "caddy";
+    // läuft Caddy nicht, gibt es keine Adresse und damit kein Vertrauen).
+    // Ergebnis 30 s zwischenspeichern; aufgelöst wird ohne gesperrten Mutex,
+    // damit eine langsame DNS-Antwort nicht alle Arbeits-Threads aufhält.
+    bool IsTrustedProxy(const std::string& addr) {
+        const std::string a = addr.rfind("::ffff:", 0) == 0 ? addr.substr(7) : addr;
+        bool refresh = false;
+        {
+            std::lock_guard<std::mutex> lock(proxyMutex_);
+            const auto now = Clock::now();
+            if (!proxyResolving_ && (!proxyResolved_ || now - proxyResolvedAt_ > std::chrono::seconds(30))) {
+                proxyResolving_ = true;
+                refresh = true;
+            }
+        }
+        if (refresh) {
+            std::vector<std::string> addrs = ResolveHost(config_.trustedProxy);
+            std::lock_guard<std::mutex> lock(proxyMutex_);
+            proxyAddrs_ = std::move(addrs);
+            proxyResolvedAt_ = Clock::now();
+            proxyResolved_ = true;
+            proxyResolving_ = false;
+        }
+        std::lock_guard<std::mutex> lock(proxyMutex_);
+        return std::find(proxyAddrs_.begin(), proxyAddrs_.end(), a) != proxyAddrs_.end();
+    }
+
+    // Alle IP-Adressen eines Namens (oder die Adresse selbst, wenn host schon
+    // eine ist) als Text, z. B. "172.18.0.3".
+    static std::vector<std::string> ResolveHost(const std::string& host) {
+        std::vector<std::string> out;
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0) return out;
+        for (addrinfo* p = res; p; p = p->ai_next) {
+            char buf[INET6_ADDRSTRLEN] = {0};
+            const void* src = nullptr;
+            if (p->ai_family == AF_INET) src = &reinterpret_cast<const sockaddr_in*>(p->ai_addr)->sin_addr;
+            else if (p->ai_family == AF_INET6) src = &reinterpret_cast<const sockaddr_in6*>(p->ai_addr)->sin6_addr;
+            if (src && inet_ntop(p->ai_family, src, buf, sizeof(buf))) out.emplace_back(buf);
+        }
+        freeaddrinfo(res);
+        return out;
+    }
+
     WebConfig config_;
+    std::mutex proxyMutex_;                     // schützt die vier proxy*-Felder
+    std::vector<std::string> proxyAddrs_;       // aufgelöste Adressen von config_.trustedProxy
+    Clock::time_point proxyResolvedAt_{};
+    bool proxyResolved_ = false;
+    bool proxyResolving_ = false;               // ein Thread löst gerade auf
     // Wir speichern NICHT Benutzer/Passwort zum Vergleichen, sondern ihre
     // SHA-256-Werte. Beim Vergleich wird die Eingabe ebenfalls gehasht; beide
     // Hashes sind immer 32 Byte lang, und ConstantTimeEqual braucht immer

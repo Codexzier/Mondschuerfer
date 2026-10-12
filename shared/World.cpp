@@ -185,7 +185,7 @@ Ship World::MakeShip(ShipKind kind, Vector3 pos) {
         case ShipKind::Player:
             s.faction = Faction::Player;
             s.model = mdl.player;
-            s.turnRate = 2.9f;
+            s.turnRate = cfg::PLAYER_TURN_RATE;
             break;
         case ShipKind::Pirate:
             s.faction = Faction::Pirate;

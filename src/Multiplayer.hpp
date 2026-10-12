@@ -66,7 +66,7 @@ public:
     MultiplayerScreen& operator=(const MultiplayerScreen&) = delete;
 
     // Einmal pro Frame, in dieser Reihenfolge (siehe App::Frame in main.cpp):
-    void Update(float dt);        // Netzwerk, Eingaben, Kamera, Feuerwerk
+    void Update(float frameDt);   // Netzwerk, Eingaben, Kamera, Feuerwerk (frameDt ungekürzt, siehe main.cpp)
     void UpdateAudio(float dt);   // Töne der Spiegelwelt und Dauergeräusche
     void Draw();                  // zwischen BeginDrawing/ClearBackground und EndDrawing
 

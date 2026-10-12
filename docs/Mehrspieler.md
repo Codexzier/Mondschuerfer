@@ -274,6 +274,17 @@ gleicht das aus:
   enthält, schadet ein verlorenes Paket meist nicht: Die Eingabe steckt auch im nächsten.
 - Ist die Schlange länger als 6, verwirft der Server die ältesten (sonst würde sich Verzögerung
   aufstauen).
+- **Die Schlange wird geregelt.** Nach einem Netz-Ruckler kommen die zurückgehaltenen Pakete
+  gleichzeitig an, und die Schlange ist plötzlich z. B. 5 lang. Weil Client und Server beide genau
+  30 Eingaben pro Sekunde erzeugen bzw. verbrauchen, bliebe sie für immer so lang: Jede Eingabe
+  wirkte dann 5/30 s ≈ 170 ms später (Schüsse, Andocken, die Position, die andere sehen). Deshalb
+  merkt sich `ApplyInputs` die **kürzeste** Länge der letzten Sekunde. War die Schlange die ganze
+  Sekunde über länger als 1, wird eine Eingabe übersprungen – höchstens eine pro Sekunde, damit
+  es sanft geht. Tastendrücke gehen dabei nicht verloren (Zähler, siehe unten), ein Schuss wird an
+  die nächste Eingabe weitergereicht. Der Client merkt nur eine kleine Korrektur beim Abgleich.
+- Damit der Client wirklich 30 Eingaben pro Sekunde erzeugt, bekommt der Mehrspieler die
+  **ungekürzte** Bildzeit (`App::Frame` in `src/main.cpp`). Der Einzelspieler kürzt sie auf
+  höchstens 1/20 s; bei 15 Bildern pro Sekunde liefe die Eingabeuhr sonst nur mit 75 %.
 - `ackSeq` (die Nummer der zuletzt angewendeten Eingabe) geht im nächsten Snapshot zurück an den
   Client. Das braucht er für den Abgleich (Abschnitt 6).
 
@@ -493,12 +504,18 @@ Geschwindigkeit weiter (Extrapolation). Springt ein Schiff zwischen zwei Snapsho
 15 m, wird nicht interpoliert, sondern direkt versetzt. Neue IDs erscheinen, verschwundene fallen
 weg.
 
-**Woher kennt das Spiel die Serverzeit?** Jeder Snapshot trägt `serverTime`. „Serverzeit minus
-eigene Uhr beim Empfang“ ist eine Messung des Versatzes zwischen beiden Uhren (samt Laufzeit).
-Einzelne Messungen schwanken, deshalb verschiebt jede neue die Schätzung nur um 5 %
-(`SyncTime`). Weicht eine Messung um mehr als 1 s ab (Neuverbindung, langer Hänger), beginnt die
-Schätzung neu. `serverTime` beginnt übrigens für **jede** Verbindung beim ersten `Welcome` bei 0 –
-nur Zeitdifferenzen haben eine Bedeutung.
+**Woher kennt das Spiel die Serverzeit?** Jeder Snapshot trägt die Nummer des Server-Schritts
+(`tick`), in dem er entstand. Das Spiel rechnet daraus die Serverzeit in Sekunden
+(`TickTime`: Schritte seit dem ersten `Welcome` geteilt durch 30). „Serverzeit minus eigene Uhr
+beim Empfang“ ist eine Messung des Versatzes zwischen beiden Uhren (samt Laufzeit). Einzelne
+Messungen schwanken, deshalb verschiebt jede neue die Schätzung nur um 5 % (`SyncTime`). Weicht
+eine Messung um mehr als 1 s ab (Neuverbindung, langer Hänger), beginnt die Schätzung neu.
+
+Warum ein Schrittzähler und keine Kommazahl? Ein `float` hat nur etwa 7 gültige Stellen. Nach
+12 Tagen (rund 1 Million Sekunden) könnte er Zeiten nur noch in Schritten von 1/8 s darstellen –
+zwei Snapshots im Abstand von 1/10 s bekämen dann manchmal dieselbe Zeit, und die Schiffe
+sprängen. Eine ganze Zahl zählt dagegen immer exakt; erst beim Umrechnen entsteht eine
+Kommazahl (`double`, 15–16 Stellen). Eine Zuschauer-Anzeige kann so wochenlang laufen.
 
 **Geschosse** fliegen geradeaus. Das Spiel nimmt sie aus dem neuesten Snapshot und rechnet sie mit
 `Geschwindigkeit · (jetzt − Empfangszeit)` weiter. **Wracks** und **Lagerstätten** bewegen sich
@@ -628,11 +645,22 @@ Feinheiten in `GameServer::HandleLoginStart` und `HandleLoginProof`:
 | Anmeldung mitschneiden und später nachspielen („Replay“) | **ja** | jede Anmeldung bekommt eine neue Nonce, der alte Beweis passt nicht mehr |
 | Passwort aus einer mitgeschnittenen Anmeldung lesen | **ja** | übertragen wird nur ein HMAC; das Passwort ließe sich nur durch Raten finden, mit 20.000 PBKDF2-Runden pro Versuch |
 | Betreiber des Servers liest Passwörter | **ja** | der Server bekommt nur den abgeleiteten Schlüssel |
-| Passwort online durchprobieren | **begrenzt** | 5 Versuche pro Verbindung, 10 pro Konto und 10 Minuten |
+| Passwort online durchprobieren | **begrenzt** | 5 Versuche pro Verbindung; je 10 Minuten 10 pro Konto und Adresse, 30 pro Adresse, 100 pro Konto insgesamt (siehe unten) |
+| Einen fremden Spieler gezielt aussperren | **ja** | gesperrt wird nur die Kombination aus Konto und Absender-Adresse; die „Notbremse“ (100 pro Konto) gilt nicht für Adressen, von denen sich der Besitzer schon erfolgreich angemeldet hat |
 | Herausfinden, ob ein Name existiert | **teilweise** | über die Anmeldung nicht; „Neues Konto anlegen“ meldet aber zwangsläufig „Name vergeben“, und die Spielerliste zeigt, wer online ist |
 | Mitlesen genau beim **Anlegen** des Kontos | **nein** | der Schlüssel geht einmal unverschlüsselt übers Netz – wer ihn hat, kann sich anmelden (das Passwort kennt er trotzdem nicht) |
 | Diebstahl von `accounts.txt` oder einer Sicherung | **nein** (Passwort bleibt geheim) | der gespeicherte Schlüssel genügt zum Anmelden; das Passwort selbst müsste man erraten |
 | Mitlesen oder Verändern des laufenden Spiels | **nein** | die ENet-Verbindung ist nicht verschlüsselt; ein Angreifer mitten im Netz könnte eine Sitzung nach der Anmeldung übernehmen |
+
+**Warum gleich drei Zähler für Fehlversuche?** (`GameServer::LoginBlocked`) Ein einziger
+Zähler pro Konto wäre einfach, hätte aber eine böse Nebenwirkung: Jeder könnte mit zehn falschen
+Versuchen einen beliebigen Spieler aussperren, denn alle Namen stehen in der Spielerliste. Darum
+zählt der Server pro **Konto und Adresse** (sperrt nur den Angreifer), pro **Adresse** über alle
+Konten (bremst das Ausprobieren eines Passworts bei vielen Konten) und als Notbremse pro **Konto**
+insgesamt (gegen Raten von sehr vielen Adressen aus). Gezählt werden nur Konten, die es gibt; sonst
+könnte man die Liste mit erfundenen Namen füllen. Während einer Sperre prüft der Server den Beweis
+gar nicht erst – sonst könnte ein Angreifer trotz Sperre weiterraten und an der Antwort erkennen,
+ob er richtig lag.
 
 Das Verfahren ist also bewusst einfach gehalten: gut genug für ein Spiel im Heimnetz oder unter
 Freunden, kein Ersatz für TLS. Für Spiele über das Internet empfiehlt
@@ -742,10 +770,13 @@ bestimmte Gefahr:
 | `docker-compose.yml` gibt Port 8080 nur auf `127.0.0.1` frei | Mitlesen im Netz: Basic Auth schickt das Passwort bei jeder Anfrage nur Base64-kodiert, und der Server spricht kein HTTPS |
 | optionaler HTTPS-Vorbau (Caddy, Profil `online`) | Zugriff über das Internet ohne Klartext-Passwort |
 
-Zwei Nebenwirkungen, die man kennen sollte: Hinter einem Reverse-Proxy sehen alle Anfragen so aus,
-als kämen sie vom Proxy; die Sperre gilt dann für alle gemeinsam (`X-Forwarded-For` wird absichtlich
-nicht ausgewertet, weil man ihn fälschen kann). Und der Proxy muss den `Host`-Header unverändert
-weitergeben, sonst lehnt die Origin-Prüfung jede Änderung ab.
+Zwei Dinge, die man bei einem Reverse-Proxy kennen sollte: Hinter ihm sehen alle Anfragen so aus,
+als kämen sie vom Proxy, und die Sperre gälte für alle gemeinsam – ein Angreifer könnte den Admin
+dauerhaft aussperren. Deshalb schickt Caddy die echte Adresse im Header `X-Real-IP` mit, und der
+Server übernimmt ihn **nur**, wenn die Anfrage vom eingetragenen Proxy kommt
+(`MONDSCHUERFER_TRUSTED_PROXY=caddy`, `WebContext::ClientAddress`). Von allen anderen wird der
+Header ignoriert, denn fälschen kann ihn jeder. Außerdem muss der Proxy den `Host`-Header
+unverändert weitergeben, sonst lehnt die Origin-Prüfung jede Änderung ab.
 
 ---
 
@@ -790,7 +821,8 @@ nicht „im Flug“ ändern.
 
 Das Spiel erkennt das zweite `Welcome`, baut seine Spiegelwelt mit `BuildMirror` neu auf und
 verwirft alte Snapshots (Schiffs-IDs der neuen Welt beginnen wieder bei 1). Eingabenummer und
-Tastenzähler laufen dagegen weiter, und `serverTime` springt nicht zurück.
+Tastenzähler laufen dagegen weiter, und die Zeitachse (`TickTime`, gezählt ab dem ersten
+`Welcome`) springt nicht zurück.
 
 ---
 
@@ -818,7 +850,17 @@ Grundsätzlich gelten dieselben Regeln wie im Einzelspieler. Unterschiede, alle 
   der Rundenzeit, der Server trägt es in die **Bestenliste** ein (die 20 kürzesten Zeiten) und meldet
   es allen. Danach Kontostand 0, `round + 1`, die **Aufrüstungen bleiben**. Eine Runde 2 ist also
   leichter als Runde 1; die Bestenliste zeigt deshalb, ob mit „neuem Schiff“ oder in welcher Runde.
-- **Abmelden behält den Fortschritt** (auch den Schildstand – Abmelden heilt nicht).
+- **Abmelden behält den Fortschritt** (auch den Schildstand – Abmelden heilt nicht) und den
+  **Ort**: Beim nächsten Anmelden steht das Schiff dort, wo es war (`PlayerProgress::posX/posZ`),
+  nicht an der Handelsstation. Sonst wäre Ab- und Anmelden eine Abkürzung zur Station (Rückflug
+  gespart, und die Zeit dazwischen fehlte in der Bestenliste). Nur nach einem Neuaufbau der Karte
+  geht es an einer Station los.
+- **Abmelden im Gefecht hilft nicht.** Wer sich außerhalb einer Station abmeldet oder die
+  Verbindung verliert, dessen Schiff bleibt noch **10 Sekunden** ohne Steuerung im All
+  (`LogoutPlayer`, Liste `departing_`). Wird es in der Zeit abgeschossen, beginnt der Fortschritt
+  von vorn, genau wie beim Spielen. Meldet man sich innerhalb der 10 Sekunden wieder an (z. B. nach
+  einem WLAN-Aussetzer), übernimmt man sein Schiff einfach wieder. Angedockt verschwindet das
+  Schiff sofort – dort ist man ohnehin sicher.
 - **Angedockt** ist man unverwundbar und steht still. Reparieren nur an Handelsstationen, Aufrüsten
   nur an Werften. Die Aktionen gehen als `DockAction` an den Server, der prüft, ob sie erlaubt sind.
 - **Piratenanzahl** ist fest eingestellt (Schwierigkeit), statt mit dem Spielverlauf zu steigen.
@@ -947,8 +989,8 @@ den kompletten Weg einer Nachricht.
 
 1. **Protokoll** ([shared/Protocol.hpp](../shared/Protocol.hpp)): `MsgType::Wave = 8` im Block
    „Client → Server“ ergänzen. Die Nachricht hat keinen Inhalt, also genügt `EncodeSimple`.
-   `PROTOCOL_VERSION` auf 2 erhöhen. *Frage: Was passiert sonst, wenn ein altes Spiel mit dem neuen
-   Server spricht?*
+   `PROTOCOL_VERSION` um eins erhöhen. *Frage: Was passiert sonst, wenn ein altes Spiel mit dem
+   neuen Server spricht?*
 2. **Server** ([server/src/GameServer.cpp](../server/src/GameServer.cpp)): In `OnReceive` einen
    `case net::MsgType::Wave:` ergänzen, der `HandleWave(c)` aufruft (in `GameServer.hpp`
    deklarieren). Darin:
