@@ -1,26 +1,90 @@
-// Erzeugung der Mondoberfläche, der Stationen und der Lagerstätten.
+// ---------------------------------------------------------------------------
+// WorldGen.cpp – Erzeugung der Mondoberfläche, der Stationen und der
+// Lagerstätten (Teil der Klasse World, Deklarationen in World.hpp).
+//
+// Wofür ist die Datei da?
+//   Sie baut die "Kulisse" einer neuen Welt:
+//     - ResolveModels:  Modell-IDs für Schiffe, Kristalle und Boden holen.
+//     - BuildStations:  Handelsstationen und Werften an festen Bauplätzen,
+//                       mit ihren Bauteilen, Geschütztürmen und Hindernissen.
+//     - GenerateTerrain: Krater, Felsen, Meteoriten, ein paar Fundstücke und
+//                       der Felswall am Kartenrand (nur zum Anschauen).
+//     - SpawnDeposit:   eine neue Kristall-Lagerstätte an einem freien Ort.
+//     - RandomFreePos:  Zufallsort mit Mindestabstand zu Stationen/Spielern.
+//
+// Wer ruft das auf? (alles in shared/World.cpp)
+//   - World::NewGame (Einzelspieler), World::NewServerWorld (Server) und
+//     World::BuildMirror (Mehrspieler-Client) rufen immer in derselben
+//     Reihenfolge ResolveModels -> BuildStations -> GenerateTerrain auf.
+//   - Lagerstätten erzeugen nur Einzelspieler und Server (beim Start und
+//     später in World::Update als Nachschub). Der Client bekommt sie fertig
+//     vom Server (Deposits-Nachricht, src/NetClient.cpp).
+//   - Gezeichnet wird alles in src/Render.cpp (nur im Client).
+//
+// Warum sehen Client und Server dieselbe Welt?
+//   Beide setzen den Zufallsgenerator (World::rng, ein std::mt19937) auf
+//   denselben Seed (der Server schickt ihn in der Welcome-Nachricht) und
+//   bekommen dieselben GameSettings. BuildStations benutzt gar keine
+//   Zufallszahlen; GenerateTerrain zieht sie in fester Reihenfolge. Der
+//   Einzelspieler-Spielstand (src/Save.cpp) speichert deshalb nur den Seed
+//   und erzeugt Stationen und Mondoberfläche beim Laden einfach neu.
+//
+//   Kleine Einschränkung: Bei add(..., Rand(...), Rand(...)) legt C++ NICHT
+//   fest, in welcher Reihenfolge die Argumente einer Funktion ausgewertet
+//   werden. Zwei verschiedene Compiler (z. B. GCC und Clang) können also yaw
+//   und Größe eines Felsens vertauscht würfeln. Die Anzahl der gezogenen
+//   Zahlen bleibt gleich, alles danach (Lagerstätten, Piraten) stimmt also
+//   überein. Betroffen ist nur das Aussehen der Deko, und die hat keinen
+//   Einfluss auf das Spiel (keine Kollision, der Server benutzt sie nicht).
+//   Innerhalb von geschweiften Klammern {Rand(), 0, Rand()} ist die
+//   Reihenfolge dagegen garantiert (von links nach rechts).
+//
+// Koordinaten: x = Osten, z = Süden (-z = Norden), y = Höhe. Die Karte geht
+// von -cfg::WORLD_HALF bis +cfg::WORLD_HALF (300 x 300 Einheiten), die
+// Kartenmitte (0, 0) ist die erste Handelsstation.
+//
+// Abhängigkeiten: World.hpp (und darüber Config.hpp mit den Balancing-Werten,
+// Util.hpp, raymath.h), Models.hpp (ModelId, ModelBounds). Keine Grafik.
+// ---------------------------------------------------------------------------
 #include "World.hpp"
 #include "Models.hpp"
 #include <cmath>
 
 namespace {
+// Die Stationen werden im Raster des Kenney-Kits gebaut (1 Einheit = ein
+// Kit-Feld, eine große Plattform ist 2 x 2). Für das Spiel ist das zu klein
+// – die Raumschiffe sind schon etwa 2 Einheiten lang. Darum werden alle
+// Positionen und Größen der Stationsteile am Ende mit 1,8 multipliziert.
 constexpr float STATION_SCALE = 1.8f;
 }
 
+// Modell-IDs, die die Spielregeln direkt als Zahl brauchen (Schiffe je Art,
+// Kristalle je Größe, Boden). Die IDs selbst vergibt Models.cpp.
+// Dieselben Namen stehen in net::DefaultModelIds (shared/Protocol.cpp): Über
+// das Netzwerk geht nur eine kleine "Varianten"-Nummer (0 = player,
+// 1 = pirateA ...), und beide Seiten übersetzen sie mit dieser Liste.
 void World::ResolveModels() {
     mdl.player = ModelId("craft_speederA");
     mdl.pirateA = ModelId("craft_speederB");
     mdl.pirateB = ModelId("craft_speederC");
     mdl.elite = ModelId("craft_speederD");
-    mdl.miner = ModelId("craft_miner");
+    mdl.miner = ModelId("craft_miner");      // die drei Händler-Modelle (ShipKind::Miner)
     mdl.cargoA = ModelId("craft_cargoA");
     mdl.cargoB = ModelId("craft_cargoB");
     mdl.terrain = ModelId("terrain");
-    mdl.crystalSmall = ModelId("rock_crystals");
-    mdl.crystalA = ModelId("rock_crystalsLargeA");
+    mdl.crystalSmall = ModelId("rock_crystals");          // Lagerstätten bis 1000
+    mdl.crystalA = ModelId("rock_crystalsLargeA");        // große Lagerstätten (> 1000)
     mdl.crystalB = ModelId("rock_crystalsLargeB");
 }
 
+// Zufälliger Ort auf dem Boden (y = 0), der mindestens minDistStations von
+// jeder Station und (falls > 0) minDistPlayer von jedem Spielerschiff
+// entfernt ist. 10 Einheiten Abstand zum Kartenrand.
+// Benutzt von: SpawnDeposit, SpawnPirate/SpawnMiner (World.cpp) und
+// GenerateTerrain (Fundstücke).
+// Es wird höchstens 200-mal gewürfelt. Passt nichts (sehr unwahrscheinlich),
+// kommt der letzte Versuch zurück, auch wenn er zu nah ist – lieber eine
+// etwas ungünstige Stelle als eine Endlosschleife.
 Vector3 World::RandomFreePos(float minDistStations, float minDistPlayer) {
     const float lim = cfg::WORLD_HALF - 10.0f;
     Vector3 p{};
@@ -31,7 +95,9 @@ Vector3 World::RandomFreePos(float minDistStations, float minDistPlayer) {
             if (Vector2Distance({p.x, p.z}, {st.pos.x, st.pos.z}) < minDistStations) ok = false;
         }
         if (ok && minDistPlayer > 0.0f) {
-            // Nicht zu nah an einem Spielerschiff (Einzelspieler: ships[0])
+            // Nicht zu nah an einem Spielerschiff (Einzelspieler: ships[0];
+            // Server: die Schiffe aller Spieler). So tauchen neue Piraten und
+            // Lagerstätten nicht direkt vor jemandem auf.
             for (const auto& s : ships) {
                 if (s.kind != ShipKind::Player) continue;
                 if (Vector2Distance({p.x, p.z}, {s.pos.x, s.pos.z}) < minDistPlayer) ok = false;
@@ -42,8 +108,25 @@ Vector3 World::RandomFreePos(float minDistStations, float minDistPlayer) {
     return p;
 }
 
+// ===========================================================================
+// Mondoberfläche (Deko)
+//
+// Füllt "decos": eine Liste aus (Modell, Position, Drehung, Größe). Die Deko
+// ist reine Kulisse: Schiffe fliegen in cfg::SHIP_ALTITUDE darüber hinweg,
+// es gibt keine Kollision damit. Render.cpp zeichnet nur die Teile in
+// Sichtweite.
+// Bei jedem Durchgang wird erst ein Ort gewürfelt. Liegt er zu nah an einer
+// Station, wird er übersprungen (continue) – die Stationen bleiben frei,
+// damit man sie gut sieht und anfliegen kann. Die Zahlen in den Schleifen
+// sind also Versuche, nicht die genaue Anzahl (insgesamt etwa 600 Teile).
+// Die Größen sind Faktoren auf die Kit-Modelle, die selbst etwa 1 Einheit
+// groß sind: ein Krater mit Größe 5..15 ist also ~4..13 Einheiten breit.
+// ===========================================================================
 void World::GenerateTerrain() {
     decos.clear();
+    // Kleine Helfer (Lambdas). [&] heißt: sie dürfen auf die Variablen der
+    // umgebenden Funktion zugreifen (hier auf "this", also decos/stations).
+    // yScale = 0.0f: gleichmäßig skaliert (siehe Deco in World.hpp).
     auto add = [&](const char* name, Vector3 pos, float yaw, float scale) {
         decos.push_back({ModelId(name), pos, yaw, scale, 0.0f});
     };
@@ -54,13 +137,13 @@ void World::GenerateTerrain() {
     };
     const float lim = cfg::WORLD_HALF - 4.0f;
 
-    // Krater
+    // Krater (flach und groß, prägen das Bild am meisten)
     for (int i = 0; i < 110; ++i) {
         Vector3 p{Rand(-lim, lim), 0.0f, Rand(-lim, lim)};
         if (!farFromStations(p, 28.0f)) continue;
         add(Rand(0, 1) < 0.5f ? "crater" : "craterLarge", p, Rand(0, 2 * PI), Rand(5.0f, 15.0f));
     }
-    // Gestein und Geröll
+    // Gestein und Geröll (viele kleine Teile, damit man Bewegung sieht)
     const char* rocks[] = {"rock", "rock_largeA", "rock_largeB", "rocks_smallA", "rocks_smallB", "meteor_half"};
     for (int i = 0; i < 320; ++i) {
         Vector3 p{Rand(-lim, lim), 0.0f, Rand(-lim, lim)};
@@ -73,7 +156,9 @@ void World::GenerateTerrain() {
         if (!farFromStations(p, 30.0f)) continue;
         add(Rand(0, 1) < 0.5f ? "meteor" : "meteor_detailed", p, Rand(0, 2 * PI), Rand(2.2f, 3.6f));
     }
-    // Kleinigkeiten zum Entdecken
+    // Kleinigkeiten zum Entdecken (Knochen, ein Alien mit Mondfahrzeug,
+    // verlassene Fahrzeuge mit Fässern) – ohne Spielfunktion, nur als
+    // Belohnung fürs Herumfliegen.
     for (int i = 0; i < 5; ++i) {
         Vector3 p{Rand(-lim, lim), 0.0f, Rand(-lim, lim)};
         if (farFromStations(p, 40.0f)) add("bones", p, Rand(0, 2 * PI), 3.0f);
@@ -90,13 +175,19 @@ void World::GenerateTerrain() {
     }
 
     // Grenze des Einsatzgebiets: Felswall
+    // Die eigentliche Grenze setzt World::UpdateShipPhysics (Schiffe werden
+    // bei +-WORLD_HALF angehalten). Der Wall steht 3 Einheiten dahinter und
+    // zeigt sie nur an. Alle 7 Einheiten ein großer Fels auf jeder der vier
+    // Seiten; mit Größe 6..9 ist ein Fels etwa 5,5..8 breit, die Lücken
+    // schließen sich also. Die Verschiebung um +-2 lässt den Wall natürlich
+    // statt wie mit dem Lineal gezogen wirken.
     const float edge = cfg::WORLD_HALF + 3.0f;
     for (float t = -edge; t <= edge; t += 7.0f) {
         const char* r = Rand(0, 1) < 0.5f ? "rock_largeA" : "rock_largeB";
-        add(r, {t + Rand(-2, 2), 0, -edge + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));
-        add(r, {t + Rand(-2, 2), 0, edge + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));
-        add(r, {-edge + Rand(-2, 2), 0, t + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));
-        add(r, {edge + Rand(-2, 2), 0, t + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));
+        add(r, {t + Rand(-2, 2), 0, -edge + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));   // Nordrand
+        add(r, {t + Rand(-2, 2), 0, edge + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));    // Südrand
+        add(r, {-edge + Rand(-2, 2), 0, t + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));   // Westrand
+        add(r, {edge + Rand(-2, 2), 0, t + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));    // Ostrand
     }
 }
 
@@ -111,15 +202,39 @@ void World::GenerateTerrain() {
 //
 // Die Reihenfolge in "stations" ist die Bauplatz-Reihenfolge. Sie ist im
 // Client und im Server gleich, weil beide dieselbe Funktion mit denselben
-// Einstellungen aufrufen.
+// Einstellungen aufrufen. Das ist wichtig, denn im Netzwerk werden Stationen
+// nur über ihren Index angesprochen (z. B. PlayerState::dockedAt).
+//
+// Jede Station besteht aus:
+//   - parts:     Bauteile (Kit-Modelle) relativ zur Stationsmitte. Jedes Teil
+//                hat eine Ausbaustufe "stage"; Render.cpp zeigt es erst, wenn
+//                die Station so weit gewachsen ist.
+//   - turrets:   Geschütztürme (schießen auf Piraten, World::UpdateTurrets),
+//                ebenfalls mit Ausbaustufe.
+//   - obstacles: Kreise um hohe Teile, die Schiffe nicht durchfliegen dürfen
+//                (World::UpdateShipPhysics).
+// Die Ausbaustufe der Handelsstationen ergibt sich aus der Gesamtmenge
+// abgelieferter Ressourcen (World::StationStage, Schwellen in
+// cfg::STATION_THRESHOLDS). Im Mehrspieler zählen dafür die Lieferungen ALLER
+// Spieler, und alle Handelsstationen wachsen gemeinsam. Werften wachsen nicht
+// (alle Teile haben Stufe 0).
 // ---------------------------------------------------------------------------
 namespace {
 
 // Ring-Bauplätze in der Reihenfolge, in der sie belegt werden (möglichst weit verteilt)
+// Platz k liegt bei k * 45 Grad. Zuerst 0 und 4 (gegenüber), dann 2 und 6
+// (rechtwinklig dazu), danach die Plätze dazwischen. So stehen z. B. zwei
+// Werften nie nebeneinander, solange es noch freie Plätze gibt.
 constexpr int kRingOrder[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
+// Position von Ring-Bauplatz k (0..7).
 Vector3 RingSlot(int k) {
     // Platz 0 ist (72, -58); die anderen entstehen durch Drehen um je 45 Grad
+    // (72, -58) liegt nordöstlich der Mitte, ~92 Einheiten entfernt: weit
+    // genug, dass sich die Schutzzonen der Stationen (cfg::STATION_SAFE_RADIUS
+    // = 34) nicht berühren.
+    // Drehung eines Punkts (x, z) um den Winkel a in der Ebene ("Drehmatrix"):
+    //   x' = x * cos(a) - z * sin(a),   z' = x * sin(a) + z * cos(a)
     const float a = k * (PI / 4.0f);
     const float c = cosf(a), s = sinf(a);
     return {72.0f * c - (-58.0f) * s, 0.0f, 72.0f * s + (-58.0f) * c};
@@ -127,6 +242,8 @@ Vector3 RingSlot(int k) {
 
 } // namespace
 
+// Vorwärtsdeklarationen: Die beiden Baupläne stehen weiter unten, werden aber
+// schon in BuildStations gebraucht.
 namespace {
 void BuildTradeStation(Station& t);
 void BuildShipyard(Station& y);
@@ -134,6 +251,9 @@ void BuildShipyard(Station& y);
 
 void World::BuildStations() {
     stations.clear();
+    // settings ist im Einzelspieler der Standard (1 Handelsstation, 1 Werft),
+    // auf Server und Client kommen die Werte aus den Server-Einstellungen
+    // (bereits mit Sanitize geprüft: 1..5 bzw. 1..4).
     const int trades = settings.tradeStations;
     const int yards = settings.shipyards;
 
@@ -145,6 +265,10 @@ void World::BuildStations() {
     stations.push_back(first);
 
     // Ring: abwechselnd Werft, Handelsstation, Werft, ... bis alle verteilt sind
+    // Ist eine Sorte aufgebraucht, bekommt die andere den Platz. Beispiel
+    // 1 Handelsstation + 3 Werften: Mitte = Handel, Ring = Werft, Werft, Werft.
+    // 5 + 4 Stationen füllen genau alle 8 Ringplätze (siehe limits in
+    // GameSettings.hpp).
     int tradeLeft = trades - 1, yardLeft = yards;
     bool nextIsYard = true;
     for (int slot = 0; slot < 8 && (tradeLeft > 0 || yardLeft > 0); ++slot) {
@@ -165,6 +289,8 @@ void World::BuildStations() {
     }
 
     // Namen mit Nummer, wenn es mehrere gibt
+    // (Nummerierung in Bauplatz-Reihenfolge; "Handelsstation 1" ist immer
+    // die in der Mitte.)
     int tn = 0, yn = 0;
     for (auto& st : stations) {
         if (st.type == StationType::Trade) st.name = trades > 1 ? Fmt("Handelsstation %d", ++tn) : "Handelsstation";
@@ -172,6 +298,25 @@ void World::BuildStations() {
     }
 
     // Skalieren und Hindernisse (hohe Teile) bestimmen
+    // Erst hier wird vom Kit-Raster in Weltgrößen umgerechnet (STATION_SCALE).
+    // Hindernis wird jedes Teil, dessen Oberkante höher reicht als
+    // SHIP_ALTITUDE - 0,6 (also über ~2,6): Darunter fliegt ein Schiff
+    // einfach drüber hinweg (0,6 Spielraum, weil die Schiffe leicht auf und ab
+    // schweben und selbst etwas Höhe haben).
+    // Die Grundfläche wird als Kreis angenähert: Radius = halbe größere
+    // Kantenlänge der Bounding Box (Box = achsparalleler Quader um das
+    // Modell, aus ModelBounds.inc). * 0,9 macht den Kreis etwas kleiner als
+    // die Box (runde Kuppeln füllen ihre Box nicht aus), + 1,0 ist ungefähr
+    // die halbe Schiffsbreite, damit der Rumpf nicht in die Wand ragt.
+    // Vereinfachungen: Die Drehung (yaw) des Teils und ein Modell, dessen
+    // Ursprung nicht in der Mitte liegt, werden nicht berücksichtigt.
+    // Gespeichert wird (x, Radius, z) in einem Vector3 – y ist hier also
+    // NICHT die Höhe, sondern der Radius (siehe Station::obstacles).
+    // Hinweis: Es werden die Teile ALLER Ausbaustufen eingetragen, auch die,
+    // die noch gar nicht gebaut (also unsichtbar) sind.
+    // Client und Server rechnen hier mit derselben Tabelle (ModelBounds.inc)
+    // und erhalten dieselben Hindernisse; das braucht die Vorhersage des
+    // eigenen Schiffs im Mehrspieler.
     for (auto& st : stations) {
         for (auto& p : st.parts) {
             p.offset = Vector3Scale(p.offset, STATION_SCALE);
@@ -188,18 +333,39 @@ void World::BuildStations() {
 }
 
 namespace {
+// 90 Grad im Bogenmaß. Gänge (corridor) liegen im Kit in Nord-Süd-Richtung;
+// um H gedreht verlaufen sie von West nach Ost.
 const float H = PI * 0.5f;
 
+// Fügt ein Bauteil hinzu.
+//   name   Kit-Modell (Dateiname ohne .glb)
+//   x, z   Lage relativ zur Stationsmitte im Kit-Raster (+x Osten, -z Norden)
+//   yaw    Drehung des Teils um die senkrechte Achse (Bogenmaß)
+//   stage  ab dieser Ausbaustufe sichtbar (0 = von Anfang an)
+//   y      Höhe; 0,1 = steht auf einer Plattform (platform_large ist 0,1 hoch)
+//   scale  Größe (1 = Originalgröße im Kit)
 void Part(Station& st, const char* name, float x, float z, float yaw, int stage, float y = 0.0f, float scale = 1.0f) {
     st.parts.push_back({ModelId(name), {x, y, z}, yaw, scale, stage});
 }
+
+// Geschütztürme werden direkt angelegt:
+//   t.turrets.push_back({{x, y, z}, yaw, cd, stage, isDouble})
+// yaw/cd (Drehung, Nachladezeit) starten bei 0; isDouble wählt nur das Modell
+// (Doppel- oder Einzelrohr), schießen tun beide gleich.
 
 void BuildTradeStation(Station& t) {
     // -------------------------------------------------------------------
     // Handelsstation – wächst in 8 Stufen (0..7)
     // Koordinaten im Raster des Kits (1 Einheit = ein Kit-Feld)
+    // Die Stufen gehören zu den Schwellen in cfg::STATION_THRESHOLDS
+    // (0, 1.500, 5.000, 12.000, 25.000, 45.000, 70.000, 100.000 abgelieferte
+    // Ressourcen). Mit jeder Stufe kommt ein Gebäudeteil dazu, und mit den
+    // Stufen 2, 4, 6 und 7 je ein weiterer Geschützturm: Die Station wird
+    // mit dem Spielfortschritt sicherer, während auch die Piraten stärker
+    // werden (World::MakeShip, PirateTier).
     // -------------------------------------------------------------------
     // Stufe 0: Kuppel auf Plattform, kleine Antenne, ein Geschützturm
+    // (vier 2x2-Plattformen um die Mitte ergeben eine 4x4-Fläche)
     Part(t, "platform_large", -1, -1, 0, 0);
     Part(t, "platform_large", 1, -1, 0, 0);
     Part(t, "platform_large", -1, 1, 0, 0);
@@ -247,6 +413,8 @@ void BuildTradeStation(Station& t) {
     t.turrets.push_back({{3.0f, 0.0f, -1.8f}, 0, 0, 4, true});
 
     // Stufe 5: Raketenstartplatz Nord-Ost
+    // Die Rakete ist aus vier Teilen gestapelt (y = Höhe des jeweiligen
+    // Abschnitts), daneben ein Gerüst aus drei übereinandergesetzten Teilen.
     Part(t, "platform_large", 5.5f, -4.0f, 0, 5);
     Part(t, "rocket_baseA", 5.5f, -4.0f, 0, 5, 0.1f);
     Part(t, "rocket_fuelA", 5.5f, -4.0f, 0, 5, 1.1f);
@@ -279,6 +447,11 @@ void BuildTradeStation(Station& t) {
 void BuildShipyard(Station& y) {
     // -------------------------------------------------------------------
     // Werft (Upgrades)
+    // Wächst nicht: alle Teile und beide Geschütztürme haben Stufe 0. Alle
+    // Teile sind niedrig genug zum Überfliegen (keine Hindernisse).
+    // Mitte: Hangar auf 2x2 Plattformen; Osten: Dock mit vier Gerüsten und
+    // einem Frachtschiff, das gerade "gewartet" wird (nur Deko, kein echtes
+    // Schiff aus World::ships).
     // -------------------------------------------------------------------
     for (int ix = -1; ix <= 1; ix += 2)
         for (int iz = -1; iz <= 1; iz += 2) Part(y, "platform_large", ix * 1.0f, iz * 1.0f, 0, 0);
@@ -301,17 +474,38 @@ void BuildShipyard(Station& y) {
 
 } // namespace
 
+// ===========================================================================
+// Lagerstätten (Kristalle)
+//
+// initial = true: beim Start einer Welt (NewGame/NewServerWorld), false:
+// Nachschub während des Spiels (World::Update, wenn weniger Lagerstätten da
+// sind als World::DepositTarget() verlangt).
+// Neue Lagerstätten sind zunächst unentdeckt (revealed = false bzw. leere
+// revealedFor-Liste); erst der Scanner eines Spielers deckt sie auf.
+// ===========================================================================
 void World::SpawnDeposit(bool initial) {
     Deposit d;
-    d.id = nextId++;
+    d.id = nextId++;   // IDs sind für Schiffe, Lagerstätten und Wracks gemeinsam fortlaufend
     // Nicht direkt neben den Stationen
+    // 30 Einheiten Abstand zu jeder Station. Nachschub zusätzlich nicht
+    // näher als 25 an einem Spielerschiff: Wer stillsteht und wartet, soll
+    // keine neuen Kristalle direkt vor die Nase bekommen.
     d.pos = RandomFreePos(30.0f, initial ? 0.0f : 25.0f);
+    // Balancing "Risiko gegen Ertrag": Je weiter von der Kartenmitte (der
+    // ersten Handelsstation) entfernt, desto mehr Kristalle – aber auch
+    // desto weiter der Rückweg und desto mehr Piraten unterwegs.
+    // richness: 1,0 in der Mitte, ~2,6 am Kartenrand, ~3,3 in den Ecken.
+    // Menge: 450..1100 mal richness, also etwa 600..1500 nahe der Mitte
+    // und bis zu ~3600 in den Ecken.
     float dist = Vector2Length({d.pos.x, d.pos.z});
     float richness = 1.0f + dist / 85.0f;            // weiter draußen = ergiebiger
     d.amount = static_cast<int>(Rand(450.0f, 1100.0f) * richness);
-    d.amount = (d.amount / 10) * 10;
-    d.initial = d.amount;
+    d.amount = (d.amount / 10) * 10;                 // auf Zehner abrunden (glatte Zahlen in der Anzeige)
+    d.initial = d.amount;                            // Startmenge: Render.cpp lässt die Kristalle beim Abbau schrumpfen
     d.yaw = Rand(0, 2 * PI);
+    // Das Aussehen verrät die Größe: große Kristallgruppen ab 1000, die
+    // größten (> 1600) zusätzlich größer gezeichnet. So erkennt man lohnende
+    // Lagerstätten schon von Weitem.
     if (d.amount > 1600) {
         d.model = Rand(0, 1) < 0.5f ? mdl.crystalA : mdl.crystalB;
         d.scale = 3.4f;
@@ -323,5 +517,7 @@ void World::SpawnDeposit(bool initial) {
         d.scale = 2.8f;
     }
     deposits.push_back(d);
+    // Server: Lagerstätten haben sich geändert -> neue Liste an die Clients
+    // schicken (GameServer::SendDepositUpdates vergleicht diesen Zähler).
     ++depositRevision;
 }

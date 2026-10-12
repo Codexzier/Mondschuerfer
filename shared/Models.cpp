@@ -1,9 +1,37 @@
+// ---------------------------------------------------------------------------
+// Models.cpp – Umsetzung des Modell-Verzeichnisses (Schnittstelle und
+// Erklärung: Models.hpp).
+//
+// Aufbau:
+//   - kBounds: feste Tabelle "Name -> Abmessungen", beim Kompilieren aus
+//     ModelBounds.inc eingefügt. Liegt im Programm selbst, es wird also zur
+//     Laufzeit keine Datei gelesen (der Server hat die GLB-Dateien gar nicht).
+//   - Registry: das eigentliche Verzeichnis, das zur Laufzeit wächst
+//     (Name <-> ID, dazu die Abmessungen je ID).
+//
+// Ablauf: Wer ModelId("rock") zum ersten Mal fragt, bekommt die nächste freie
+// Nummer; dabei werden einmalig die Abmessungen in kBounds gesucht und neben
+// der ID abgelegt. Spätere Abfragen sind nur noch ein Nachschlagen.
+//
+// Hinweis zu ModelBounds.inc: Laut ihrem Kopf entsteht sie mit
+// "Mondschuerfer --dump-model-bounds". Diese Option ist im Spiel (src/main.cpp)
+// aber derzeit NICHT eingebaut. Kommen neue Modelle hinzu, muss die Tabelle
+// anders erzeugt werden: jedes GLB mit raylib laden (LoadModel),
+// GetModelBoundingBox aufrufen und die Box um (-2, 0, -1.5) verschieben (so
+// wie in Assets::Ensure, src/Assets.cpp).
+//
+// Abhängigkeiten: Standardbibliothek (mutex, unordered_map), raylib.h nur
+// für die Datentypen Vector3/BoundingBox.
+// ---------------------------------------------------------------------------
 #include "Models.hpp"
 #include <cstdio>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
+// Anonymer Namensraum: alles darin ist nur in dieser Datei sichtbar (wie
+// "static"). So kann keine andere Datei das Verzeichnis an den Funktionen
+// vorbei verändern.
 namespace {
 
 struct BoundsEntry {
@@ -13,6 +41,8 @@ struct BoundsEntry {
 };
 
 // Die Tabelle wird beim Kompilieren aus ModelBounds.inc eingefügt.
+// Das #include mitten in der Initialisierung kopiert den Dateiinhalt (Zeilen
+// der Form {"name", {min}, {max}},) wörtlich an diese Stelle.
 const BoundsEntry kBounds[] = {
 #include "ModelBounds.inc"
 };
@@ -24,11 +54,18 @@ struct Registry {
     std::mutex lock;                             // Schutz, falls mehrere Threads gleichzeitig fragen
 };
 
+// Das Verzeichnis als lokale static-Variable ("Meyers-Singleton"): Sie wird
+// beim ersten Aufruf angelegt, garantiert nur einmal und auch bei mehreren
+// Threads sicher. Eine globale Variable wäre riskanter: Globale Objekte
+// verschiedener .cpp-Dateien werden in unbestimmter Reihenfolge angelegt,
+// und ein anderes globales Objekt könnte ModelId() schon vorher aufrufen.
 Registry& Reg() {
     static Registry r;  // wird beim ersten Aufruf angelegt
     return r;
 }
 
+// Lineare Suche über die ~150 Einträge. Das passiert nur einmal je neuem
+// Namen (beim Weltaufbau), deshalb lohnt sich keine schnellere Struktur.
 BoundingBox LookupBounds(const std::string& name) {
     for (const auto& b : kBounds)
         if (name == b.name) return BoundingBox{b.min, b.max};
@@ -39,11 +76,14 @@ BoundingBox LookupBounds(const std::string& name) {
 
 } // namespace
 
+// Alle vier Funktionen sperren den Mutex für die Dauer des Zugriffs
+// (std::lock_guard gibt ihn am Ende der Funktion automatisch wieder frei).
 int ModelId(const std::string& name) {
     Registry& r = Reg();
     std::lock_guard<std::mutex> guard(r.lock);
     auto it = r.ids.find(name);
     if (it != r.ids.end()) return it->second;
+    // Neuer Name: nächste freie Nummer = bisherige Anzahl
     int id = static_cast<int>(r.names.size());
     r.names.push_back(name);
     r.bounds.push_back(LookupBounds(name));
@@ -52,6 +92,9 @@ int ModelId(const std::string& name) {
 }
 
 const std::string& ModelName(int id) {
+    // Für ungültige IDs eine Referenz auf einen dauerhaft lebenden leeren
+    // String (eine Referenz auf ein lokales Objekt wäre nach dem Rücksprung
+    // ungültig).
     static const std::string empty;
     Registry& r = Reg();
     std::lock_guard<std::mutex> guard(r.lock);
