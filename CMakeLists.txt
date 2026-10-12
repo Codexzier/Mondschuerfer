@@ -84,6 +84,7 @@ add_executable(Mondschuerfer
         src/Multiplayer.cpp
         src/ClientConfig.cpp
         src/Options.cpp
+        src/Controls.cpp
         ${MONDSCHUERFER_SHARED_SOURCES}
 )
 

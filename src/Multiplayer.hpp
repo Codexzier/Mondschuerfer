@@ -43,11 +43,17 @@
 // Musik: In Address, Lobby und Login läuft die Menümusik, in Playing und
 // Spectating die Spielmusik (UpdateAudio, siehe Audio.hpp).
 //
+// Steuerung: Das eigene Schiff lenkt ein PilotControls-Objekt (Tastatur,
+// Maus, Controller; src/Controls.hpp) – dieselbe Steuerung wie im
+// Einzelspieler. Ihre Befehle gehen als Eingabepakete an den Server; das
+// Netzwerkprotokoll ist dafür unverändert.
+//
 // Abhängigkeiten: NetClient, ClientConfig (das gemeinsame g_clientConfig),
-// Options (Optionen in der Pause), World (shared/), Ui, Hud, Audio,
-// Assets (Mondfarbe), raylib.
+// Options (Optionen in der Pause), Controls (Flugsteuerung), World
+// (shared/), Ui, Hud, Audio, Assets (Mondfarbe), raylib.
 // ---------------------------------------------------------------------------
 #include "ClientConfig.hpp"
+#include "Controls.hpp"
 #include "NetClient.hpp"
 #include "Options.hpp"
 #include "Ui.hpp"
@@ -172,7 +178,8 @@ private:
     // Kamera
     Camera3D cam_{};
     Vector3 camTarget_{};
-    float zoom_ = 1.1f;            // Spielen: Abstand der Kamera (Mausrad)
+    float zoom_ = 1.1f;            // Spielen: Abstand der Kamera (Mausrad, rechter Stick)
+    float padZoom_ = 0.0f;         // Zoom vom rechten Stick (in Mausrad-Rasten), von ReadGameInput an die Kamera
     bool snapCam_ = true;          // nächstes Frame direkt aufs Schiff springen (kein Schwenk)
     float specZoom_ = 1.0f;        // Zuschauer: 1 = ganze Karte, kleiner = näher
     Vector2 specCenter_{0, 0};     // Zuschauer: Kartenpunkt (x, z) in der Mitte der Kartenfläche
@@ -180,6 +187,7 @@ private:
     int listScroll_ = 0;           // Zuschauer: erste sichtbare Zeile der Spielerliste
 
     // Spielen
+    PilotControls controls_;       // Flugsteuerung: Tastatur, Maus, Controller (Controls.hpp)
     bool paused_ = false;
     int pauseFrames_ = 0;
     bool optionsOpen_ = false;     // in der Pause: Optionen statt Pausenmenü anzeigen

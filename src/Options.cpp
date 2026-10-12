@@ -10,7 +10,9 @@
 //   - Audio.hpp: g_audio (Musik an/aus und Lautstärke wirken sofort; Töne
 //     beim Bedienen)
 //   - ClientConfig.hpp: g_clientConfig (Werte in der Einstellungsdatei)
-//   - raylib: Tastatur, Mausposition, Zeichnen
+//   - Controls.hpp: Tastennamen für die Hilfezeile unten (Tastatur oder
+//     Controller)
+//   - raylib: Tastatur, Controller-Knöpfe, Zeichnen
 //
 // Ablauf von Draw() (jedes Frame, "immediate mode" wie in Ui.hpp):
 //   1. Bild abdunkeln, Fenster (Panel) mittig zeichnen. Alle Maße sind für
@@ -30,6 +32,7 @@
 #include "Options.hpp"
 #include "Audio.hpp"
 #include "ClientConfig.hpp"
+#include "Controls.hpp"
 #include "Ui.hpp"
 #include "raylib.h"
 #include <cmath>
@@ -51,8 +54,8 @@ namespace {
 // und bei PlayStation "Kreuz" – beide schießen. Ebenso B/Kreis (rechts),
 // Y/Dreieck (oben), RT/R2 und LT/L2 (Trigger). Die Menü-Taste heißt bei Xbox
 // "Menü" (drei Striche), bei PlayStation "Options" (rechts neben dem Touchpad).
-// Ausgewertet werden die Tasten in main.cpp und Multiplayer.cpp; diese Tabelle
-// muss dazu passen.
+// Ausgewertet werden die Tasten in Controls.cpp (Flug) und Ui.cpp (Menüs);
+// diese Tabelle muss dazu passen.
 struct ControlRow {
     const char* action;
     const char* keyboard;
@@ -72,6 +75,7 @@ const ControlRow kControls[] = {
     {"Zoom", "Mausrad", "Rechter Stick", "Rechter Stick"},
     {"Flugziel löschen", "Rechte Maustaste", "-", "-"},
     {"Im Menü: zeigen, klicken", "Maus, Enter", "Linker Stick, A", "Linker Stick, Kreuz"},
+    {"Im Menü: auswählen", "Pfeiltasten", "Steuerkreuz", "Steuerkreuz"},
     {"Im Menü: zurück", "ESC", "B", "Kreis"},
 };
 constexpr int kControlCount = static_cast<int>(sizeof(kControls) / sizeof(kControls[0]));
@@ -115,13 +119,10 @@ void DrawRow(Rectangle r, bool highlighted) {
     }
 }
 
-// Hat sich die Maus in diesem Frame bewegt? Nur dann übernimmt die Zeile
-// unter dem Zeiger die Tastaturauswahl (wie in ui::ButtonList) – ein ruhender
-// Zeiger soll die Pfeiltasten nicht blockieren.
-bool MouseMoved() {
-    const Vector2 d = GetMouseDelta();
-    return d.x != 0.0f || d.y != 0.0f;
-}
+// Hat sich der Zeiger (Maus oder Controller-Zeiger) in diesem Frame bewegt?
+// Nur dann übernimmt die Zeile unter dem Zeiger die Tastaturauswahl (wie in
+// ui::ButtonList) – ein ruhender Zeiger soll die Pfeiltasten nicht blockieren.
+bool MouseMoved() { return PointerMoved(); }
 
 } // namespace
 
@@ -194,17 +195,23 @@ bool OptionsScreen::Draw() {
     // IsKeyPressedRepeat: true bei der automatischen Wiederholung des
     // Betriebssystems, solange eine Taste gehalten wird – so lässt sich die
     // Lautstärke durch Festhalten von Pfeil rechts/links zügig verstellen.
+    // Controller (Menümodus, Ui.hpp): Steuerkreuz wie die Pfeiltasten; A wie
+    // Enter – außer der Controller-Zeiger steht auf einer Zeile oder dem
+    // Knopf "Zurück", dann klickt A dort (ausgewertet unten bei "Auswerten").
     const bool keys = frames_ > 1;
     bool toggle = false, close = false;
     float volStep = 0.0f;
+    const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
     if (keys) {
-        if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) sel_ = (sel_ + 1) % ROW_COUNT;
+        if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel_ = (sel_ + 1) % ROW_COUNT;
         // + ROW_COUNT - 1 statt - 1: bleibt positiv (in C++ ist -1 % 3 = -1)
-        if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) sel_ = (sel_ + ROW_COUNT - 1) % ROW_COUNT;
+        if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_UP)) sel_ = (sel_ + ROW_COUNT - 1) % ROW_COUNT;
         if (sel_ == ROW_VOLUME) {
-            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT) || IsKeyPressed(KEY_D) || IsKeyPressedRepeat(KEY_D))
+            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT) || IsKeyPressed(KEY_D) || IsKeyPressedRepeat(KEY_D) ||
+                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT))
                 volStep = 0.05f;
-            if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsKeyPressed(KEY_A) || IsKeyPressedRepeat(KEY_A))
+            if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsKeyPressed(KEY_A) || IsKeyPressedRepeat(KEY_A) ||
+                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT))
                 volStep = -0.05f;
         }
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
@@ -217,7 +224,7 @@ bool OptionsScreen::Draw() {
     // --- 3. Abschnitt Musik -----------------------------------------------------------
     Text("MUSIK", x, y, 20 * s, MUTED);
     y += 30 * s;
-    const Vector2 mouse = GetMousePosition();
+    const Vector2 mouse = PointerPos();
     const float label = 24 * s;                   // Schriftgröße der Zeilenbeschriftung
     const float labelY = (kRowH * s - label) * 0.5f;   // senkrecht mittig in der Zeile
 
@@ -239,7 +246,8 @@ bool OptionsScreen::Draw() {
 
     // Zeile "Lautstärke": Schieberegler plus Prozentanzeige.
     const Rectangle rowVol{x, y, iw, kRowH * s};
-    if (CheckCollisionPointRec(mouse, rowVol) && MouseMoved()) sel_ = ROW_VOLUME;
+    const bool overVol = CheckCollisionPointRec(mouse, rowVol);
+    if (overVol && MouseMoved()) sel_ = ROW_VOLUME;
     DrawRow(rowVol, sel_ == ROW_VOLUME || dragging_);
     Text("Lautstärke", x + 22 * s, y + labelY, label, TEXT);
     const Rectangle slider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
@@ -298,10 +306,19 @@ bool OptionsScreen::Draw() {
     bool backHover = false;
     if (Button(back, "Zurück", 24 * s, sel_ == ROW_BACK, true, &backHover)) close = true;
     if (backHover && MouseMoved()) sel_ = ROW_BACK;
-    Text("Pfeiltasten: wählen, Lautstärke    Enter: umschalten    ESC: zurück", x, y + (kButtonH * s - 16 * s) * 0.5f, 16 * s,
-         MUTED);
+    // Hilfezeile passend zum zuletzt benutzten Gerät (Controls.hpp)
+    const std::string help = controls::ActiveDevice() == controls::Device::KeyboardMouse
+                                 ? std::string("Pfeiltasten: wählen, Lautstärke    Enter: umschalten    ESC: zurück")
+                                 : std::string("Steuerkreuz: wählen, Lautstärke    ") + controls::KeyName(controls::Act::Confirm) +
+                                       ": umschalten    " + controls::KeyName(controls::Act::Back) + ": zurück";
+    Text(help, x, y + (kButtonH * s - 16 * s) * 0.5f, 16 * s, MUTED);
 
     // --- Auswerten ------------------------------------------------------------------
+    // Controller-A ohne Zeiger auf einem Bedienelement: wie Enter
+    if (padA && !(PadPointerActive() && (overMusic || overVol || backHover))) {
+        if (sel_ == ROW_MUSIC) toggle = true;
+        else if (sel_ == ROW_BACK) close = true;
+    }
     if (volStep != 0.0f) {
         SetVolume(g_audio.MusicVolume() + volStep, false);
         g_audio.Play(Sfx::UiMove, 0.6f);

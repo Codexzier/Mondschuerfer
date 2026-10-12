@@ -9,13 +9,22 @@
 // Abhängigkeiten:
 //   - raylib: Zeichnen (DrawRectangle..., DrawTextEx), eingebaute Schrift
 //     (GetFontDefault), Eingaben (IsKeyPressed, IsMouseButtonPressed,
+//     IsGamepadButtonPressed, GetGamepadAxisMovement, SetMousePosition,
 //     GetCharPressed, Zwischenablage) und Zeit (GetTime, GetFrameTime).
 //   - Audio.hpp: g_audio spielt den Ton Sfx::UiMove, wenn sich die Auswahl
 //     in einer Knopfliste oder der Fokus der Textfelder ändert.
+//   - ControlsMath.hpp: Totzone des Sticks, PlayStation-Namen erkennen.
 //
-// Zustand dieser Datei (alles im anonymen Namensraum unten): nur der
-// Zeitpunkt der letzten Mausbewegung und der Textfeld-Fokus. Den Rest
-// (Auswahl, Feldinhalte) hält der Aufrufer.
+// Zustand dieser Datei (alles im anonymen Namensraum unten): Zeitpunkt der
+// letzten Zeigerbewegung, Textfeld-Fokus, Flug-/Menümodus, die Rechtecke
+// der UI-Flächen, der benutzte Controller und der Controller-Zeiger. Den
+// Rest (Auswahl, Feldinhalte) hält der Aufrufer.
+//
+// Viele Werte gibt es doppelt, als "dieses Frame" und "voriges Frame":
+// Wer sie setzt (Textfelder, Panels, die Flugsteuerung), tut das beim
+// Zeichnen bzw. Rechnen IN einem Frame; wer sie abfragt, braucht sie oft
+// schon VORHER (am Anfang des nächsten Frames). BeginFrame schiebt sie
+// deshalb jedes Frame eins weiter.
 //
 // Raylib-Begriffe:
 //   - IsKeyPressed / IsMouseButtonPressed: true nur in dem EINEN Frame, in
@@ -28,16 +37,18 @@
 // ---------------------------------------------------------------------------
 #include "Ui.hpp"
 #include "Audio.hpp"
+#include "ControlsMath.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace ui {
 
 namespace {
-// Zeitpunkt (GetTime, Sekunden seit Programmstart) der letzten Mausbewegung
-// oder des letzten Klicks. -10 = "lange her", damit die Maus beim Start
-// nicht als aktiv gilt.
+// Zeitpunkt (GetTime, Sekunden seit Programmstart) der letzten
+// Zeigerbewegung (Maus oder Controller-Stick) oder des letzten Klicks.
+// -10 = "lange her", damit der Zeiger beim Start nicht als aktiv gilt.
 double g_lastMouseMove = -10.0;
 // Textfeld-Fokus: TextField::Draw setzt "thisFrame", BeginFrame schiebt den
 // Wert nach "lastFrame". Abgefragt wird der Wert des VORIGEN Frames, weil
@@ -45,26 +56,213 @@ double g_lastMouseMove = -10.0;
 // Textfelder dieses Frames gezeichnet wurden.
 bool g_textFocusThisFrame = false;
 bool g_textFocusLastFrame = false;
+
+unsigned g_frame = 0;                 // FrameIndex()
+// Flug: SetFlightMode setzt "thisFrame"; MenuMode fragt "lastFrame" ab.
+bool g_flightThisFrame = false;
+bool g_flightLastFrame = false;
+// Rechtecke der UI-Flächen (Panel, BlockPointer), getrennt nach Frames.
+std::vector<Rectangle> g_blockThisFrame;
+std::vector<Rectangle> g_blockLastFrame;
+
+int g_pad = -1;                       // benutzter Controller (Gamepad())
+bool g_usingPad = false;              // zuletzt benutztes Gerät war ein Controller
+bool g_padIsPlayStation = false;
+bool g_testPad = false;               // SetTestGamepad: Controller nur vorgetäuscht
+std::string g_testPadName;
+
+// Controller-Zeiger (siehe Ui.hpp, "Zeiger-Abfragen")
+bool g_padPointer = false;            // der Controller bedient den Zeiger
+Vector2 g_padPos{0.0f, 0.0f};         // seine Position in Pixeln (mit Nachkommastellen)
+Vector2 g_padDelta{0.0f, 0.0f};       // seine Bewegung in diesem Frame
+
+// Höchstgeschwindigkeit des Controller-Zeigers bei voll ausgelenktem Stick,
+// in Pixeln pro Sekunde bei Referenzgröße (wird mit Scale() multipliziert):
+// Die 1500 Pixel breite Referenzfläche quert er in gut einer Sekunde.
+constexpr float kPadPointerSpeed = 1300.0f;
+
+// Wurde an diesem Controller in diesem Frame irgendein Knopf gedrückt?
+// raylib zählt die Knöpfe von GAMEPAD_BUTTON_LEFT_FACE_UP (1) bis
+// GAMEPAD_BUTTON_RIGHT_THUMB (17); 0 ist "unbekannt".
+bool AnyPadButtonPressed(int pad) {
+    if (pad < 0) return false;
+    for (int b = GAMEPAD_BUTTON_LEFT_FACE_UP; b <= GAMEPAD_BUTTON_RIGHT_THUMB; ++b)
+        if (IsGamepadButtonPressed(pad, b)) return true;
+    return false;
+}
+
+// Wurde eine Taste der Tastatur gedrückt? Bewusst NICHT mit GetKeyPressed:
+// Das nimmt die Taste aus raylibs Warteschlange (siehe AnyKeyOrClick unten),
+// und ein Textfeld bekäme sie dann nicht mehr. IsKeyPressed lässt alles,
+// wie es ist; die rund 320 Abfragen kosten praktisch nichts.
+// KEY_SPACE (32) .. KEY_KB_MENU (348) sind alle Tasten, die raylib kennt.
+bool AnyKeyboardKeyPressed() {
+    for (int k = KEY_SPACE; k <= KEY_KB_MENU; ++k)
+        if (IsKeyPressed(k)) return true;
+    return false;
+}
+
+// Wurde der Controller in diesem Frame benutzt? Ein Knopf, ein Stick weiter
+// als halb ausgelenkt oder ein Trigger mehr als gut halb gedrückt (> 0,3 auf
+// raylibs Skala -1..1). Die hohen Schwellen sorgen dafür, dass ein leicht
+// schief stehender Stick nicht ständig auf "Controller" umschaltet.
+bool PadUsedThisFrame(int pad) {
+    if (pad < 0) return false;
+    if (AnyPadButtonPressed(pad)) return true;
+    const Vector2 l{GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_X), GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_Y)};
+    const Vector2 r{GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_X), GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_Y)};
+    if (Vector2Length(l) > 0.5f || Vector2Length(r) > 0.5f) return true;
+    return GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.3f ||
+           GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_TRIGGER) > 0.3f;
+}
 }
 
 // Wird von main.cpp (App::Frame) als Erstes in jedem Frame aufgerufen.
+// Ablauf:
+//   1. Werte des vorigen Frames weiterschieben (Flug, Fokus, UI-Flächen).
+//   2. Controller suchen: der erste angeschlossene von 0 bis 3.
+//   3. Zuletzt benutztes Gerät bestimmen (für die Hilfetexte).
+//   4. Controller-Zeiger: im Flug abgeben, im Menümodus mit dem Stick bewegen.
 void BeginFrame() {
-    Vector2 d = GetMouseDelta();
-    if (d.x != 0.0f || d.y != 0.0f || PointerPressed()) g_lastMouseMove = GetTime();
+    ++g_frame;
     g_textFocusLastFrame = g_textFocusThisFrame;
     g_textFocusThisFrame = false;
+    g_flightLastFrame = g_flightThisFrame;
+    g_flightThisFrame = false;
+    g_blockLastFrame.swap(g_blockThisFrame);   // tauscht nur die Inhalte, ohne zu kopieren
+    g_blockThisFrame.clear();
+
+    // --- 2. Controller ------------------------------------------------------
+    g_pad = -1;
+    for (int i = 0; i < 4; ++i) {
+        if (IsGamepadAvailable(i)) {
+            g_pad = i;
+            break;
+        }
+    }
+    if (g_testPad) g_padIsPlayStation = controls::LooksLikePlayStation(g_testPadName.c_str());
+    else if (g_pad >= 0) g_padIsPlayStation = controls::LooksLikePlayStation(GetGamepadName(g_pad));
+
+    // --- 3. Zuletzt benutztes Gerät ---------------------------------------------
+    // Echte Mausbewegung: Die Maus hat sich bewegt UND steht nicht dort, wo
+    // der Controller-Zeiger sie zuletzt hingesetzt hat. (Je nach System
+    // meldet raylib nach SetMousePosition im nächsten Frame eine
+    // Bewegung – das ist dann keine echte.)
+    const Vector2 md = GetMouseDelta();
+    const bool warpEcho = g_padPointer && Vector2Distance(GetMousePosition(), g_padPos) < 2.0f;
+    const bool mouseMoved = (md.x != 0.0f || md.y != 0.0f) && !warpEcho;
+    const bool mouseClicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) ||
+                              IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE);
+    if (mouseMoved || mouseClicked) g_lastMouseMove = GetTime();
+    if (mouseMoved || mouseClicked || GetMouseWheelMove() != 0.0f || AnyKeyboardKeyPressed()) g_usingPad = false;
+    if (PadUsedThisFrame(g_pad)) g_usingPad = true;
+    if (g_testPad) g_usingPad = true;
+
+    // --- 4. Controller-Zeiger ------------------------------------------------------
+    g_padDelta = {0.0f, 0.0f};
+    if (g_flightLastFrame || mouseMoved || g_pad < 0) {
+        g_padPointer = false;   // geparkt (siehe Ui.hpp)
+    } else if (IsWindowFocused()) {
+        // Stick mit kreisförmiger Totzone 0,2 (ControlsMath.hpp). Weiche
+        // Kennlinie: Tempo = Höchsttempo * Ausschlag². Halb ausgelenkt geht
+        // der Zeiger also nur ein Viertel so schnell – damit lässt er sich
+        // auch auf kleine Knöpfe genau setzen, voll ausgelenkt ist er flott.
+        const Vector2 st = controls::StickDeadzone(
+            {GetGamepadAxisMovement(g_pad, GAMEPAD_AXIS_LEFT_X), GetGamepadAxisMovement(g_pad, GAMEPAD_AXIS_LEFT_Y)}, 0.2f);
+        const float m = Vector2Length(st);
+        if (m > 0.0f) {
+            const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+            if (!g_padPointer) {
+                // Übernehmen: dort beginnen, wo die Maus steht (außerhalb des
+                // Fensters: in der Mitte).
+                const Vector2 mp = GetMousePosition();
+                const bool inside = mp.x >= 0 && mp.y >= 0 && mp.x < W && mp.y < H;
+                g_padPos = inside ? mp : Vector2{W * 0.5f, H * 0.5f};
+                g_padPointer = true;
+            }
+            // GetFrameTime = Dauer des letzten Frames; begrenzt, damit ein
+            // Ruckler den Zeiger nicht quer über den Bildschirm springen lässt.
+            const float dt = std::min(GetFrameTime(), 0.05f);
+            const float speed = kPadPointerSpeed * Scale() * m * m;
+            const Vector2 before = g_padPos;
+            g_padPos.x = Clamp(g_padPos.x + st.x / m * speed * dt, 0.0f, W - 1.0f);
+            g_padPos.y = Clamp(g_padPos.y + st.y / m * speed * dt, 0.0f, H - 1.0f);
+            g_padDelta = Vector2Subtract(g_padPos, before);
+            // Den Mauszeiger des Systems mitnehmen (wo das System es erlaubt)
+            SetMousePosition(static_cast<int>(roundf(g_padPos.x)), static_cast<int>(roundf(g_padPos.y)));
+            g_lastMouseMove = GetTime();
+        }
+    }
 }
 
-// Zeiger-Abfragen (Begründung in Ui.hpp). Heute nur die linke Maustaste.
-bool PointerPressed() { return IsMouseButtonPressed(MOUSE_BUTTON_LEFT); }
-bool PointerDown() { return IsMouseButtonDown(MOUSE_BUTTON_LEFT); }
-bool PointerReleased() { return IsMouseButtonReleased(MOUSE_BUTTON_LEFT); }
-bool BackPressed() { return IsKeyPressed(KEY_ESCAPE); }
+unsigned FrameIndex() { return g_frame; }
 
-// "Benutzt der Spieler gerade die Maus?" – ja, wenn sie sich in den letzten
-// 2 s bewegt hat. Grund: Wer mit der Tastatur durch ein Menü geht, während der
-// Mauszeiger zufällig still auf einem Knopf steht, soll nicht zwei
-// hervorgehobene Knöpfe sehen. Ruht die Maus, zählt nur die Tastaturauswahl.
+void SetFlightMode() { g_flightThisFrame = true; }
+bool MenuMode() { return !g_flightLastFrame; }
+
+int Gamepad() { return g_pad; }
+bool UsingGamepad() { return g_usingPad; }
+bool GamepadIsPlayStation() { return g_padIsPlayStation; }
+
+void SetTestGamepad(const char* name) {
+    g_testPad = true;
+    g_testPadName = name ? name : "";
+    g_usingPad = true;
+    g_padIsPlayStation = controls::LooksLikePlayStation(g_testPadName.c_str());
+}
+
+bool PadPressed(int button) { return MenuMode() && g_pad >= 0 && IsGamepadButtonPressed(g_pad, button); }
+
+// Zeiger-Abfragen (Begründung in Ui.hpp). A zählt nur, wenn der Controller
+// gerade den Zeiger bedient und nicht geflogen wird.
+Vector2 PointerPos() { return g_padPointer ? g_padPos : GetMousePosition(); }
+Vector2 PointerDelta() { return g_padPointer ? g_padDelta : GetMouseDelta(); }
+bool PointerMoved() {
+    const Vector2 d = PointerDelta();
+    return d.x != 0.0f || d.y != 0.0f;
+}
+bool PadPointerActive() { return g_padPointer; }
+
+static bool PadClickActive() { return g_padPointer && MenuMode() && g_pad >= 0; }
+bool PointerPressed() {
+    return IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || (PadClickActive() && IsGamepadButtonPressed(g_pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+}
+bool PointerDown() {
+    return IsMouseButtonDown(MOUSE_BUTTON_LEFT) || (PadClickActive() && IsGamepadButtonDown(g_pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+}
+bool PointerReleased() {
+    return IsMouseButtonReleased(MOUSE_BUTTON_LEFT) || (PadClickActive() && IsGamepadButtonReleased(g_pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+}
+// B = RIGHT_FACE_RIGHT (rechter Knopf), Menü-Taste = MIDDLE_RIGHT (rechte
+// der mittleren Tasten; Xbox "Menü" mit drei Strichen, PlayStation "Options").
+bool BackPressed() {
+    return IsKeyPressed(KEY_ESCAPE) || PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT) || PadPressed(GAMEPAD_BUTTON_MIDDLE_RIGHT);
+}
+
+// Controller-Zeiger: oranger Ring mit dunklem Rand und Punkt in der Mitte.
+// DrawRing(Mitte, Innenradius, Außenradius, Startwinkel, Endwinkel,
+// Segmente, Farbe) zeichnet einen flachen Kreisring (0..360° = ganz).
+void DrawPointer() {
+    if (!g_padPointer || !MenuMode()) return;
+    const float s = Scale();
+    DrawRing(g_padPos, 11.0f * s, 16.0f * s, 0.0f, 360.0f, 32, Color{10, 12, 20, 200});
+    DrawRing(g_padPos, 12.0f * s, 15.0f * s, 0.0f, 360.0f, 32, ACCENT);
+    DrawCircleV(g_padPos, 3.0f * s, ACCENT);
+}
+
+bool PointerOverPanel(Vector2 p) {
+    for (const Rectangle& r : g_blockLastFrame)
+        if (CheckCollisionPointRec(p, r)) return true;
+    return false;
+}
+
+void BlockPointer(Rectangle r) { g_blockThisFrame.push_back(r); }
+
+// "Benutzt der Spieler gerade die Maus (oder den Controller-Zeiger)?" – ja,
+// wenn der Zeiger sich in den letzten 2 s bewegt hat. Grund: Wer mit der
+// Tastatur durch ein Menü geht, während der Mauszeiger zufällig still auf
+// einem Knopf steht, soll nicht zwei hervorgehobene Knöpfe sehen. Ruht der
+// Zeiger, zählt nur die Tastaturauswahl.
 static bool MouseActive() { return GetTime() - g_lastMouseMove < 2.0; }
 
 // Referenzgröße 1500 x 900: Gemessen wird an der Seite, die im Verhältnis
@@ -118,6 +316,7 @@ void TextRight(const std::string& t, float rx, float y, float size, Color c, boo
 // L-förmige Akzent-Ecken (12 px lang, 4 px dick) links oben und rechts unten.
 // Die Ecken bestehen je aus einem waagerechten und einem senkrechten Rechteck.
 void Panel(Rectangle r, Color fill, Color border) {
+    g_blockThisFrame.push_back(r);   // für PointerOverPanel (Flugklicks blockieren)
     DrawRectangleRec(r, fill);
     float t = Px(2.0f);
     DrawRectangleLinesEx(r, t < 1 ? 1 : t, border);
@@ -154,7 +353,7 @@ void Bar(Rectangle r, float frac, Color fill, Color back) {
 // Ein Klick zählt im Frame des Herunterdrückens (IsMouseButtonPressed),
 // nicht beim Loslassen – einfacher, und für ein Spiel reaktionsschnell.
 bool Button(Rectangle r, const std::string& label, float size, bool focused, bool enabled, bool* hovered) {
-    Vector2 m = GetMousePosition();
+    Vector2 m = PointerPos();
     bool hover = CheckCollisionPointRec(m, r);
     if (hovered) *hovered = hover;
     Color fill = PANEL_LIGHT;
@@ -189,7 +388,7 @@ bool Button(Rectangle r, const std::string& label, float size, bool focused, boo
 // und 1 am rechten Ende; danach aufs Raster runden: round(v / step) * step
 // (bei step 0,05: 0,437 -> round(8,74) = 9 -> 0,45).
 bool Slider(Rectangle r, float& value, bool& dragging, bool focused, float step) {
-    const Vector2 m = GetMousePosition();
+    const Vector2 m = PointerPos();
     const bool hover = CheckCollisionPointRec(m, r);
     const float knobR = r.height * 0.32f;
     const float x0 = r.x + knobR, x1 = r.x + r.width - knobR;
@@ -229,7 +428,7 @@ bool Slider(Rectangle r, float& value, bool& dragging, bool focused, float step)
 // kürzere Seite wird ganz zum Halbkreis; segments = aus wie vielen
 // Teilstücken eine Rundung gezeichnet wird (mehr = glatter).
 bool Toggle(Rectangle r, bool on, float size, bool focused) {
-    const bool hover = CheckCollisionPointRec(GetMousePosition(), r);
+    const bool hover = CheckCollisionPointRec(PointerPos(), r);
     const bool hot = focused || (hover && MouseActive());
     const Color fill = on ? Color{40, 130, 90, 255} : Color{50, 56, 70, 255};
     DrawRectangleRounded(r, 1.0f, 16, fill);
@@ -247,11 +446,15 @@ bool Toggle(Rectangle r, bool on, float size, bool focused) {
 
 // Ablauf pro Frame:
 //   1. selected gültig machen (ungültig oder gesperrt -> erster wählbarer Eintrag)
-//   2. Pfeiltasten/W/S: zum nächsten wählbaren Eintrag, mit Umlauf am Ende
-//   3. Knöpfe zeichnen; Klick wählt sofort, Mausbewegung über einem Knopf
-//      verschiebt die Tastaturauswahl dorthin (so bleiben Maus und Tastatur
+//   2. Pfeiltasten/W/S oder Controller-Steuerkreuz: zum nächsten wählbaren
+//      Eintrag, mit Umlauf am Ende
+//   3. Knöpfe zeichnen; Klick wählt sofort, Zeigerbewegung über einem Knopf
+//      verschiebt die Tastaturauswahl dorthin (so bleiben Zeiger und Tastatur
 //      einig)
-//   4. Enter/Leertaste bestätigen die aktuelle Auswahl
+//   4. Enter/Leertaste bestätigen die aktuelle Auswahl. Controller-A auch –
+//      außer der Controller-Zeiger steht gerade auf einem Knopf: Dann hat A
+//      diesen Knopf schon in Schritt 3 angeklickt (PointerPressed), und ein
+//      zweites Auslösen wäre ein Doppelklick.
 //   5. Hat sich die Auswahl geändert: kurzer Bedienton
 int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& enabled, int& selected,
                float cx, float top, float width, float height, float gap, float textSize) {
@@ -263,7 +466,7 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
     const int before = selected;
     // Nach unten: k = 1, 2, ... Einträge weiter, % n springt vom letzten zum
     // ersten. Gesperrte Einträge werden übersprungen.
-    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN)) {
         for (int k = 1; k <= n; ++k) {
             int i = (selected + k) % n;
             if (isEnabled(i)) { selected = i; break; }
@@ -271,22 +474,25 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
     }
     // Nach oben: + n * 2 hält den Wert vor dem % positiv (in C++ ist z. B.
     // -1 % 5 = -1, nicht 4).
-    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_UP)) {
         for (int k = 1; k <= n; ++k) {
             int i = (selected - k + n * 2) % n;
             if (isEnabled(i)) { selected = i; break; }
         }
     }
     int chosen = -1;
+    bool anyHover = false;
     for (int i = 0; i < n; ++i) {
         Rectangle r{cx - width * 0.5f, top + i * (height + gap), width, height};
         bool hover = false;
         if (Button(r, items[i], textSize, i == selected, isEnabled(i), &hover)) chosen = i;
-        // Nur bei BEWEGTER Maus übernimmt der Knopf unter dem Zeiger die
+        anyHover = anyHover || hover;
+        // Nur bei BEWEGTEM Zeiger übernimmt der Knopf unter dem Zeiger die
         // Auswahl – ein ruhender Zeiger soll die Pfeiltasten nicht blockieren.
-        if (hover && isEnabled(i) && (GetMouseDelta().x != 0 || GetMouseDelta().y != 0)) selected = i;
+        if (hover && isEnabled(i) && PointerMoved()) selected = i;
     }
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
+    const bool padConfirm = PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN) && !(PadPointerActive() && anyHover);
+    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE) || padConfirm) {
         if (isEnabled(selected)) chosen = selected;
     }
     if (selected != before) g_audio.Play(Sfx::UiMove);
@@ -343,7 +549,7 @@ bool AppendCodepoint(TextField& f, int cp) {
 // getipptes Zeichen schon in diesem Frame sichtbar ist.
 bool TextField::Draw(Rectangle r, float size, bool enabled) {
     // --- Fokus per Maus ------------------------------------------------------
-    if (enabled && PointerPressed()) focused = CheckCollisionPointRec(GetMousePosition(), r);
+    if (enabled && PointerPressed()) focused = CheckCollisionPointRec(PointerPos(), r);
 
     // Gesperrt (enabled = false): Fokus bleibt gemerkt, aber es wird nichts
     // eingegeben – nach dem Entsperren kann man gleich weitertippen.
@@ -494,7 +700,8 @@ std::string Time(float seconds) {
 // demselben Frame danach GetKeyPressed aufruft, bekommt sie nicht mehr
 // (IsKeyPressed ist davon nicht betroffen).
 bool AnyKeyOrClick() {
-    return GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+    return GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) ||
+           AnyPadButtonPressed(g_pad);
 }
 
 } // namespace ui

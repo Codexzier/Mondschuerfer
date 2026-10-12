@@ -57,7 +57,8 @@ struct DockRequest {
 
 // Stationsfenster des eigenen Spielers (w.Me()). Handelsstation: Verkaufs-
 // ergebnis, Kontostand, Stationsausbau, Reparieren [R]. Werft: vier
-// Aufrüstungen [1]-[4]. Beide: Abdocken [F]/[ESC].
+// Aufrüstungen [1]-[4]. Beide: Abdocken [F]/[ESC], am Controller Y oder B
+// (Knöpfe mit dem Controller-Zeiger und A).
 // interactive = false: nur Anzeige, Tasten und Klicks werden ignoriert. Das
 // gilt im Simulationsmodus (der Autopilot entscheidet) und in den ersten
 // beiden Frames nach dem Andocken (der F-Druck, der angedockt hat, würde
@@ -74,8 +75,10 @@ bool DrawGameOver(const World& w);
 bool DrawVictory(const World& w);
 
 // Zeigt die Tastenbelegung als zweispaltige Liste (Taste | Wirkung) ab der
-// linken oberen Ecke (x, y). size = Schriftgröße in Pixeln; die Zeilen liegen
-// 1,35 * size auseinander.
+// linken oberen Ecke (x, y), und zwar für das zuletzt benutzte Gerät:
+// Tastatur/Maus oder Controller (Xbox- bzw. PlayStation-Namen; Zeilen aus
+// controls::HelpRows in Controls.hpp). size = Schriftgröße in Pixeln; die
+// Zeilen liegen 1,35 * size auseinander.
 // Benutzt im HUD (unten links) und in den Pausenmenüs (main.cpp, Multiplayer.cpp).
 void DrawControls(float x, float y, float size);
 // Höhe, die DrawControls mit dieser Schriftgröße belegt (Zeilenzahl * 1,35 *

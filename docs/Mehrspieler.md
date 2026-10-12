@@ -945,7 +945,9 @@ zuerst den Kopfkommentar zu lesen und dann gezielt die genannten Funktionen.
 9. **[src/Multiplayer.hpp](../src/Multiplayer.hpp)** – die Phasen der Menüs (Address → Lobby →
    Login → Playing/Spectating), dann in [src/Multiplayer.cpp](../src/Multiplayer.cpp)
    `ReadGameInput` und `HandleNetwork`. Einstieg aus dem Hauptmenü: `EnterMultiplayer` in
-   [src/main.cpp](../src/main.cpp).
+   [src/main.cpp](../src/main.cpp). `ReadGameInput` liest Tastatur, Maus und Controller über
+   `PilotControls` ([src/Controls.hpp](../src/Controls.hpp)) – dieselbe Steuerung wie im
+   Einzelspieler; ins Netz gehen davon nur Schub, Drehen, Feuer und die Tastendrücke.
 10. **[server/src/SharedState.hpp](../server/src/SharedState.hpp)** – kurz, zeigt das
     Mutex-Muster. Danach [server/src/WebServer.hpp](../server/src/WebServer.hpp) und
     [server/src/WebServer.cpp](../server/src/WebServer.cpp) (Kopfkommentar „Ablauf einer Anfrage“)

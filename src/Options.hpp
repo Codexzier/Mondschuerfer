@@ -37,6 +37,9 @@
 //   Tastatur: Pfeil hoch/runter (oder W/S) wählt die Zeile, Pfeil links/
 //             rechts (oder A/D) ändert die Lautstärke um 5 %, Enter/Leertaste
 //             schaltet die Musik um bzw. drückt "Zurück", ESC = zurück.
+//   Controller: linker Stick bewegt den Zeiger, A klickt (Regler: A halten
+//             und ziehen), Steuerkreuz wie die Pfeiltasten, B = zurück
+//             (PlayStation: Kreuz, Kreis). Siehe "Controller in Menüs" in Ui.hpp.
 // ---------------------------------------------------------------------------
 
 class OptionsScreen {

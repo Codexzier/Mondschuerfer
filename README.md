@@ -90,6 +90,14 @@ Sicherheit und Datensicherung: [server/README.md](server/README.md).
 
 ## Steuerung
 
+Gespielt wird mit Tastatur, mit Tastatur und Maus oder mit einem Gamecontroller (Xbox oder
+PlayStation). Alle Geräte gehen jederzeit, auch gemischt. Die Tastenhilfe unten links, die
+Hinweise wie „[F] Andocken“ und die Hilfe im Pausenmenü passen sich dem zuletzt benutzten Gerät
+an (mit Controller z. B. „[Y] Andocken“ bzw. „[Dreieck] Andocken“). Eine Übersicht steht auch in
+den **Optionen**.
+
+**Tastatur**
+
 | Taste | Aktion |
 |---|---|
 | W / S oder ↑ / ↓ | Schub vorwärts / bremsen, rückwärts |
@@ -99,22 +107,53 @@ Sicherheit und Datensicherung: [server/README.md](server/README.md).
 | F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) |
 | R | Schild reparieren (an der Handelsstation) |
 | 1 – 4 | Upgrade kaufen (in der Werft) |
-| Mausrad | Zoom |
 | ESC / P | Pause |
 | H | Steuerung einblenden |
 | M | Ton an / aus |
 | F11 | Vollbild |
 
-Ein Gamepad wird ebenfalls unterstützt (linker Stick, A = Feuer, X = Scanner, Y = Abbauen/Andocken).
+**Maus** (zusätzlich zur Tastatur; Schießen, Scanner und Andocken bleiben auf Leertaste, E und F)
+
+| Maus | Aktion |
+|---|---|
+| Linksklick auf den Boden | Das Schiff fliegt dorthin und hält dort an. Das Ziel zeigt ein pulsierender oranger Ring. |
+| Linke Maustaste halten | Das Schiff folgt dem Mauszeiger (je weiter weg der Zeiger, desto schneller). |
+| Rechte Maustaste | Flugziel löschen |
+| Mausrad | Zoom |
+
+Lenkt man mit W/A/S/D (oder dem Controller), wird ein Mausziel gelöscht. Klicks auf Fenster des
+HUD (Statusfenster, Radar, Hinweise) setzen kein Ziel. Liegt das Ziel in einer Station, kommt
+das Schiff nicht ganz hin; nach 4 Sekunden ohne Fortschritt wird das Ziel aufgegeben.
+
+**Controller** – raylib erkennt die Knöpfe an ihrer *Lage*, deshalb gilt dieselbe Belegung an
+denselben Stellen für Xbox- und PlayStation-Controller:
+
+| Aktion | Xbox | PlayStation |
+|---|---|---|
+| Flugrichtung (das Schiff dreht sich dorthin, wohin der Stick **im Bild** zeigt) | Linker Stick | Linker Stick |
+| Tempo (halb gedrückt = halbe Höchstgeschwindigkeit) | RT (rechter Trigger) | R2 |
+| Bremsen / rückwärts | LT (linker Trigger) | L2 |
+| Schießen | A | Kreuz |
+| Scanner an / aus | B | Kreis |
+| Abbauen / Andocken / Abdocken | Y | Dreieck |
+| Pause (Menü) | Menü-Taste (drei Striche) | Options (rechts neben dem Touchpad) |
+| Zoom | Rechter Stick hoch / runter | Rechter Stick hoch / runter |
+
+**In allen Menüs** (Hauptmenü, Pause, Optionen, Stationsfenster, Mehrspieler-Menüs, Zuschauen)
+bewegt der linke Stick den Mauszeiger (zusätzlich als oranger Ring gezeichnet), **A** (Kreuz)
+klickt, das **Steuerkreuz** wählt in Knopflisten wie die Pfeiltasten, **B** (Kreis) heißt
+„zurück“ wie ESC, die Menü-Taste schließt die Pause wieder. Im Stationsfenster dockt **Y**
+(Dreieck) wie F ab. Lautstärkeregler: A halten und ziehen, oder Steuerkreuz links/rechts.
+Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 
 **Im Mehrspieler** gelten dieselben Tasten. Unterschiede:
 
 | Taste | Aktion im Mehrspieler |
 |---|---|
-| ESC / P | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt). Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bekommt nur keine Steuerbefehle. |
-| ESC / F im Stationsfenster | Abdocken |
+| ESC / P (Controller: Menü-Taste) | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt). Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bekommt nur keine Steuerbefehle. |
+| ESC / F im Stationsfenster (Controller: B / Y) | Abdocken |
 | Tab | im Anmeldefenster zwischen Name und Passwort wechseln |
-| Zuschauer: Mausrad / Ziehen / R / ESC | Zoom / Karte verschieben / ganze Karte / Zuschauen beenden |
+| Zuschauer: Mausrad / Ziehen / R / ESC | Zoom / Karte verschieben / ganze Karte / Zuschauen beenden (Controller: rechter Stick / A halten und linken Stick bewegen / – / B) |
 
 ---
 
@@ -249,6 +288,8 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
   Die Änderung ist sofort zu hören.
 - **Steuerung** – Übersicht aller Tasten für Tastatur/Maus, Xbox- und PlayStation-Controller.
 - Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Lautstärke, Enter umschalten, ESC zurück.
+- Mit dem Controller: Zeiger mit dem linken Stick, A klickt (Regler: A halten und ziehen),
+  Steuerkreuz wie die Pfeiltasten, B zurück.
 
 Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte und Musik); die
 Einstellungen in den Optionen bleiben dabei erhalten.
@@ -300,8 +341,10 @@ Mondschuerfer/
 │   ├── main.cpp          Fenster, Menüs, Spielzustände, Kamera
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
-│   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder)
+│   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
 │   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Steuerungsübersicht
+│   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
+│   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
 │   ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Musik, Zuordnung Ereignis -> Datei
 │   ├── MusicMix.hpp      Überblenden der Musik (reine Rechnung, ohne raylib)
@@ -345,6 +388,23 @@ spielt einen festen Ablauf durch (Menü, neues Spiel, Musik aus und wieder an, L
 ins Menü) und schreibt alle 0,25 s eine Zeile `MUSICTEST …` (Blenden, Lautstärken, läuft das Stück,
 Position im Stück) nach stderr. Dafür braucht es ein Audiogerät. Achtung: Es speichert die
 Musik-Einstellungen wie ein Spieler in den Optionen.
+
+**Steuerung testen** (ohne echte Maus bzw. ohne Controller):
+
+- `--mouse-test X Z` setzt im Einzelspiel ein Flugziel bei (X, Z), genau wie ein Linksklick auf
+  diese Stelle am Boden. Mehrmals angegeben, kommt jeweils 4 s nach dem Ankommen das nächste Ziel.
+  Alle 2 s und bei jedem Zielende steht eine Zeile `MOUSETEST …` auf stderr (Schiffsposition, Ziel,
+  Abstand, Tempo, `ende=angekommen|aufgegeben|abgebrochen`). Beispiel:
+  `--mode game --seed 3 --norender --mouse-test 0 60 --mouse-test 30 10 --quit-after 30`
+- `--pad-test WINKEL TRIGGER` täuscht einen Controller vor: linker Stick dauerhaft in Richtung
+  WINKEL (Grad im Bild, 0 = oben, 90 = rechts), rechter Trigger = TRIGGER (0 bis 1). Jede Sekunde
+  eine Zeile `PADTEST …` mit der Flugrichtung im Bild (`bild=`) und dem Tempo (`speed=`, Soll:
+  `soll_speed=`).
+- `--pad-name NAME` täuscht einen Controller mit diesem Namen vor (z. B.
+  `"DualSense Wireless Controller"`), damit Hilfetexte und HUD die Controller-Namen zeigen – für
+  Bildschirmfotos.
+
+Diese Optionen ändern das normale Spiel nicht; die Zeile `REPORT …` (`--report`) bleibt gleich.
 
 Für Entwickler: `--dump-model-bounds > shared/ModelBounds.inc` misst alle Modelle in `assets/models`
 neu und gibt die Tabelle aus, aus der der Server die Größe der Stationen kennt (nötig, wenn Modelle

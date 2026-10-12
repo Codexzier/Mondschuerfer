@@ -9,15 +9,21 @@
 //   des Spiels, angelehnt an den Stil der Kenney-Grafiken (dunkle Panels,
 //   orangefarbene Akzente), und die Zeiger-Abfragen (PointerPressed ...),
 //   über die alle Bausteine wissen, ob geklickt wurde.
+//   Außerdem der "Menümodus" für Controller: Solange nicht geflogen wird,
+//   bewegt der linke Stick den Mauszeiger und Knopf A klickt (siehe
+//   "Controller in Menüs" unten). Und: welches Gerät zuletzt benutzt wurde
+//   (Tastatur/Maus oder Controller), damit die Hilfetexte passen.
 //
 // Wer benutzt sie?
 //   src/main.cpp (Hauptmenü, Pause), src/Hud.cpp (HUD, Stationsfenster,
-//   Endbildschirme), src/Multiplayer.cpp (Mehrspieler-Menüs, Anmeldung) und
-//   src/Options.cpp (Optionen: Schieberegler, Umschalter).
+//   Endbildschirme), src/Multiplayer.cpp (Mehrspieler-Menüs, Anmeldung),
+//   src/Options.cpp (Optionen: Schieberegler, Umschalter) und
+//   src/Controls.cpp (Flugsteuerung: meldet den Flug, fragt UI-Flächen ab).
 //
 // Abhängigkeiten:
-//   Nur raylib (Zeichnen, Maus, Tastatur, eingebaute Schrift) und für die
-//   Bedientöne Audio.hpp (in Ui.cpp).
+//   Nur raylib (Zeichnen, Maus, Tastatur, Controller, eingebaute Schrift),
+//   für die Bedientöne Audio.hpp und für den Controller-Namen
+//   ControlsMath.hpp (beides in Ui.cpp).
 //
 // Grundidee "immediate mode" (sofortiger Modus):
 //   Es gibt keine Fenster- oder Knopf-Objekte, die irgendwo gespeichert sind.
@@ -52,22 +58,91 @@ constexpr Color BAD{255, 105, 90, 255};         // Rot: Gefahr, Gegner
 constexpr Color SHIELD{95, 175, 255, 255};      // Blau: Schildbalken
 constexpr Color SCAN{70, 230, 170, 255};        // Türkis: Scannerbalken
 
-void BeginFrame();                   // einmal pro Frame aufrufen (main.cpp, App::Frame)
+// Einmal pro Frame aufrufen, als Erstes (main.cpp, App::Frame). Schiebt die
+// Werte "dieses Frame" nach "voriges Frame" (Flug, Textfeld-Fokus,
+// UI-Flächen), merkt sich das zuletzt benutzte Gerät und bewegt im
+// Menümodus den Zeiger mit dem Controller-Stick.
+void BeginFrame();
+unsigned FrameIndex();               // zählt die Frames (BeginFrame erhöht um 1)
+
+// ---------------------------------------------------------------------------
+// Fliegen oder Menü?
+// Ein Controller-Knopf bedeutet im Flug etwas anderes als im Menü: A
+// schießt im Flug, im Menü klickt A. Der Stick lenkt im Flug, im Menü
+// bewegt er den Zeiger. Deshalb meldet die Flugsteuerung (PilotControls::Read
+// in Controls.cpp) in jedem Frame, in dem sie Flugeingaben liest,
+// SetFlightMode(). Alles andere – Hauptmenü, Optionen, Pause,
+// Stationsfenster, Endbildschirme, Mehrspieler-Menüs, Zuschauen – ist
+// "Menümodus".
+// MenuMode() wertet das VORIGE Frame aus: BeginFrame läuft am Anfang des
+// Frames, bevor die Flugsteuerung sich melden kann. Folge: Im ersten Frame
+// nach dem Wechsel gilt noch der alte Modus – deshalb werten die Aufrufer
+// Knöpfe ohnehin erst ein, zwei Frames nach einem Bildschirmwechsel aus.
+// ---------------------------------------------------------------------------
+void SetFlightMode();
+bool MenuMode();
+
+// ---------------------------------------------------------------------------
+// Controller (raylib nennt sie "Gamepad")
+// raylib benennt die Knöpfe nach ihrer LAGE: GAMEPAD_BUTTON_RIGHT_FACE_DOWN
+// ist der untere Knopf der rechten Vierergruppe – bei Xbox "A", bei
+// PlayStation "Kreuz". Darum gilt jede Belegung automatisch für beide
+// Controller-Arten an derselben Stelle.
+// ---------------------------------------------------------------------------
+int Gamepad();                // erster angeschlossener Controller (0..3), -1 = keiner
+bool UsingGamepad();          // war das zuletzt benutzte Gerät ein Controller?
+bool GamepadIsPlayStation();  // ... und zwar einer von PlayStation (am Namen erkannt)?
+// Nur für Testoptionen (main.cpp, --pad-test/--pad-name): so tun, als sei
+// ein Controller mit diesem Namen angeschlossen und zuletzt benutzt worden –
+// für Bildschirmfotos der Controller-Hilfetexte ohne echten Controller.
+void SetTestGamepad(const char* name);
+// Wurde dieser Controller-Knopf in diesem Frame gedrückt? Nur im Menümodus,
+// sonst immer false (im Flug wertet die Flugsteuerung die Knöpfe aus).
+bool PadPressed(int button);
 
 // ---------------------------------------------------------------------------
 // Zeiger-Abfragen: Alle Bausteine hier (Button, Slider, Toggle, TextField)
-// fragen Klicks nur über diese Funktionen ab, nie direkt bei raylib.
-// Heute ist der Zeiger die Maus mit der linken Taste. Soll später ein
-// weiteres Gerät wie ein Linksklick wirken (z. B. ein Controller-Knopf in den
-// Menüs), wird das an EINER Stelle hier ergänzt, und alle Knöpfe, Regler und
-// Schalter können es sofort.
+// fragen Zeiger und Klicks nur über diese Funktionen ab, nie direkt bei
+// raylib. Der Zeiger ist die Maus – oder im Menümodus der Controller:
+//   - Sobald der linke Stick bewegt wird, übernimmt der Controller den
+//     Zeiger (PadPointerActive). Er wird mit SetMousePosition auch als
+//     Mauszeiger gesetzt und zusätzlich als oranger Ring gezeichnet
+//     (DrawPointer) – auf manchen Systemen (Wayland) darf ein Programm den
+//     Mauszeiger nämlich nicht versetzen.
+//   - Knopf A wirkt dann wie die linke Maustaste.
+//   - Bewegt sich die echte Maus oder beginnt der Flug, gibt der Controller
+//     den Zeiger wieder ab ("geparkt"). Bis zur nächsten Stickbewegung
+//     bestätigt A dann nur die Auswahl einer Knopfliste (ButtonList) –
+//     so klickt A nach dem Öffnen der Pause nicht zufällig einen Knopf, der
+//     gerade unter einem alten Zeigerort liegt.
 // ---------------------------------------------------------------------------
-bool PointerPressed();    // in diesem Frame heruntergedrückt (ein "Klick")
-bool PointerDown();       // wird gerade gehalten (z. B. Regler ziehen)
-bool PointerReleased();   // in diesem Frame losgelassen
-// "Zurück" in Menüs und Fenstern (heute: ESC). Gleiche Idee wie oben: eine
-// Stelle, an der später z. B. ein Controller-Knopf ergänzt werden kann.
+Vector2 PointerPos();         // wo der Zeiger ist (Pixel)
+Vector2 PointerDelta();       // wie weit er sich in diesem Frame bewegt hat
+bool PointerMoved();          // PointerDelta ungleich 0
+bool PadPointerActive();      // bedient gerade der Controller den Zeiger?
+bool PointerPressed();        // in diesem Frame heruntergedrückt (ein "Klick")
+bool PointerDown();           // wird gerade gehalten (z. B. Regler ziehen)
+bool PointerReleased();       // in diesem Frame losgelassen
+// "Zurück" in Menüs und Fenstern: ESC, im Menümodus auch Controller-B
+// (PlayStation: Kreis) und die Menü-Taste (PlayStation: Options). Die
+// Menü-Taste wirkt also überall wie ESC – auch zum Schließen der Pause.
 bool BackPressed();
+// Zeichnet den Controller-Zeiger (Ring), wenn er aktiv ist. Als Letztes im
+// Frame aufrufen, damit er über allem liegt (main.cpp, App::Draw).
+void DrawPointer();
+
+// ---------------------------------------------------------------------------
+// UI-Flächen blockieren Flugklicks
+// Ein Linksklick ins Bild setzt im Flug ein Flugziel (Controls.cpp). Ein Klick
+// auf ein HUD-Fenster (Statusfenster, Minikarte, Hinweise ...) soll das NICHT
+// tun. Deshalb merkt sich Panel() jedes gezeichnete Rechteck; Kästen, die
+// nicht mit Panel() gezeichnet werden, meldet der Aufrufer mit
+// BlockPointer() an. PointerOverPanel fragt die Rechtecke des VORIGEN Frames
+// ab (die Flugsteuerung liest ihre Eingaben, bevor dieses Frame gezeichnet ist;
+// das Bild, auf das der Spieler geklickt hat, ist ja auch das vorige).
+// ---------------------------------------------------------------------------
+bool PointerOverPanel(Vector2 p);
+void BlockPointer(Rectangle r);
 // Skalierungsfaktor für alle Pixelmaße: Die Oberfläche ist für 1500 x 900
 // Pixel entworfen. Ergebnis = min(Höhe / 900, Breite / 1500), aber nie
 // kleiner als 0,55 (sonst wird die Schrift unlesbar).
@@ -83,6 +158,7 @@ void TextCentered(const std::string& t, float cx, float y, float size, Color c, 
 void TextRight(const std::string& t, float rx, float y, float size, Color c, bool shadow = true);
 
 // Panel = gefülltes Rechteck mit Rahmen und orangefarbenen Eck-Akzenten.
+// Merkt sich außerdem sein Rechteck (siehe PointerOverPanel oben).
 // Bar = Fortschrittsbalken; frac ist der Füllstand 0..1 (wird begrenzt).
 void Panel(Rectangle r, Color fill = PANEL, Color border = ACCENT_DIM);
 void Bar(Rectangle r, float frac, Color fill, Color back = Color{15, 18, 24, 220});
@@ -119,13 +195,14 @@ bool Slider(Rectangle r, float& value, bool& dragging, bool focused, float step 
 // size = Schrifthöhe von "AN"/"AUS"; focused = per Tastatur ausgewählt.
 bool Toggle(Rectangle r, bool on, float size, bool focused);
 
-// Senkrechte Knopfliste mit Tastatur- und Maussteuerung. Liefert gewählten Index oder -1.
+// Senkrechte Knopfliste mit Tastatur-, Maus- und Controllersteuerung. Liefert gewählten Index oder -1.
 // selected: per Tastatur markierter Eintrag; gehört dem Aufrufer und muss
 // über die Frames hinweg erhalten bleiben (z. B. menuSel_ in main.cpp).
 // enabled: pro Eintrag, ob wählbar (fehlende Einträge gelten als wählbar).
 // cx = Mitte, top = Oberkante des ersten Knopfs, height/gap = Knopfhöhe und
 // Abstand, alles in Pixeln. Steuerung: Pfeiltasten oder W/S, Enter/Leertaste
-// oder Mausklick.
+// oder Mausklick; Controller: Steuerkreuz hoch/runter wählt, A bestätigt
+// (oder klickt den Knopf unter dem Controller-Zeiger).
 int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& enabled, int& selected,
                float cx, float top, float width, float height, float gap, float textSize);
 
@@ -178,8 +255,8 @@ int Utf8Length(const std::string& s);
 std::string Num(long long v);          // 100.000 (deutsche Tausenderpunkte)
 std::string Time(float seconds);       // 12:34, ab einer Stunde 1:02:03
 
-// Wurde in diesem Frame irgendeine Taste oder Maustaste gedrückt? (z. B.
-// "beliebige Taste: zurück zum Menü" in der Simulation)
+// Wurde in diesem Frame irgendeine Taste, Maustaste oder ein Controller-Knopf
+// gedrückt? (z. B. "beliebige Taste: zurück zum Menü" in der Simulation)
 bool AnyKeyOrClick();
 
 } // namespace ui

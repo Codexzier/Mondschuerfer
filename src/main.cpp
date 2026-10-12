@@ -6,10 +6,20 @@
 // ab, verkauft sie an Handelsstationen und rüstet das Schiff in Werften auf.
 // Ziel im Einzelspieler: 100.000 Ressourcenpunkte (cfg::GOAL_POINTS) auf dem Konto.
 //
-// Steuerung: W/S Schub, A/D drehen, Leertaste schießen, E Scanner, F abbauen/andocken,
-//            Mausrad Zoom, ESC Pause, M Ton an/aus, F11 Vollbild.
-//            Gamepad: linker Stick fliegen, A oder rechter Trigger schießen,
-//            X Scanner, Y abbauen/andocken.
+// Steuerung (Tabellen in README.md, Umsetzung in src/Controls.cpp):
+//   Tastatur:   W/S Schub/Bremsen, A/D drehen, Leertaste schießen, E Scanner,
+//               F abbauen/andocken, Mausrad Zoom, ESC/P Pause, M Ton an/aus,
+//               F11 Vollbild.
+//   Maus:       Linksklick auf den Boden = dorthin fliegen und anhalten,
+//               linke Taste halten = das Schiff folgt dem Zeiger, rechte
+//               Taste = Flugziel löschen (Schießen, Scanner, Andocken bleiben
+//               auf der Tastatur).
+//   Controller: linker Stick = Flugrichtung im Bild, RT = Tempo, LT = bremsen,
+//               A schießen, B Scanner, Y abbauen/andocken, Menü-Taste Pause,
+//               rechter Stick hoch/runter Zoom. PlayStation an denselben
+//               Stellen: Kreuz, Kreis, Dreieck, R2/L2, Options.
+//               In allen Menüs: linker Stick bewegt den Zeiger, A klickt,
+//               Steuerkreuz wählt, B = zurück.
 //
 // Wofür ist die Datei da?
 //   - main() (ganz unten) liest die Kommandozeile (nur für automatische Tests),
@@ -44,7 +54,9 @@
 //   - shared/World.hpp: Spiellogik und Autopilot (shared/Ai.cpp).
 //     World::Draw ist in src/Render.cpp definiert.
 //   - src/Hud.hpp (Spieloberfläche, Stationsfenster, Endbildschirme),
-//     src/Ui.hpp (Knöpfe, Texte, Skalierung), src/Audio.hpp (g_audio),
+//     src/Controls.hpp (Flugsteuerung mit Tastatur, Maus und Controller),
+//     src/Ui.hpp (Knöpfe, Texte, Skalierung, Controller in Menüs),
+//     src/Audio.hpp (g_audio),
 //     src/Assets.hpp (g_assets: Modelle, Shader, Mondfarbe),
 //     src/Save.hpp (Spielstand-Datei), src/Multiplayer.hpp,
 //     src/Options.hpp (Bildschirm "Optionen"),
@@ -67,6 +79,7 @@
 #include "Assets.hpp"
 #include "Audio.hpp"
 #include "ClientConfig.hpp"
+#include "Controls.hpp"
 #include "Hud.hpp"
 #include "Multiplayer.hpp"
 #include "Options.hpp"
@@ -141,52 +154,27 @@ struct TestOptions {
     // App::MusicTest). Achtung: speichert die Musik-Einstellungen wie ein
     // Spieler in den Optionen (Lautstärke danach 20 %).
     bool musicTest = false;
+    // --mouse-test X Z: im Einzelspiel ein Mausziel bei (X, Z) setzen, wie
+    // ein Linksklick auf diese Stelle am Boden. Mehrmals angegeben: Ist ein
+    // Ziel erreicht (oder aufgegeben), kommt 4 s später das nächste – so
+    // sieht man auch, ob das Schiff am Ziel stehen bleibt. Alle 2 s und bei
+    // jedem Zielende eine Zeile MOUSETEST nach stderr (App::MouseTest).
+    std::vector<Vector2> mouseTargets;   // x = Welt-x, y = Welt-z
+    // --pad-test WINKEL TRIGGER: einen Controller vortäuschen – linker Stick
+    // dauerhaft in Richtung WINKEL (Grad im Bild: 0 = oben, 90 = rechts),
+    // rechter Trigger = TRIGGER (0..1). Jede Sekunde eine Zeile PADTEST
+    // (App::PadTest). Die Hilfetexte zeigen dann die Controller-Belegung.
+    bool padTest = false;
+    float padAngle = 0.0f, padTrigger = 0.0f;
+    // --pad-name NAME: Name des vorgetäuschten Controllers (z. B.
+    // "DualSense Wireless Controller" -> PlayStation-Namen in den
+    // Hilfetexten). Für Bildschirmfotos; auch ohne --pad-test nutzbar.
+    std::string padName;
     // Mehrspieler (--mp-connect ADRESSE startet direkt im Mehrspieler-Bildschirm,
     // --mp-name/--mp-pass melden automatisch an, --mp-register legt das Konto an,
     // --mp-spectate schaut zu, --mp-autopilot lässt den Autopiloten fliegen)
     MultiplayerOptions mp;
 };
-
-// ---------------------------------------------------------------------------
-// Tastatur und Gamepad -> ShipInput (nur Einzelspieler; der Mehrspieler liest
-// seine Eingaben selbst in MultiplayerScreen::ReadGameInput).
-//
-// raylib unterscheidet zwei Abfragen:
-//   IsKeyDown    true, solange die Taste gehalten wird  -> Schub, Drehen, Feuer
-//   IsKeyPressed true nur in dem einen Frame, in dem sie heruntergeht
-//                -> Scanner umschalten und Interagieren sollen pro Druck genau
-//                   einmal passieren (ShipInput::scanToggle/interact).
-// Vorzeichen wie in ShipInput: thrust +1 = vorwärts, turn +1 = links.
-// ---------------------------------------------------------------------------
-ShipInput ReadPlayerInput() {
-    ShipInput in;
-    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) in.thrust += 1.0f;
-    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) in.thrust -= 1.0f;
-    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) in.turn += 1.0f;
-    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) in.turn -= 1.0f;
-    in.fire = IsKeyDown(KEY_SPACE);
-    in.scanToggle = IsKeyPressed(KEY_E);
-    in.interact = IsKeyPressed(KEY_F);
-
-    // Gamepad (optional). Der Stick liefert -1..1 je Achse; Ausschläge unter
-    // 0,2 gelten als "Totzone" (ein Stick in Ruhelage steht nie genau auf 0)
-    // und lassen die Tastatur-Werte stehen. Die Achsen werden umgedreht:
-    // Stick nach rechts (+x) = rechts drehen (turn negativ), Stick nach oben
-    // liefert -y = Schub vorwärts. raylib benennt Knöpfe nach ihrer Lage,
-    // nicht nach der Beschriftung: RIGHT_FACE_DOWN = unterer Knopf der
-    // rechten Vierergruppe (Xbox: A), _LEFT = X, _UP = Y;
-    // RIGHT_TRIGGER_2 = rechter Trigger (der hintere Schalter).
-    if (IsGamepadAvailable(0)) {
-        float ax = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
-        float ay = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
-        if (fabsf(ax) > 0.2f) in.turn = -ax;
-        if (fabsf(ay) > 0.2f) in.thrust = -ay;
-        if (IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) || IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_2)) in.fire = true;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_LEFT)) in.scanToggle = true;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_UP)) in.interact = true;
-    }
-    return in;
-}
 
 // ===========================================================================
 // App: Bildschirme, Spielablauf, Kamera, Ton und Zeichnen (siehe Dateikopf)
@@ -307,6 +295,7 @@ private:
     // "Neuen Spiel" unterscheidet.
     void StartBackground() {
         ResetAutopilot();
+        controls_.Reset();
         world_.NewGame(static_cast<unsigned int>(std::time(nullptr)) ^ 0x5eedu, true);
         menuOrbit_ = 0.0f;
         camTarget_ = world_.Player().pos;
@@ -325,6 +314,7 @@ private:
         camTarget_ = world_.Player().pos;
         endHandled_ = false;
         zoom_ = 1.1f;
+        controls_.Reset();
         if (opt_.deliver >= 0) { world_.totalDelivered = opt_.deliver; world_.lastStage = world_.StationStage(); }
         if (opt_.hasPos) { world_.Player().pos.x = opt_.posX; world_.Player().pos.z = opt_.posZ; }
         if (opt_.zoom > 0.0f) zoom_ = opt_.zoom;
@@ -343,6 +333,14 @@ private:
         camTarget_ = world_.Player().pos;
         // Station 0 ist immer die Handelsstation in der Mitte, Station 1 die
         // erste Werft im Ring (Reihenfolge aus World::BuildStations).
+        // --mouse-test / --pad-test: erstes Ziel bzw. vorgetäuschter Controller
+        if (!opt_.mouseTargets.empty()) {
+            mouseTestIdx_ = 0;
+            mouseTestEndT_ = -1.0f;
+            controls_.SetTestTarget({opt_.mouseTargets[0].x, 0.0f, opt_.mouseTargets[0].y});
+            mouseTestLastTgt_ = controls_.Target();
+        }
+        if (opt_.padTest) controls_.SetTestPad(opt_.padAngle, opt_.padTrigger);
         if (opt_.mode == "dock0") { world_.Player().cargo = 240; world_.Dock(0); }
         if (opt_.mode == "dock1") { world_.Me().balance = 4200; world_.Dock(1); }
         dockFrames_ = 0;
@@ -352,6 +350,7 @@ private:
     // Ist die Datei kaputt, wird der Knopf gesperrt und ein Fehlerton kommt.
     void Continue() {
         if (LoadGame(world_)) {
+            controls_.Reset();
             screen_ = Screen::Playing;
             camTarget_ = world_.Player().pos;
             endHandled_ = false;
@@ -367,6 +366,7 @@ private:
     // eine neue Partie (UpdateSimulation).
     void StartSimulation() {
         ResetAutopilot();
+        controls_.Reset();
         unsigned int seed = opt_.seed ? opt_.seed : static_cast<unsigned int>(std::time(nullptr));
         world_.NewGame(seed, true);
         screen_ = Screen::Simulation;
@@ -493,33 +493,48 @@ private:
     //     Spielstand löschen – es gibt kein "Weiterspielen" nach dem Tod.
     //   - angedockt: Welt steht, das Stationsfenster (DrawPlaying) ist offen.
     //     dockFrames_ zählt die Frames seit dem Andocken (siehe DrawPlaying).
-    //   - fliegen: ESC/P öffnet die Pause, sonst Eingaben lesen und die Welt
-    //     einen Schritt weiterrechnen.
+    //     Ein Mausziel ist mit dem Andocken erledigt (controls_.Reset).
+    //   - fliegen: ESC/P (oder die Menü-Taste des Controllers) öffnet die
+    //     Pause, sonst Eingaben lesen (controls_, siehe Controls.hpp) und die
+    //     Welt einen Schritt weiterrechnen.
     void UpdatePlaying(float dt) {
         if (world_.outcome == Outcome::Won) {
+            controls_.Reset();
             world_.outcomeT += dt;
             world_.UpdateAmbient(dt);
             if (!endHandled_) { DeleteSave(); endHandled_ = true; }
             return;
         }
         if (world_.outcome == Outcome::Dead) {
+            controls_.Reset();
             world_.Update(dt, ShipInput{});
             if (!endHandled_) { DeleteSave(); endHandled_ = true; }
             return;
         }
         if (world_.Me().dockedAt >= 0) {
+            controls_.Reset();
             world_.UpdateAmbient(dt);
             ++dockFrames_;
         } else {
             dockFrames_ = 0;
-            if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P)) {
+            if (PilotControls::PausePressed()) {
                 screen_ = Screen::Paused;
                 pauseSel_ = 0;
                 pauseFrames_ = 0;
                 g_audio.Play(Sfx::PauseOpen);
                 return;
             }
-            ShipInput in = ReadPlayerInput();
+            // Tastatur, Maus und Controller. Scanner und Interagieren kommen
+            // getrennt (FlightInput); der Einzelspieler gibt sie als
+            // scanToggle/interact in dieselbe ShipInput.
+            FlightInput fi = controls_.Read(world_.Player(), cam_, dt);
+            // Rechter Stick: Zoom wie das Mausrad (0,08 je Raste, siehe Frame).
+            // Nur bei einer Änderung rechnen – ohne Controller bleibt zoom_
+            // unberührt (auch ein per --zoom gesetzter Wert außerhalb der Grenzen).
+            if (fi.zoom != 0.0f) zoom_ = Clamp(zoom_ - fi.zoom * 0.08f, 0.55f, 1.6f);
+            ShipInput in = fi.held;
+            in.scanToggle = fi.scan;
+            in.interact = fi.interact;
             if (opt_.thrustTest) { in.thrust = 1.0f; in.fire = true; }
             world_.Update(dt, in);
         }
@@ -656,6 +671,7 @@ private:
             BeginDrawing();
             ClearBackground(Color{14, 17, 26, 255});
             mp_->Draw();
+            ui::DrawPointer();   // Controller-Zeiger über allem (Ui.hpp)
             EndDrawing();
             return;
         }
@@ -663,6 +679,10 @@ private:
         ClearBackground(Color{14, 17, 26, 255});
         BeginMode3D(cam_);
         world_.Draw(cam_);
+        // Mausziel: pulsierender Ring am Boden (nur im Einzelspiel, auch in der
+        // Pause und in deren Optionen, damit man sieht, wohin es weitergeht)
+        if (screen_ == Screen::Playing || screen_ == Screen::Paused || (screen_ == Screen::Options && !MenuBackground()))
+            controls_.DrawTarget3D(elapsed_);
         EndMode3D();
 
         if (opt_.noHud) { EndDrawing(); return; }
@@ -682,6 +702,7 @@ private:
             case Screen::Simulation: DrawSimulation(); break;
             case Screen::Multiplayer: break;   // oben behandelt
         }
+        ui::DrawPointer();   // Controller-Zeiger über allem (Ui.hpp)
         EndDrawing();
     }
 
@@ -772,9 +793,10 @@ private:
     }
 
     // Pausenmenü über dem angehaltenen Spiel (halbdurchsichtig abgedunkelt).
-    // ESC/P schließt die Pause wieder, aber erst zwei Frames nach dem Öffnen
-    // (siehe pauseFrames_ in Frame), sonst würde derselbe Tastendruck sie
-    // öffnen und gleich wieder schließen.
+    // ESC/P schließt die Pause wieder (am Controller B oder die Menü-Taste,
+    // BackPressed), aber erst zwei Frames nach dem Öffnen (siehe
+    // pauseFrames_ in Frame), sonst würde derselbe Tastendruck sie öffnen und
+    // gleich wieder schließen.
     // Aufbau von oben: Überschrift, vier Knöpfe, darunter die Tastenhilfe.
     // Die Höhe des Fensters ergibt sich aus diesen Teilen (ControlsHeight
     // aus Hud.hpp), damit Knöpfe und Tastenhilfe sich nie überlappen.
@@ -792,7 +814,7 @@ private:
         Panel(r);
         TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);
         int c = ButtonList(items, {true, true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
-        if (pauseFrames_ > 1 && (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P))) c = 0;
+        if (pauseFrames_ > 1 && (BackPressed() || IsKeyPressed(KEY_P))) c = 0;
         if (c == 0) {
             screen_ = Screen::Playing;
             g_audio.Play(Sfx::PauseClose);
@@ -829,6 +851,8 @@ private:
     // sorgt dafür, dass die Zeile sofort erscheint und nicht im Puffer wartet.
     void HandleTestOptions() {
         if (opt_.musicTest) MusicTest();
+        if (!opt_.mouseTargets.empty()) MouseTest();
+        if (opt_.padTest) PadTest();
         if (!opt_.screenshot.empty() && opt_.shotAt >= 0.0f && elapsed_ >= opt_.shotAt && !shotTaken_) {
             TakeScreenshot(opt_.screenshot.c_str());
             shotTaken_ = true;
@@ -899,6 +923,71 @@ private:
         }
     }
 
+    // --mouse-test (nur für Tests, siehe TestOptions): Die Ziele werden wie
+    // Mausklicks gesetzt (PilotControls::SetTestTarget) und von derselben
+    // Steuerung angeflogen wie im Spiel. Ausgabe nach stderr:
+    //   - bei jedem Zielende:  MOUSETEST ... ende=angekommen|aufgegeben|...
+    //   - alle 2 s:            MOUSETEST t=.. ziel=Nr x=.. z=.. (Schiff)
+    //                          tx=.. tz=.. (Ziel) dist=.. (Abstand am Boden)
+    //                          speed=.. target=1 (Ziel aktiv) oder 0
+    // tx/tz ist das gerade aktive Ziel – auch eins, das ein echter Mausklick
+    // gesetzt hat (so prüft ein UI-Test, welche Klicks ein Flugziel setzen);
+    // ohne aktives Ziel das zuletzt aktive (daran sieht man, ob das Schiff
+    // dort stehen bleibt).
+    // 4 s nach einem Zielende kommt das nächste Ziel der Liste.
+    // Die REPORT-Zeile (--report) bleibt davon unberührt.
+    void MouseTest() {
+        if (screen_ != Screen::Playing) return;
+        const Ship& p = world_.Player();
+        const bool has = controls_.HasTarget();
+        if (has) mouseTestLastTgt_ = controls_.Target();
+        const Vector3 tgt = mouseTestLastTgt_;
+        auto line = [&](const char* extra) {
+            fprintf(stderr, "MOUSETEST t=%.2f ziel=%d x=%.2f z=%.2f tx=%.2f tz=%.2f dist=%.2f speed=%.2f target=%d%s\n", elapsed_,
+                    static_cast<int>(mouseTestIdx_), p.pos.x, p.pos.z, tgt.x, tgt.z, Dist2D(p.pos, tgt), Vector3Length(p.vel),
+                    has ? 1 : 0, extra);
+            fflush(stderr);
+        };
+        if (mouseTestHad_ && !has) {
+            mouseTestEndT_ = elapsed_;
+            line(TextFormat(" ende=%s", controls_.LastEnd()));
+        }
+        mouseTestHad_ = has;
+        if (!has && mouseTestEndT_ >= 0.0f && elapsed_ - mouseTestEndT_ >= 4.0f && mouseTestIdx_ + 1 < opt_.mouseTargets.size()) {
+            ++mouseTestIdx_;
+            mouseTestEndT_ = -1.0f;
+            const Vector2 n = opt_.mouseTargets[mouseTestIdx_];
+            controls_.SetTestTarget({n.x, 0.0f, n.y});
+            mouseTestHad_ = true;
+            fprintf(stderr, "MOUSETEST t=%.2f neues_ziel=%d tx=%.2f tz=%.2f\n", elapsed_, static_cast<int>(mouseTestIdx_), n.x, n.y);
+        }
+        if (elapsed_ - lastMouseReport_ >= 2.0f) {
+            lastMouseReport_ = elapsed_;
+            line("");
+        }
+    }
+
+    // --pad-test (nur für Tests): jede Sekunde eine Zeile
+    //   PADTEST t=.. soll_bild=WINKEL bild=.. abw=.. yaw=.. speed=.. soll_speed=..
+    // bild = Flugrichtung des Schiffs IM BILD in Grad (0 = oben, 90 =
+    // rechts; controls::ImageAngleDeg mit der aktuellen Kamera; 360 ist
+    // dasselbe wie 0), abw = Abweichung von soll_bild in Grad (kürzester
+    // Winkel, AngleDiff), yaw = der Drehwinkel in der Welt (Grad),
+    // soll_speed = Trigger * Höchsttempo. Nach dem Eindrehen muss abw ≈ 0
+    // sein und speed = soll_speed.
+    void PadTest() {
+        if (screen_ != Screen::Playing || elapsed_ - lastPadReport_ < 1.0f) return;
+        lastPadReport_ = elapsed_;
+        const Ship& p = world_.Player();
+        const controls::GroundAxes ax = controls::CameraGroundAxes(cam_.position, cam_.target);
+        const float img = controls::ImageAngleDeg(p.yaw, ax);
+        const float dev = fabsf(AngleDiff(img * DEG2RAD, opt_.padAngle * DEG2RAD)) * RAD2DEG;
+        fprintf(stderr, "PADTEST t=%.2f soll_bild=%.1f bild=%.1f abw=%.1f yaw=%.1f speed=%.2f soll_speed=%.2f x=%.1f z=%.1f\n",
+                elapsed_, opt_.padAngle, img, dev, p.yaw * RAD2DEG, Vector3Length(p.vel),
+                Clamp(opt_.padTrigger, 0.0f, 1.0f) * p.maxSpeed, p.pos.x, p.pos.z);
+        fflush(stderr);
+    }
+
     // ========================================================================
     // Zustand
     // ========================================================================
@@ -919,6 +1008,13 @@ private:
     float lastShot_ = 0.0f;
     float lastMusicReport_ = 0.0f;   // --music-test: Zeit der letzten MUSICTEST-Zeile
     int musicTestStep_ = 0;          // --music-test: nächster Schritt des Ablaufs
+    PilotControls controls_;         // Flugsteuerung: Tastatur, Maus, Controller (Controls.hpp)
+    size_t mouseTestIdx_ = 0;        // --mouse-test: Nummer des aktuellen Ziels
+    float mouseTestEndT_ = -1.0f;    // --mouse-test: Zeit, als das aktuelle Ziel endete (-1 = läuft noch)
+    bool mouseTestHad_ = false;      // --mouse-test: hatte im vorigen Frame ein Ziel
+    Vector3 mouseTestLastTgt_{};     // --mouse-test: zuletzt aktives Ziel
+    float lastMouseReport_ = -10.0f; // --mouse-test: Zeit der letzten MOUSETEST-Zeile
+    float lastPadReport_ = -10.0f;   // --pad-test: Zeit der letzten PADTEST-Zeile
     int shotIndex_ = 0;
     int pauseFrames_ = 0;      // Frames seit dem Öffnen der Pause
     int menuSel_ = 0;          // per Tastatur gewählter Knopf im Hauptmenü
@@ -991,6 +1087,17 @@ int main(int argc, char** argv) {
         else if (a == "--hp") opt.hp = static_cast<float>(atof(next().c_str()));
         else if (a == "--balance") opt.balance = atoll(next().c_str());
         else if (a == "--music-test") opt.musicTest = true;
+        else if (a == "--mouse-test") {
+            const float x = static_cast<float>(atof(next().c_str()));
+            const float z = static_cast<float>(atof(next().c_str()));
+            opt.mouseTargets.push_back({x, z});
+        }
+        else if (a == "--pad-test") {
+            opt.padTest = true;
+            opt.padAngle = static_cast<float>(atof(next().c_str()));
+            opt.padTrigger = static_cast<float>(atof(next().c_str()));
+        }
+        else if (a == "--pad-name") opt.padName = next();
         else if (a == "--dump-model-bounds") opt.dumpModelBounds = true;
         else if (a == "--mp-connect") opt.mp.connect = next();
         else if (a == "--mp-name") opt.mp.name = next();
@@ -1061,6 +1168,10 @@ int main(int argc, char** argv) {
     g_audio.SetMusicEnabled(g_clientConfig.musicEnabled);
     g_audio.SetMusicVolume(g_clientConfig.musicVolume);
 
+    // --pad-test / --pad-name: Controller vortäuschen (Hilfetexte zeigen
+    // dann die Controller-Belegung, siehe ui::SetTestGamepad)
+    if (opt.padTest || !opt.padName.empty()) ui::SetTestGamepad(opt.padName.empty() ? "Xbox Controller" : opt.padName.c_str());
+
     // --norender: so schnell wie möglich rechnen (0 = keine Bildraten-Grenze)
     if (opt.noRender) SetTargetFPS(0);
     App app(opt);
@@ -1073,7 +1184,8 @@ int main(int argc, char** argv) {
     while (!WindowShouldClose()) {
         float rawDt = GetFrameTime();
         float dt = std::min(rawDt, 1.0f / 20.0f);
-        if (!opt.screenshot.empty() || opt.report || opt.shotEvery > 0.0f) dt = rawDt = 1.0f / 60.0f; // deterministisch für Tests
+        if (!opt.screenshot.empty() || opt.report || opt.shotEvery > 0.0f || !opt.mouseTargets.empty() || opt.padTest)
+            dt = rawDt = 1.0f / 60.0f; // deterministisch für Tests
         if (!app.Frame(dt, rawDt)) break;
     }
     // Aufräumen in umgekehrter Reihenfolge des Ladens: erst speichern bzw.

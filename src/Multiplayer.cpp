@@ -170,28 +170,6 @@ Rectangle SpectatorRightPanel() {
     return {static_cast<float>(GetScreenWidth()) - 16 * s - 370 * s, 16 * s, 370 * s, static_cast<float>(GetScreenHeight()) - 32 * s};
 }
 
-// Tastatur/Gamepad -> gehaltene Eingaben wie ReadPlayerInput in main.cpp.
-// Unterschied: Scanner (E) und Interaktion (F) werden getrennt geliefert,
-// weil NetClient sie als Tastendruck-Zähler an den Server schickt.
-void ReadHeldInput(ShipInput& in, bool& scan, bool& interact) {
-    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) in.thrust += 1.0f;
-    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) in.thrust -= 1.0f;
-    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) in.turn += 1.0f;
-    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) in.turn -= 1.0f;
-    in.fire = IsKeyDown(KEY_SPACE);
-    scan = IsKeyPressed(KEY_E);
-    interact = IsKeyPressed(KEY_F);
-    if (IsGamepadAvailable(0)) {
-        float ax = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
-        float ay = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
-        if (fabsf(ax) > 0.2f) in.turn = -ax;
-        if (fabsf(ay) > 0.2f) in.thrust = -ay;
-        if (IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) || IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_2)) in.fire = true;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_LEFT)) scan = true;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_UP)) interact = true;
-    }
-}
-
 // Günstigstes bezahlbares Upgrade für den Autopiloten (gleiche Reihenfolge wie
 // CheapestUpgrade in shared/Ai.cpp: bei gleichem Preis Lager, Waffen, Panzerung, Antrieb)
 int CheapestUpgrade(const World& w, long long budget) {
@@ -304,6 +282,7 @@ void MultiplayerScreen::BackToAddress(const std::string& reason) {
     paused_ = false;
     optionsOpen_ = false;
     goalAnimT_ = -1.0f;
+    controls_.Reset();
     addressField_.focused = true;
     SetStatus(reason, BAD);
     g_assets.SetMoonColor(MoonColor::Grey);
@@ -337,6 +316,8 @@ void MultiplayerScreen::EnterPlaying() {
     hadShip_ = false;
     goalAnimT_ = -1.0f;
     zoom_ = 1.1f;
+    padZoom_ = 0.0f;
+    controls_.Reset();
     autoDockT_ = 0.0f;
     ResetAutopilot();   // Autopilot-Zustand (Ai.cpp) gehört jetzt der Spiegelwelt
     SetStatus("", MUTED);
@@ -472,7 +453,10 @@ void MultiplayerScreen::HandleNetwork() {
         dockFrames_ = 0;
         undockSentT_ = -1.0f;
     }
-    if (net_.TakeRespawned()) snapCam_ = true;   // neues Schiff: Kamera springt hin
+    if (net_.TakeRespawned()) {   // neues Schiff: Kamera springt hin, altes Mausziel gilt nicht mehr
+        snapCam_ = true;
+        controls_.Reset();
+    }
 
     // Ziel erreicht: eigenes -> große Abschlussanimation; fremdes -> NetClient
     // zeigt schon eine Meldung, wir zünden zusätzlich ein kleines Feuerwerk
@@ -570,15 +554,17 @@ void MultiplayerScreen::Update(float frameDt) {
             if (undockSentT_ > 1.5f) undockSentT_ = -1.0f;
         }
 
-        // Pause (ESC/P). Nur im freien Flug; angedockt schließt ESC das Stationsfenster.
-        // Während der Zielanimation beendet ESC die Animation.
+        // Pause (ESC/P, Controller: Menü-Taste). Nur im freien Flug; angedockt
+        // schließt ESC das Stationsfenster. Während der Zielanimation beendet
+        // ESC (Controller: B) die Animation, nach 1 s auch Enter, Klick oder A.
+        // (Die Animation läuft immer angedockt ab, also im Menümodus von Ui.hpp.)
         if (goalAnimT_ >= 0.0f) {
-            if (IsKeyPressed(KEY_ESCAPE) ||
-                (goalAnimT_ > 1.0f && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))) {
+            if (BackPressed() || (goalAnimT_ > 1.0f && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || PointerPressed() ||
+                                                        PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN)))) {
                 goalAnimT_ = -1.0f;
                 dockFrames_ = 0;   // dieselbe Taste darf nicht auch das Stationsfenster bedienen
             }
-        } else if (!paused_ && w.Me().dockedAt < 0 && (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P))) {
+        } else if (!paused_ && w.Me().dockedAt < 0 && PilotControls::PausePressed()) {
             paused_ = true;
             pauseSel_ = 0;
             pauseFrames_ = 0;
@@ -592,8 +578,8 @@ void MultiplayerScreen::Update(float frameDt) {
     } else if (phase_ == Phase::Spectating) {
         if (net_.WorldReady()) net_.GetWorld().drawRange = 2000.0f;   // ganze Karte zeichnen (nach jedem Neuaufbau wieder setzen)
         UpdateSpectatorCamera(dt);
-        if (IsKeyPressed(KEY_ESCAPE) && phaseFrames_ >= 1) {
-            // Zuschauen beenden: Das Protokoll kennt kein "zurück in die Lobby",
+        if (BackPressed() && phaseFrames_ >= 1) {
+            // Zuschauen beenden (ESC, Controller: B): Das Protokoll kennt kein "zurück in die Lobby",
             // deshalb trennen und sofort neu verbinden -> Lobby.
             g_audio.Play(Sfx::UiBack);
             net_.Disconnect();
@@ -612,10 +598,17 @@ void MultiplayerScreen::Update(float frameDt) {
     }
 }
 
+// Eingaben fürs eigene Schiff: Tastatur, Maus und Controller über
+// PilotControls (Controls.hpp), wie im Einzelspieler. Scanner (E/B) und
+// Interaktion (F/Y) kommen getrennt, weil NetClient sie als
+// Tastendruck-Zähler an den Server schickt.
 void MultiplayerScreen::ReadGameInput(float dt, ShipInput& held, bool& scan, bool& interact) {
     World& w = net_.GetWorld();
-    // Angedockt oder Pause: keine Steuerung (wie im Einzelspieler, wo
-    // World::Update während des Andockens und der Pause gar nicht läuft).
+    // Angedockt: Ein Mausziel ist erledigt. Angedockt oder Pause: keine
+    // Steuerung (wie im Einzelspieler, wo World::Update während des
+    // Andockens und der Pause gar nicht läuft). In der Pause bleibt ein
+    // Mausziel erhalten; danach geht der Flug dorthin weiter.
+    if (w.Me().dockedAt >= 0) controls_.Reset();
     if (paused_ || w.Me().dockedAt >= 0) return;
     if (opt_.autopilot) {
         // Autopilot (Testoption): dieselbe Steuerlogik wie die Simulation im
@@ -629,7 +622,11 @@ void MultiplayerScreen::ReadGameInput(float dt, ShipInput& held, bool& scan, boo
         interact = in.interact;
         return;
     }
-    ReadHeldInput(held, scan, interact);
+    const FlightInput fi = controls_.Read(w.Player(), cam_, dt);
+    held = fi.held;
+    scan = fi.scan;
+    interact = fi.interact;
+    padZoom_ += fi.zoom;   // UpdatePlayingCamera rechnet es wie Mausrad-Rasten ein
 }
 
 // Autopilot an der Station: Reparatur bzw. Upgrades als Anfrage an den Server
@@ -670,7 +667,9 @@ void MultiplayerScreen::UpdatePlayingCamera(float dt) {
     const Ship& p = w.Player();
     const bool hasShip = !p.dead && !p.hidden;
 
-    float wheel = GetMouseWheelMove();
+    // Mausrad und rechter Stick (padZoom_, in Mausrad-Rasten; ReadGameInput)
+    float wheel = GetMouseWheelMove() + padZoom_;
+    padZoom_ = 0.0f;
     if (wheel != 0.0f && !paused_) zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
 
     Vector3 target = hasShip ? Vector3{p.pos.x, 0.0f, p.pos.z} : camTarget_;
@@ -706,36 +705,44 @@ Rectangle MultiplayerScreen::SpectatorMapArea() const {
 // die Karte sieht aus wie ein Plan). Die Mitte der Kartenfläche zeigt den
 // Weltpunkt specCenter_; specZoom_ = 1 zeigt das ganze Spielfeld.
 void MultiplayerScreen::UpdateSpectatorCamera(float dt) {
-    (void)dt;
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     const Rectangle area = SpectatorMapArea();
     const float areaCx = area.x + area.width * 0.5f, areaCy = area.y + area.height * 0.5f;
     const float mapPx = std::max(50.0f, std::min(area.width, area.height));
     float upp = kSpectatorSpan / mapPx * specZoom_;   // Welt-Einheiten pro Bildschirmpixel
 
-    const Vector2 mouse = GetMousePosition();
+    // Zeiger = Maus oder Controller-Zeiger (Ui.hpp)
+    const Vector2 mouse = PointerPos();
     const bool overList = CheckCollisionPointRec(mouse, SpectatorLeftPanel());
     const bool overRight = CheckCollisionPointRec(mouse, SpectatorRightPanel());
     const float wheel = GetMouseWheelMove();
-    if (wheel != 0.0f) {
-        if (overList) {
-            listScroll_ -= wheel > 0 ? 1 : -1;   // Spielerliste blättern (begrenzt beim Zeichnen)
-        } else if (!overRight) {
-            // Zoomen um den Punkt unter dem Mauszeiger: dieser Kartenpunkt soll
-            // nach dem Zoom wieder unter dem Zeiger liegen.
-            Vector2 before{specCenter_.x + (mouse.x - areaCx) * upp, specCenter_.y + (mouse.y - areaCy) * upp};
-            specZoom_ = Clamp(specZoom_ * powf(0.85f, wheel), 0.15f, 1.0f);
-            upp = kSpectatorSpan / mapPx * specZoom_;
-            specCenter_ = {before.x - (mouse.x - areaCx) * upp, before.y - (mouse.y - areaCy) * upp};
-        }
+    // Rechter Stick: stufenlos zoomen, voll ausgelenkt wie 6 Mausrad-Rasten
+    // pro Sekunde (nach oben = näher). Er blättert NICHT in der Spielerliste –
+    // dort würde ein gehaltener Stick in jedem Frame eine Zeile weiterspringen.
+    float padZoom = 0.0f;
+    if (Gamepad() >= 0)
+        padZoom = -controls::StickDeadzone({0.0f, GetGamepadAxisMovement(Gamepad(), GAMEPAD_AXIS_RIGHT_Y)}).y * 6.0f * std::min(dt, 0.05f);
+    if (wheel != 0.0f && overList) {
+        listScroll_ -= wheel > 0 ? 1 : -1;   // Spielerliste blättern (begrenzt beim Zeichnen)
+    } else if ((wheel != 0.0f && !overRight) || padZoom != 0.0f) {
+        // Zoomen um den Punkt unter dem Zeiger: dieser Kartenpunkt soll nach
+        // dem Zoom wieder unter dem Zeiger liegen. Steht der Zeiger auf einer
+        // Seitenleiste (nur beim Stick möglich), um die Mitte der Karte.
+        const float steps = (overList || overRight) ? padZoom : wheel + padZoom;
+        const Vector2 anchor = (overList || overRight) ? Vector2{areaCx, areaCy} : mouse;
+        Vector2 before{specCenter_.x + (anchor.x - areaCx) * upp, specCenter_.y + (anchor.y - areaCy) * upp};
+        specZoom_ = Clamp(specZoom_ * powf(0.85f, steps), 0.15f, 1.0f);
+        upp = kSpectatorSpan / mapPx * specZoom_;
+        specCenter_ = {before.x - (anchor.x - areaCx) * upp, before.y - (anchor.y - areaCy) * upp};
     }
 
     // Verschieben durch Ziehen mit gedrückter linker oder rechter Maustaste
-    if ((IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) && !overList && !overRight)
-        dragging_ = true;
-    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) dragging_ = false;
+    // (Controller: A halten und den Zeiger mit dem linken Stick bewegen –
+    // PointerPressed/PointerDown/PointerDelta aus Ui.hpp gelten für beides)
+    if ((PointerPressed() || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) && !overList && !overRight) dragging_ = true;
+    if (!PointerDown() && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) dragging_ = false;
     if (dragging_) {
-        Vector2 d = GetMouseDelta();
+        Vector2 d = PointerDelta();
         specCenter_.x -= d.x * upp;
         specCenter_.y -= d.y * upp;
     }
@@ -958,7 +965,7 @@ void MultiplayerScreen::DrawAddress() {
     if (!connecting_ && (connect || (keys && (submit || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))))) {
         g_audio.Play(Sfx::UiConfirm);
         StartConnect();
-    } else if (back || (keys && IsKeyPressed(KEY_ESCAPE))) {
+    } else if (back || (keys && BackPressed())) {
         if (connecting_) {
             // Abbrechen: nur den Verbindungsaufbau beenden, im Menü bleiben
             net_.Disconnect();
@@ -1024,7 +1031,7 @@ void MultiplayerScreen::DrawLobby() {
     const bool busy = spectatePending_;
     std::vector<std::string> items = {"Zuschauen", "Mitspielen", "Trennen"};
     int c = ButtonList(items, {!busy, !busy, true}, lobbySel_, bx + bw * 0.5f, pr.y, bw, 58 * s, 14 * s, 26 * s);
-    if (IsKeyPressed(KEY_ESCAPE)) c = 2;
+    if (BackPressed()) c = 2;       // ESC, Controller: B
     if (phaseFrames_ < 1) c = -1;   // Taste stammt noch aus dem vorigen Bildschirm
     if (c == 0) {
         g_audio.Play(Sfx::UiConfirm);
@@ -1051,7 +1058,12 @@ void MultiplayerScreen::DrawLobby() {
     if (lobbySel_ >= 0 && lobbySel_ < 3) TextBlock(help[lobbySel_], bx, hy, 18 * s, bw, Color{200, 206, 220, 230});
 
     if (!status_.empty()) TextBlock(status_, x, pr.y + pr.height + 18 * s, 22 * s, pw, statusColor_);
-    MenuFooter("Pfeiltasten + Enter: wählen    ESC: trennen");
+    // Fußzeile passend zum Gerät (Controls.hpp): Tastatur oder Controller
+    if (controls::ActiveDevice() == controls::Device::KeyboardMouse)
+        MenuFooter("Pfeiltasten + Enter: wählen    ESC: trennen");
+    else
+        MenuFooter(Fmt("Steuerkreuz + %s: wählen    %s: trennen", controls::KeyName(controls::Act::Confirm),
+                       controls::KeyName(controls::Act::Back)).c_str());
 }
 
 // --- (c) Anmeldung -----------------------------------------------------------------------
@@ -1104,7 +1116,7 @@ void MultiplayerScreen::DrawLogin() {
     const bool keys = phaseFrames_ >= 1;
     if (!busy && (login || (keys && (submit || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))))) SubmitLogin(false);
     else if (!busy && reg) SubmitLogin(true);
-    else if (back || (keys && IsKeyPressed(KEY_ESCAPE) && !busy)) {
+    else if (back || (keys && BackPressed() && !busy)) {
         g_audio.Play(Sfx::UiBack);
         SetPhase(Phase::Lobby);
         SetStatus("", MUTED);
@@ -1125,6 +1137,7 @@ void MultiplayerScreen::DrawPlaying() {
     World& w = net_.GetWorld();
     BeginMode3D(cam_);
     w.Draw(cam_);
+    controls_.DrawTarget3D(elapsed_);   // Mausziel (nur wenn eins gesetzt ist)
     EndMode3D();
 
     // Randpfeile des HUD sollen nicht unter dem Panel "Beste Piloten" landen
@@ -1331,7 +1344,7 @@ void MultiplayerScreen::DrawGoalAnimation() {
     TextCentered(Fmt("Dein Schiff behält seine Aufrüstungen - weiter geht's mit Runde %d.", goalRound_ + 1), W * 0.5f, y0 + 168 * s, 24 * s,
                  fade(Color{200, 220, 255, 255}));
     TextCentered("Dein Ergebnis steht jetzt in der Bestenliste.", W * 0.5f, y0 + 204 * s, 20 * s, fade(MUTED));
-    if (t > 1.0f) TextCentered("Enter: weiter", W * 0.5f, y0 + bandH - 32 * s, 16 * s, fade(MUTED));
+    if (t > 1.0f) TextCentered(Fmt("%s: weiter", controls::KeyName(controls::Act::Confirm)), W * 0.5f, y0 + bandH - 32 * s, 16 * s, fade(MUTED));
 }
 
 // Aufbau von oben: Überschrift, Hinweis, drei Knöpfe, Hinweis zum Abmelden,
@@ -1353,8 +1366,9 @@ void MultiplayerScreen::DrawPause() {
     TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);
     TextCentered("Das Spiel läuft auf dem Server weiter!", W * 0.5f, r.y + 86 * s, 20 * s, MUTED);
     int c = ButtonList(items, {true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
-    // ESC im selben Frame, in dem die Pause geöffnet wurde, darf sie nicht gleich schließen
-    if (pauseFrames_ > 1 && (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P))) c = 0;
+    // ESC im selben Frame, in dem die Pause geöffnet wurde, darf sie nicht gleich schließen.
+    // Controller: B oder die Menü-Taste (BackPressed) schließen sie wie ESC.
+    if (pauseFrames_ > 1 && (BackPressed() || IsKeyPressed(KEY_P))) c = 0;
     if (c == 0) {
         paused_ = false;
         g_audio.Play(Sfx::PauseClose);
@@ -1415,8 +1429,12 @@ void MultiplayerScreen::DrawSpectating() {
         Text(l.t, lx + 16 * s, ly, 16 * s, TEXT);
         lx += 20 * s + Width(l.t, 16 * s) + 18 * s;
     }
-    TextCentered(Fit("Mausrad: Zoom  ·  Ziehen: verschieben  ·  R: ganze Karte  ·  ESC: zurück", 15 * s, area.width - 10 * s), cx,
-                 H - 32 * s, 15 * s, MUTED);
+    const char* specHelp = controls::ActiveDevice() == controls::Device::KeyboardMouse
+                               ? "Mausrad: Zoom  ·  Ziehen: verschieben  ·  R: ganze Karte  ·  ESC: zurück"
+                               : controls::ActiveDevice() == controls::Device::PlayStation
+                                     ? "Rechter Stick: Zoom  ·  Kreuz halten + linker Stick: verschieben  ·  Kreis: zurück"
+                                     : "Rechter Stick: Zoom  ·  A halten + linker Stick: verschieben  ·  B: zurück";
+    TextCentered(Fit(specHelp, 15 * s, area.width - 10 * s), cx, H - 32 * s, 15 * s, MUTED);
 
     DrawPlayerList(SpectatorLeftPanel());
     DrawHighscores(SpectatorRightPanel());

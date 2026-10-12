@@ -19,6 +19,9 @@
 //   - shared/World.hpp (Daten), shared/Config.hpp (Balancing-Werte für
 //     Anzeigen wie "Tempo 16 -> 19"), shared/Util.hpp (Dist2D, ForwardFromYaw).
 //   - Ui.hpp: alle Bausteine (Text, Panel, Bar, Button) und Farben.
+//   - Controls.hpp: Tastennamen passend zum zuletzt benutzten Gerät
+//     ("[F] Andocken" bzw. "[Y] Andocken" / "[Dreieck] Andocken") und die
+//     Zeilen der Tastenhilfe.
 //   - Audio.hpp: g_audio für den Ton "Abgelehnt" (Sfx::Denied), wenn etwas
 //     zu teuer ist. Der Ton entsteht direkt hier im Client, auch im
 //     Mehrspieler – es ist reine Bedien-Rückmeldung, der Server weiß davon nichts.
@@ -45,6 +48,7 @@
 #include "Hud.hpp"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "Controls.hpp"
 #include "Ui.hpp"
 #include <algorithm>
 #include <cctype>
@@ -258,6 +262,9 @@ void Minimap(const World& w) {
     Text("RADAR", r.x + 8 * s, r.y + 6 * s, 16 * s, MUTED);
     // Legende unter der Karte: 2 x 2 Einträge (i % 2 = Spalte, i / 2 = Zeile).
     // Andere Spieler (grün) und friedliche Schiffe (hellblau) stehen nicht darin.
+    // Sie ist kein Panel; damit ein Klick darauf trotzdem kein Flugziel setzt
+    // (Maussteuerung, Controls.cpp), wird ihre Fläche eigens angemeldet.
+    BlockPointer({r.x, r.y + r.height, r.width, 50 * s});
     struct L { const char* t; Color c; } legend[4] = {{"Handel", ACCENT}, {"Werft", Color{120, 210, 255, 255}},
                                                    {"Kristall", GOOD}, {"Gegner", BAD}};
     for (int i = 0; i < 4; ++i) {
@@ -275,24 +282,27 @@ void SetHudRightReserve(float width, float bottom) {
     g_rightReserveBottom = bottom;
 }
 
-// Die Tastenbelegung ist hier fest eingetragen; sie muss zu den Abfragen in
-// main.cpp/Multiplayer.cpp passen (dort werden die Tasten ausgewertet).
-// kControlRows ist die Zeilenzahl; ControlsHeight rechnet damit, DrawHud und
-// die Pausenmenüs fragen ControlsHeight – eine neue Zeile hier genügt also.
-// Spalte 2 beginnt bei 7 * size (Platz für das längste Tastenwort "Leertaste").
-namespace {
-constexpr int kControlRows = 8;
-}
+// Die Zeilen der Tastenhilfe liefert controls::HelpRows() (Controls.cpp) –
+// je nach zuletzt benutztem Gerät die Tastatur/Maus-Belegung (9 Zeilen) oder
+// die des Controllers (7 Zeilen, Xbox- oder PlayStation-Namen). Dort steht
+// auch die Auswertung der Tasten; beides passt so immer zusammen.
+// ControlsHeight rechnet mit derselben Zeilenzahl; DrawHud und die
+// Pausenmenüs fragen ControlsHeight, statt eine Zeilenzahl anzunehmen.
+// Wechselt der Spieler das Gerät, ändert sich die Höhe – die Fenster
+// passen sich im nächsten Frame an.
+float ControlsHeight(float size) { return static_cast<float>(controls::HelpRows().size()) * size * 1.35f; }
 
-float ControlsHeight(float size) { return kControlRows * size * 1.35f; }
-
+// Spalte 2 beginnt hinter dem breitesten Tastennamen plus einer
+// Schrifthöhe Abstand (gemessen mit Width, weil "Rechter Stick" breiter ist
+// als "E").
 void DrawControls(float x, float y, float size) {
-    const char* keys[kControlRows] = {"W / S", "A / D", "Leertaste", "E", "F", "Mausrad", "ESC", "M"};
-    const char* what[kControlRows] = {"Schub / Bremsen", "Drehen", "Schießen", "Scanner an/aus", "Abbauen / Andocken", "Zoom",
-                                      "Pause", "Ton an/aus"};
-    for (int i = 0; i < kControlRows; ++i) {
-        Text(keys[i], x, y + i * size * 1.35f, size, Color{255, 200, 140, 210});
-        Text(what[i], x + size * 7.0f, y + i * size * 1.35f, size, Color{220, 225, 235, 200});
+    const std::vector<controls::HelpRow> rows = controls::HelpRows();
+    float keyW = 0.0f;
+    for (const auto& r : rows) keyW = std::max(keyW, Width(r.keys, size));
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const float ry = y + static_cast<float>(i) * size * 1.35f;
+        Text(rows[i].keys, x, ry, size, Color{255, 200, 140, 210});
+        Text(rows[i].what, x + keyW + size, ry, size, Color{220, 225, 235, 200});
     }
 }
 
@@ -358,8 +368,9 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // die 0,01 fängt Rundungsfehler der Gleitkommarechnung ab.
     // TextFormat (raylib) ist wie sprintf, liefert aber einen Zeiger in einen
     // internen, rotierenden Puffer – daher sofort in std::string übernehmen.
+    // KeyHint: "[E]", mit Controller "[B]" bzw. "[Kreis]" (Controls.hpp).
     std::string scanText = me.scanOn ? TextFormat("AKTIV  %.1f s", me.scanEnergy)
-                                     : (me.scanEnergy >= cfg::SCANNER_MAX_ENERGY - 0.01f ? std::string("bereit [E]")
+                                     : (me.scanEnergy >= cfg::SCANNER_MAX_ENERGY - 0.01f ? "bereit " + controls::KeyHint(controls::Act::Scan)
                                                                                          : TextFormat("lädt  %.1f s", me.scanEnergy));
     StatBar(x, y, bw, "SCANNER", scanText, me.scanEnergy / cfg::SCANNER_MAX_ENERGY,
             me.scanOn ? Color{120, 255, 210, 255} : SCAN);
@@ -407,7 +418,8 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     }
 
     // --- Kontext-Hinweis unten ---------------------------------------------------------
-    // Sagt, was die Taste F gerade tun würde. Welches Ziel in Reichweite ist,
+    // Sagt, was die Taste F gerade tun würde (mit Controller: Y bzw. Dreieck,
+    // key = "[F]", "[Y]" oder "[Dreieck]"). Welches Ziel in Reichweite ist,
     // entscheidet dieselbe Funktion, die auch die Spiellogik benutzt
     // (World::InteractTarget) – Anzeige und Wirkung passen so immer zusammen.
     // kind: 0 nichts, 1 Lagerstätte, 2 Wrack, 3 Handelsstation, 4 Werft.
@@ -419,17 +431,18 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
         int kind = 0, id = -1;
         w.InteractTarget(&kind, &id);
         Rectangle hr{W * 0.5f - 300 * s, H - 110 * s, 600 * s, 80 * s};
+        const std::string key = controls::KeyHint(controls::Act::Interact);
         if (me.mining) {
             // Abbau läuft: Fortschrittsbalken über MINING_TIME (5 s)
             Panel(hr);
             float f = me.mineT / cfg::MINING_TIME;
             TextCentered(TextFormat("ABBAU LÄUFT ...  %.1f / %.0f s", me.mineT, cfg::MINING_TIME), W * 0.5f, hr.y + 12 * s, 22 * s, GOOD);
             Bar({hr.x + 20 * s, hr.y + 44 * s, hr.width - 40 * s, 16 * s}, f, GOOD);
-            TextRight("[F] abbrechen", hr.x + hr.width - 14 * s, hr.y + hr.height + 4 * s, 16 * s, MUTED);
+            TextRight(key + " abbrechen", hr.x + hr.width - 14 * s, hr.y + hr.height + 4 * s, 16 * s, MUTED);
         } else {
-            if (kind == 3) hint = p.cargo > 0 ? TextFormat("[F] Andocken: Handelsstation  (%s verkaufen)", Num(p.cargo).c_str())
-                                              : "[F] Andocken: Handelsstation";
-            else if (kind == 4) hint = "[F] Andocken: Werft (Upgrades)";
+            if (kind == 3) hint = p.cargo > 0 ? key + TextFormat(" Andocken: Handelsstation  (%s verkaufen)", Num(p.cargo).c_str())
+                                              : key + " Andocken: Handelsstation";
+            else if (kind == 4) hint = key + " Andocken: Werft (Upgrades)";
             else if (kind == 1 || kind == 2) {
                 // InteractTarget liefert nur die ID; die Restmenge suchen wir
                 // in der passenden Liste (Lagerstätten bzw. Wracks).
@@ -437,7 +450,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
                 if (kind == 1) { for (const auto& d : w.deposits) if (d.id == id) amount = d.amount; }
                 else { for (const auto& wr : w.wrecks) if (wr.id == id) amount = wr.amount; }
                 if (p.cargo >= p.cargoMax) { hint = "Lager voll! Zur Handelsstation fliegen."; hc = Color{255, 200, 120, 255}; }
-                else hint = TextFormat("[F] %s abbauen  (%s vorhanden)", kind == 1 ? "Kristalle" : "Wrack", Num(amount).c_str());
+                else hint = key + TextFormat(" %s abbauen  (%s vorhanden)", kind == 1 ? "Kristalle" : "Wrack", Num(amount).c_str());
             } else if (p.cargo >= p.cargoMax) {
                 hint = "Lager voll! Zur Handelsstation fliegen.";
                 hc = Color{255, 200, 120, 255};
@@ -457,9 +470,15 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // playTime die Zeit mit dem aktuellen Schiff, nach einem Absturz erscheint
     // die Hilfe also wieder. y = Unterkante minus Höhe der Liste
     // (ControlsHeight, bei 16 px Schrift) minus 16 px Rand.
+    // Mit Controller gibt es keine Taste H; der Hinweis nennt dann die Pause,
+    // in der die Hilfe immer steht.
     if (!simulation) {
         if (me.playTime < 90.0f || IsKeyDown(KEY_H)) DrawControls(18 * s, H - ControlsHeight(16 * s) - 16 * s, 16 * s);
-        else Text("[H] Steuerung anzeigen", 18 * s, H - 30 * s, 16 * s, Color{200, 205, 215, 170});
+        else if (controls::ActiveDevice() == controls::Device::KeyboardMouse)
+            Text("[H] Steuerung anzeigen", 18 * s, H - 30 * s, 16 * s, Color{200, 205, 215, 170});
+        else
+            Text("Steuerung: in der Pause " + controls::KeyHint(controls::Act::Pause), 18 * s, H - 30 * s, 16 * s,
+                 Color{200, 205, 215, 170});
     }
 }
 
@@ -473,7 +492,9 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
 // World::Repair/BuyUpgrade – im Mehrspieler auf dem Server, der dafür den
 // eigenen, echten Kontostand benutzt.
 // Bedienung: Maus auf die Knöpfe oder Tasten R (Reparieren), 1-4 (Aufrüsten),
-// F oder ESC (Abdocken).
+// F oder ESC (Abdocken). Controller: Zeiger mit dem linken Stick, A klickt;
+// Y (wie F) oder B (wie ESC) docken ab. Die Tasten R und 1-4 stehen nur bei
+// Tastaturbenutzung auf den Knöpfen.
 DockRequest DrawDockPanel(const World& w, bool interactive) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
@@ -483,6 +504,8 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
     const Ship& p = w.Player();
     const PlayerState& me = w.Me();
     DockRequest req;
+    const bool keyboard = controls::ActiveDevice() == controls::Device::KeyboardMouse;
+    const std::string undockLabel = "Abdocken  " + controls::KeyHint(controls::Act::Interact);
     // Absicherung gegen einen ungültigen Stationsindex (dockedAt kommt im
     // Mehrspieler vom Server). Die Abdunkelung oben ist dann trotzdem schon
     // gezeichnet.
@@ -544,7 +567,7 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         // World::Repair so viel, wie bezahlbar ist. Darum genügt als
         // Bedingung "Geld für mindestens einen Schildpunkt".
         int cost = w.RepairCost(me);
-        std::string rl = cost > 0 ? TextFormat("Schild reparieren  (%s Pkt.)  [R]", Num(cost).c_str()) : "Schild ist voll";
+        std::string rl = cost > 0 ? TextFormat("Schild reparieren  (%s Pkt.)%s", Num(cost).c_str(), keyboard ? "  [R]" : "") : "Schild ist voll";
         bool canRepair = cost > 0 && me.balance >= cfg::REPAIR_COST_PER_POINT;
         Rectangle rb{x, y, bw, 50 * s};
         // Klick auf einen gesperrten Knopf liefert bei Button() kein true;
@@ -552,12 +575,12 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         bool repairHover = false;
         if (Button(rb, rl, 22 * s, false, canRepair && interactive, &repairHover) || (interactive && canRepair && IsKeyPressed(KEY_R)))
             req.repair = true;
-        else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))))
+        else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && PointerPressed())))
             g_audio.Play(Sfx::Denied);
         y += 64 * s;
         // "Abdocken" ist per Tastatur vorausgewählt (focused = true), daher hervorgehoben
         Rectangle ub{x, y, bw, 50 * s};
-        if (Button(ub, "Abdocken  [F]", 22 * s, true, interactive)) req.undock = true;
+        if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
     } else {
         // --- Werft: vier Aufrüstungen, je eine Zeile mit Stufenkästchen,
         //     Wirkung (aktuell -> nächste Stufe) und Kaufknopf --------------------
@@ -614,7 +637,8 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
             // UpgradeCost liefert -1 bei maximaler Stufe -> afford = false.
             int cost = w.UpgradeCost(me, t);
             bool afford = cost >= 0 && me.balance >= cost;
-            std::string bl = maxed ? std::string("MAXIMUM") : TextFormat("[%d]  %s Pkt.", t + 1, Num(cost).c_str());
+            std::string bl = maxed ? std::string("MAXIMUM")
+                                   : keyboard ? TextFormat("[%d]  %s Pkt.", t + 1, Num(cost).c_str()) : Num(cost) + " Pkt.";
             Rectangle b{row.x + row.width - 230 * s, row.y + 14 * s, 214 * s, 50 * s};
             bool buyHover = false;
             bool click = Button(b, bl, 22 * s, false, afford && interactive, &buyHover);
@@ -623,20 +647,22 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
             bool keyBuy = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t));
             if (interactive && afford && (click || keyBuy)) {
                 req.buy = t;
-            } else if (interactive && !afford && (keyBuy || (buyHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))) {
+            } else if (interactive && !afford && (keyBuy || (buyHover && PointerPressed()))) {
                 g_audio.Play(Sfx::Denied);
             }
             y += 90 * s;
         }
         y += 6 * s;
         Rectangle ub{x, y, bw, 50 * s};
-        if (Button(ub, "Abdocken  [F]", 22 * s, true, interactive)) req.undock = true;
+        if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
     }
 
-    // F (dieselbe Taste wie zum Andocken) oder ESC verlassen die Station.
-    // Deshalb müssen die Aufrufer interactive in den ersten Frames nach dem
-    // Andocken auf false lassen (siehe Hud.hpp).
-    if (interactive && (IsKeyPressed(KEY_F) || IsKeyPressed(KEY_ESCAPE))) req.undock = true;
+    // F (dieselbe Taste wie zum Andocken) oder ESC verlassen die Station;
+    // am Controller Y (dieselbe Taste wie zum Andocken) oder B bzw. die
+    // Menü-Taste (BackPressed, wie ESC). Deshalb müssen die Aufrufer
+    // interactive in den ersten Frames nach dem Andocken auf false lassen
+    // (siehe Hud.hpp).
+    if (interactive && (IsKeyPressed(KEY_F) || BackPressed() || PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_UP))) req.undock = true;
     return req;
 }
 
@@ -671,7 +697,10 @@ static bool EndScreen(const World& w, const char* title, const char* sub, Color 
     bool go = Button(b, "Zum Hauptmenü", 24 * s, true);
     // Tastatur erst nach 1 s: Wer beim Sieg/Absturz gerade Enter oder ESC
     // drückt, soll den Bildschirm nicht versehentlich sofort schließen.
-    if (w.outcomeT > 1.0f && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_ESCAPE))) go = true;
+    // Controller: A (der einzige Knopf hier) oder B wie ESC.
+    if (w.outcomeT > 1.0f && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || BackPressed() ||
+                              PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN)))
+        go = true;
     return go;
 }
 
