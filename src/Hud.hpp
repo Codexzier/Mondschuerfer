@@ -86,3 +86,9 @@ void DrawControls(float x, float y, float size);
 // selbst eine Zeilenzahl anzunehmen – kommt in DrawControls eine Zeile dazu,
 // passt sich alles von allein an.
 float ControlsHeight(float size);
+// Höhe der LÄNGSTEN Tastenhilfe (egal welches Gerät). Für Fenster mit
+// Knöpfen (Pausenmenüs): Deren Größe darf sich nicht mit dem Gerät ändern.
+// Sonst rutschen die Knöpfe genau in dem Frame, in dem der Spieler mit dem
+// anderen Gerät klickt (ui::BeginFrame stellt das Gerät sofort um) – und der
+// Klick träfe den Nachbarknopf.
+float ControlsMaxHeight(float size);

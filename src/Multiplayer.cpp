@@ -337,6 +337,10 @@ void MultiplayerScreen::EnterSpectating() {
     specCenter_ = {0.0f, 0.0f};
     listScroll_ = 0;
     dragging_ = false;
+    // "Wie gedrückt" beginnen: Hält der Spieler die Taste vom Klick auf
+    // "Zuschauen" noch fest, soll das nicht gleich als Ziehen zählen. Erst ein
+    // neuer Druck verschiebt die Karte.
+    specPointerWasDown_ = true;
     SetStatus("", MUTED);
 }
 
@@ -739,8 +743,17 @@ void MultiplayerScreen::UpdateSpectatorCamera(float dt) {
     // Verschieben durch Ziehen mit gedrückter linker oder rechter Maustaste
     // (Controller: A halten und den Zeiger mit dem linken Stick bewegen –
     // PointerPressed/PointerDown/PointerDelta aus Ui.hpp gelten für beides)
-    if ((PointerPressed() || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) && !overList && !overRight) dragging_ = true;
-    if (!PointerDown() && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) dragging_ = false;
+    // Beginn: Flanke von PointerDown (vorher nicht gedrückt, jetzt gedrückt)
+    // statt PointerPressed. Der Unterschied zählt beim Controller: Ist sein
+    // Zeiger "geparkt", zählt Knopf A noch nicht als Zeiger-Taste. Drückt der
+    // Spieler zuerst A und bewegt dann den Stick, wird der Zeiger erst dabei
+    // aktiv – PointerPressed käme nie, PointerDown wechselt aber in diesem
+    // Moment auf "gedrückt". So verschiebt "A halten + Stick" die Karte.
+    const bool pointerDown = PointerDown();
+    if (((pointerDown && !specPointerWasDown_) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) && !overList && !overRight)
+        dragging_ = true;
+    specPointerWasDown_ = pointerDown;
+    if (!pointerDown && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) dragging_ = false;
     if (dragging_) {
         Vector2 d = PointerDelta();
         specCenter_.x -= d.x * upp;
@@ -1348,8 +1361,9 @@ void MultiplayerScreen::DrawGoalAnimation() {
 }
 
 // Aufbau von oben: Überschrift, Hinweis, drei Knöpfe, Hinweis zum Abmelden,
-// Tastenhilfe. Die Fensterhöhe ergibt sich aus diesen Teilen (ControlsHeight
-// aus Hud.hpp), damit Knöpfe und Tastenhilfe sich nie überlappen.
+// Tastenhilfe. Die Fensterhöhe ergibt sich aus diesen Teilen (ControlsMaxHeight
+// aus Hud.hpp), damit Knöpfe und Tastenhilfe sich nie überlappen und die
+// Knöpfe beim Wechsel zwischen Maus und Controller nicht verrutschen.
 void MultiplayerScreen::DrawPause() {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
@@ -1360,7 +1374,7 @@ void MultiplayerScreen::DrawPause() {
     const float noteTop = listTop + static_cast<float>(items.size()) * (bh + gap) - gap + 18 * s;
     const float helpTop = noteTop + 32 * s;
     const float helpSize = 18 * s;
-    const float ph = helpTop + ControlsHeight(helpSize) + 16 * s;
+    const float ph = helpTop + ControlsMaxHeight(helpSize) + 16 * s;
     Rectangle r{W * 0.5f - 300 * s, H * 0.5f - ph * 0.5f, 600 * s, ph};
     Panel(r);
     TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);

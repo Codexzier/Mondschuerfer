@@ -339,6 +339,10 @@ private:
             mouseTestEndT_ = -1.0f;
             controls_.SetTestTarget({opt_.mouseTargets[0].x, 0.0f, opt_.mouseTargets[0].y});
             mouseTestLastTgt_ = controls_.Target();
+            // Gleich als "hatte ein Ziel" merken: Liegt das erste Ziel genau
+            // am Startplatz, ist es schon im ersten Bild erreicht – ohne
+            // diese Zeile käme dann nie "ende=" und nie das nächste Ziel.
+            mouseTestHad_ = true;
         }
         if (opt_.padTest) controls_.SetTestPad(opt_.padAngle, opt_.padTrigger);
         if (opt_.mode == "dock0") { world_.Player().cargo = 240; world_.Dock(0); }
@@ -798,8 +802,10 @@ private:
     // pauseFrames_ in Frame), sonst würde derselbe Tastendruck sie öffnen und
     // gleich wieder schließen.
     // Aufbau von oben: Überschrift, vier Knöpfe, darunter die Tastenhilfe.
-    // Die Höhe des Fensters ergibt sich aus diesen Teilen (ControlsHeight
-    // aus Hud.hpp), damit Knöpfe und Tastenhilfe sich nie überlappen.
+    // Die Höhe des Fensters ergibt sich aus diesen Teilen (ControlsMaxHeight
+    // aus Hud.hpp: Platz für die längste Tastenhilfe), damit Knöpfe und
+    // Tastenhilfe sich nie überlappen und die Knöpfe beim Gerätewechsel
+    // nicht verrutschen.
     void DrawPause() {
         const float s = Scale();
         const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
@@ -809,7 +815,7 @@ private:
         const float helpSize = 18 * s;
         // Tastenhilfe 26 px unter dem letzten Knopf: n Knöpfe belegen n * (bh + gap) - gap
         const float helpTop = listTop + static_cast<float>(items.size()) * (bh + gap) - gap + 26 * s;
-        const float ph = helpTop + ControlsHeight(helpSize) + 16 * s;
+        const float ph = helpTop + ControlsMaxHeight(helpSize) + 16 * s;
         Rectangle r{W * 0.5f - 300 * s, H * 0.5f - ph * 0.5f, 600 * s, ph};
         Panel(r);
         TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);

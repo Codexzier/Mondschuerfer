@@ -180,7 +180,16 @@ FlightInput PilotControls::Read(const Ship& ship, const Camera3D& cam, float dt)
     // beim Flugbeginn gedrückt war: Dann war es der Klick auf "Weiterspielen"
     // oder "Abdocken" (im Menü klickt A). Erst nach dem Loslassen gilt A
     // wieder als Feuerknopf ("Sperre", englisch latch).
-    if (entering) fireLatch_ = aDown;
+    // Dasselbe gilt für die linke Maustaste: Wer beim Öffnen der Pause noch
+    // das Schiff "an der Leine" hielt, hat sie dort längst losgelassen – und
+    // drückt sie wieder für "Weiterspielen". Ohne dieses Vergessen würde
+    // holding_ weiterleben, und das Schiff flöge zum Bodenpunkt unter dem
+    // Knopf. Ein Halten beginnt also nach jedem Flugbeginn neu (siehe unten:
+    // nur mit IsMouseButtonPressed im Flug).
+    if (entering) {
+        fireLatch_ = aDown;
+        holding_ = false;
+    }
     if (!aDown) fireLatch_ = false;
     if (aDown && !fireLatch_) in.fire = true;
     if (bPressed) out.scan = true;
@@ -233,8 +242,10 @@ FlightInput PilotControls::Read(const Ship& ship, const Camera3D& cam, float dt)
 // Formen sollen von beiden Seiten sichtbar sein), nichts in den Tiefenpuffer
 // schreiben (durchsichtig) – und am Ende alles wieder zurückstellen.
 // pulse läuft mit sin(6 * Zeit) zwischen 0 und 1 hin und her (knapp einmal
-// pro Sekunde): Der Ring atmet zwischen Radius 1,4 und 1,75 – etwas größer
-// als der Ring unter dem eigenen Schiff (1,95), wenn das Schiff am Ziel steht.
+// pro Sekunde): Der Ring atmet, sein Außenrand wandert zwischen Radius 1,4
+// und 1,75. Damit ist er etwas kleiner als der Ring unter dem eigenen Schiff
+// (1,7 bis 1,95, Render.cpp): Steht das Schiff am Ziel, liegt die Markierung
+// innen in seinem Ring, und nur die vier Striche ragen darüber hinaus.
 void PilotControls::DrawTarget3D(float time) const {
     if (!target_.active) return;
     const Vector3 c = target_.point;
@@ -288,8 +299,16 @@ std::string KeyHint(Act a) { return std::string("[") + KeyName(a) + "]"; }
 
 // Tastenhilfe. Tastatur: 9 Zeilen (mit Maus und Ton), Controller: 7 Zeilen.
 // Die Taste M (Ton) gibt es nur auf der Tastatur.
-std::vector<HelpRow> HelpRows() {
-    switch (ActiveDevice()) {
+std::vector<HelpRow> HelpRows() { return HelpRows(ActiveDevice()); }
+
+size_t MaxHelpRows() {
+    size_t n = 0;
+    for (Device d : {Device::KeyboardMouse, Device::Xbox, Device::PlayStation}) n = std::max(n, HelpRows(d).size());
+    return n;
+}
+
+std::vector<HelpRow> HelpRows(Device d) {
+    switch (d) {
         case Device::Xbox:
             return {{"Linker Stick", "Flugrichtung"}, {"RT / LT", "Tempo / Bremsen"}, {"A", "Schießen"},
                     {"B", "Scanner an/aus"},         {"Y", "Abbauen / Andocken"},  {"Rechter Stick", "Zoom"},

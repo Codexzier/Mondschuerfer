@@ -184,6 +184,7 @@ private:
     float specZoom_ = 1.0f;        // Zuschauer: 1 = ganze Karte, kleiner = näher
     Vector2 specCenter_{0, 0};     // Zuschauer: Kartenpunkt (x, z) in der Mitte der Kartenfläche
     bool dragging_ = false;
+    bool specPointerWasDown_ = false;   // PointerDown im vorigen Frame (Beginn des Ziehens, siehe UpdateSpectatorCamera)
     int listScroll_ = 0;           // Zuschauer: erste sichtbare Zeile der Spielerliste
 
     // Spielen

@@ -286,7 +286,8 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
 - **Musik: An / Aus** – Umschalter (Mausklick, oder Zeile wählen und Enter).
 - **Lautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
   Die Änderung ist sofort zu hören.
-- **Steuerung** – Übersicht aller Tasten für Tastatur/Maus, Xbox- und PlayStation-Controller.
+- **Steuerung** – Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
+  (alle übrigen Tasten, z. B. im Stationsfenster, stehen oben im Abschnitt „Steuerung“).
 - Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Lautstärke, Enter umschalten, ESC zurück.
 - Mit dem Controller: Zeiger mit dem linken Stick, A klickt (Regler: A halten und ziehen),
   Steuerkreuz wie die Pfeiltasten, B zurück.

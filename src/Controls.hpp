@@ -135,6 +135,8 @@ struct HelpRow {
     const char* keys;
     const char* what;
 };
-std::vector<HelpRow> HelpRows();   // für das aktive Gerät
+std::vector<HelpRow> HelpRows();           // für das aktive Gerät
+std::vector<HelpRow> HelpRows(Device d);   // für ein bestimmtes Gerät
+size_t MaxHelpRows();                      // längste der drei Listen (Tastatur/Maus: 9)
 
 } // namespace controls

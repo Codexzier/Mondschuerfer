@@ -53,6 +53,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
+#include <utility>
 
 using namespace ui;
 
@@ -275,6 +277,22 @@ void Minimap(const World& w) {
     }
 }
 
+// Meldungen kommen aus der Spiellogik (shared/World.cpp) oder vom Server und
+// nennen fest die Tasten der Tastatur, z. B. "Finde Kristalle mit dem Scanner
+// [E].". Dort ändern wir nichts – Server und Einzelspieler teilen sich den
+// Text. Stattdessen tauscht das HUD beim Zeichnen "[E]" und "[F]" gegen die
+// Taste des gerade benutzten Geräts aus (KeyHint, z. B. "[B]" oder "[Kreis]").
+// Mit Tastatur liefert KeyHint wieder "[E]" bzw. "[F]" – dann bleibt alles gleich.
+std::string WithDeviceKeys(std::string t) {
+    const std::pair<const char*, controls::Act> keys[] = {{"[E]", controls::Act::Scan}, {"[F]", controls::Act::Interact}};
+    for (const auto& [key, act] : keys) {
+        const std::string hint = controls::KeyHint(act);
+        for (size_t at = t.find(key); at != std::string::npos; at = t.find(key, at + hint.size()))
+            t.replace(at, strlen(key), hint);
+    }
+    return t;
+}
+
 } // namespace
 
 void SetHudRightReserve(float width, float bottom) {
@@ -291,6 +309,7 @@ void SetHudRightReserve(float width, float bottom) {
 // Wechselt der Spieler das Gerät, ändert sich die Höhe – die Fenster
 // passen sich im nächsten Frame an.
 float ControlsHeight(float size) { return static_cast<float>(controls::HelpRows().size()) * size * 1.35f; }
+float ControlsMaxHeight(float size) { return static_cast<float>(controls::MaxHelpRows()) * size * 1.35f; }
 
 // Spalte 2 beginnt hinter dem breitesten Tastennamen plus einer
 // Schrifthöhe Abstand (gemessen mit Width, weil "Rechter Stick" breiter ist
@@ -408,7 +427,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
         float a = std::clamp(n.time / 0.6f, 0.0f, 1.0f);
         Color c = n.color;
         c.a = static_cast<unsigned char>(255 * a);
-        std::string t = n.count > 1 ? n.text + TextFormat("  (%dx)", n.count) : n.text;
+        std::string t = WithDeviceKeys(n.count > 1 ? n.text + TextFormat("  (%dx)", n.count) : n.text);
         float tw = Width(t, 24 * s);
         // dunkler Hintergrundstreifen, genau so breit wie der Text plus Rand
         DrawRectangle(static_cast<int>(W * 0.5f - tw * 0.5f - 12 * s), static_cast<int>(ny - 6 * s),

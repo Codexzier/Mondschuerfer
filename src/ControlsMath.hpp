@@ -61,6 +61,13 @@ constexpr float kSteerGain = 2.8f;
 // Ab diesem Abstand (in Welteinheiten, gemessen am Boden) gilt ein Mausziel
 // als erreicht. 1,5 ist etwas weniger als der Ring unter dem Schiff (1,7).
 constexpr float kArriveRadius = 1.5f;
+// ... aber nur, wenn das Schiff dabei langsamer ist als 1,2 Einheiten/s
+// Rauscht es schneller durch den Ankunftskreis, bleibt das Ziel bestehen:
+// Das Schiff bremst, wendet und kommt zurück, statt weit hinter dem Ziel
+// auszurollen.
+constexpr float kArriveSpeed = 1.2f;
+// Rückwärtsschub (Bremsen) wirkt mit 70 % der Kraft (World::UpdateShipPhysics).
+constexpr float kBrakeFactor = 0.7f;
 // Beim Anflug wird so gebremst, als läge das Ziel 0,8 Einheiten näher
 // (siehe SteerToPoint). Das ist die Reserve gegen Überschießen.
 constexpr float kStopShort = 0.8f;
@@ -232,8 +239,8 @@ inline Vector3 ClampToMap(Vector3 p, float half, float margin) {
 // 6. Zu einem Punkt fliegen und dort anhalten (Maussteuerung)
 // ===========================================================================
 // Ergebnis eines Lenkschritts: Schub und Drehen wie in ShipInput.
-// arrived = das Ziel ist erreicht (näher als kArriveRadius); dann sind
-// Schub und Drehen 0 – das Schiff rollt aus.
+// arrived = das Ziel ist erreicht (näher als kArriveRadius und langsamer als
+// kArriveSpeed); dann sind Schub und Drehen 0 – das Schiff rollt aus.
 struct SteerCommand {
     float thrust = 0.0f;
     float turn = 0.0f;
@@ -243,17 +250,23 @@ struct SteerCommand {
 // Lenken: Sollwinkel zum Ziel, Drehbefehl = Winkelfehler * 2,8 (wie der
 // Autopilot, SteerTo in shared/Ai.cpp).
 //
-// Bremsen, damit das Schiff AM Ziel stehen bleibt: Ohne Schub nimmt das
-// Tempo pro Sekunde um 1,4 * Tempo ab. Rollt ein Schiff mit Tempo v aus,
-// kommt es deshalb noch v / 1,4 Einheiten weit (Summe einer abklingenden
-// Bewegung: v * (1 + (1-1,4dt) + (1-1,4dt)^2 + ...) * dt = v / 1,4).
-// Umgekehrt: Bei Restweg d darf das Schiff höchstens v = 1,4 * d schnell
-// sein, sonst schießt es über das Ziel hinaus. Das Wunschtempo ist also
-//     wanted = min(maxSpeed, 1,4 * (d - 0,8))
-// (0,8 = Reserve, kStopShort). Weit weg ist das die Höchstgeschwindigkeit;
-// in der Nähe sinkt es gleichmäßig auf 0. ThrustForSpeed regelt darauf:
-// Ist das Schiff schneller als wanted, gibt es keinen Schub, und das
-// Ausrollen folgt genau dieser Kurve bis zum Ziel.
+// Bremsen, damit das Schiff AM Ziel stehen bleibt. Zwei Wege:
+//   - Ausrollen: Ohne Schub nimmt das Tempo pro Sekunde um 1,4 * Tempo ab.
+//     Ein Schiff mit Tempo v kommt so noch v / 1,4 Einheiten weit (Summe
+//     einer abklingenden Bewegung: v * (1 + (1-1,4dt) + (1-1,4dt)^2 + ...)
+//     * dt = v / 1,4). Bei Restweg r darf es also höchstens 1,4 * r schnell sein.
+//   - Aktiv bremsen mit Rückwärtsschub: Verzögerung a = 0,7 * 1,9 *
+//     maxSpeed. Aus der Bewegungsgleichung (Bremsweg = v² / (2a)) folgt das
+//     höchste Tempo, bei dem das Schiff auf dem Restweg r noch anhalten
+//     kann: v = Wurzel(2 * a * r). Davon nur 80 % als Sicherheitsreserve.
+// Das Wunschtempo ist der größere der beiden Werte, höchstens maxSpeed:
+//     wanted = min(maxSpeed, max(1,4 * r, 0,8 * Wurzel(2 * a * r))),  r = d - 0,8
+// (0,8 = Reserve, kStopShort). Weit weg ist das die Höchstgeschwindigkeit,
+// in der Nähe sinkt es auf 0. ThrustForSpeed regelt darauf. Ist das Schiff
+// trotzdem zu schnell – z. B. weil der Spieler ein Ziel kurz VOR das
+// fliegende Schiff klickt –, wird mit Rückwärtsschub gebremst. Ebenso, wenn
+// das Ziel nicht voraus liegt: Dann soll das Schiff erst langsam werden und
+// wenden, statt in einem weiten Bogen vorbeizuschießen.
 //
 // Schub nur, wenn das Ziel ungefähr voraus liegt: weit weg bis 1,2 rad
 // (knapp 70°) Abweichung – das Schiff fliegt dann eine Kurve –, auf den
@@ -263,7 +276,8 @@ struct SteerCommand {
 inline SteerCommand SteerToPoint(Vector3 pos, Vector3 vel, float yaw, float maxSpeed, Vector3 target) {
     SteerCommand c;
     const float d = Dist2D(pos, target);
-    if (d < kArriveRadius) {
+    const float speed = sqrtf(vel.x * vel.x + vel.z * vel.z);
+    if (d < kArriveRadius && speed < kArriveSpeed) {
         c.arrived = true;
         return c;
     }
@@ -271,9 +285,19 @@ inline SteerCommand SteerToPoint(Vector3 pos, Vector3 vel, float yaw, float maxS
     c.turn = Clamp(diff * kSteerGain, -1.0f, 1.0f);
     const Vector3 fwd = ForwardFromYaw(yaw);
     const float vFwd = vel.x * fwd.x + vel.z * fwd.z;
-    const float wanted = std::min(maxSpeed, kCoastDrag * (d - kStopShort));
+    const float ms = std::max(1.0f, maxSpeed);
+    const float rest = std::max(0.0f, d - kStopShort);
+    const float brakeAccel = kBrakeFactor * kAccelFactor * ms;
+    const float wanted = std::min(ms, std::max(kCoastDrag * rest, 0.8f * sqrtf(2.0f * brakeAccel * rest)));
     const float maxAngle = d > 8.0f ? 1.2f : 0.5f;
-    if (fabsf(diff) < maxAngle) c.thrust = ThrustForSpeed(wanted, vFwd, maxSpeed);
+    const bool ahead = fabsf(diff) < maxAngle;
+    if (ahead) c.thrust = ThrustForSpeed(wanted, vFwd, ms);
+    // Zu schnell für den Restweg (oder das Ziel liegt nicht voraus): bremsen.
+    // Je größer der Überschuss, desto kräftiger; ab einem Viertel des
+    // Höchsttempos Überschuss mit voller Kraft. 0,5 Einheiten/s Spielraum,
+    // damit kleine Schwankungen nicht ständig zwischen Gas und Bremse wechseln.
+    const float limit = ahead ? wanted : 0.0f;
+    if (vFwd > limit + 0.5f) c.thrust = -Clamp((vFwd - limit) / (0.25f * ms), 0.0f, 1.0f);
     return c;
 }
 
