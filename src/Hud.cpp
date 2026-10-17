@@ -304,10 +304,11 @@ void SetHudRightReserve(float width, float bottom) {
 // je nach zuletzt benutztem Gerät die Tastatur/Maus-Belegung (9 Zeilen) oder
 // die des Controllers (7 Zeilen, Xbox- oder PlayStation-Namen). Dort steht
 // auch die Auswertung der Tasten; beides passt so immer zusammen.
-// ControlsHeight rechnet mit derselben Zeilenzahl; DrawHud und die
-// Pausenmenüs fragen ControlsHeight, statt eine Zeilenzahl anzunehmen.
-// Wechselt der Spieler das Gerät, ändert sich die Höhe – die Fenster
-// passen sich im nächsten Frame an.
+// ControlsHeight rechnet mit derselben Zeilenzahl (aktives Gerät). DrawHud
+// fragt sie, statt eine Zeilenzahl anzunehmen: Wechselt der Spieler das
+// Gerät, passt sich die Hilfe unten links im nächsten Frame an.
+// ControlsMaxHeight nimmt die längste Liste aller Geräte. Die Pausenmenüs
+// rechnen damit, damit ihre Knöpfe beim Gerätewechsel nicht verrutschen.
 float ControlsHeight(float size) { return static_cast<float>(controls::HelpRows().size()) * size * 1.35f; }
 float ControlsMaxHeight(float size) { return static_cast<float>(controls::MaxHelpRows()) * size * 1.35f; }
 

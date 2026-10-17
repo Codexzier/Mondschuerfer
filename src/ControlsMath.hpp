@@ -260,9 +260,17 @@ struct SteerCommand {
 //     höchste Tempo, bei dem das Schiff auf dem Restweg r noch anhalten
 //     kann: v = Wurzel(2 * a * r). Davon nur 80 % als Sicherheitsreserve.
 // Das Wunschtempo ist der größere der beiden Werte, höchstens maxSpeed:
-//     wanted = min(maxSpeed, max(1,4 * r, 0,8 * Wurzel(2 * a * r))),  r = d - 0,8
-// (0,8 = Reserve, kStopShort). Weit weg ist das die Höchstgeschwindigkeit,
-// in der Nähe sinkt es auf 0. ThrustForSpeed regelt darauf. Ist das Schiff
+//     wanted = min(maxSpeed, max(1,4 * r, 0,8 * Wurzel(2 * a * (r - 2)))),  r = d - 0,8
+// (0,8 = Reserve, kStopShort; ist r - 2 kleiner als 0, zählt 0). Weit weg
+// ist das die Höchstgeschwindigkeit, in der Nähe sinkt es auf 0.
+// Warum "r - 2"? Aktives Bremsen erlaubt in Zielnähe ein hohes Tempo (bei
+// r = 2 und maxSpeed 32 wären es gut 10 Einheiten/s). So schnell kann das
+// Schiff aber nicht mehr eng genug kurven: Bei Tempo v und 2,9 rad/s
+// Drehrate ist sein Wendekreis v / 2,9 groß – bei 10 Einheiten/s also etwa
+// 3,4 Einheiten. Liegt das Ziel etwas seitlich, flöge es daran vorbei und
+// müsste in einer Schleife zurückkommen. Darum gilt auf den letzten 2
+// Einheiten nur noch das sanfte Ausroll-Tempo 1,4 * r, mit dem das Schiff
+// genau auf das Ziel zu kurven kann. ThrustForSpeed regelt darauf. Ist das Schiff
 // trotzdem zu schnell – z. B. weil der Spieler ein Ziel kurz VOR das
 // fliegende Schiff klickt –, wird mit Rückwärtsschub gebremst. Ebenso, wenn
 // das Ziel nicht voraus liegt: Dann soll das Schiff erst langsam werden und
@@ -272,7 +280,8 @@ struct SteerCommand {
 // (knapp 70°) Abweichung – das Schiff fliegt dann eine Kurve –, auf den
 // letzten 8 Einheiten nur bis 0,5 rad. Sonst könnte das Schiff in der Nähe
 // des Ziels im Kreis darum herumfliegen. Liegt das Ziel hinter dem Schiff,
-// dreht es also erst (und rollt dabei aus), dann fliegt es los.
+// dreht es also erst und bremst dabei mit Rückwärtsschub ab (siehe oben),
+// dann fliegt es los.
 inline SteerCommand SteerToPoint(Vector3 pos, Vector3 vel, float yaw, float maxSpeed, Vector3 target) {
     SteerCommand c;
     const float d = Dist2D(pos, target);
@@ -288,7 +297,8 @@ inline SteerCommand SteerToPoint(Vector3 pos, Vector3 vel, float yaw, float maxS
     const float ms = std::max(1.0f, maxSpeed);
     const float rest = std::max(0.0f, d - kStopShort);
     const float brakeAccel = kBrakeFactor * kAccelFactor * ms;
-    const float wanted = std::min(ms, std::max(kCoastDrag * rest, 0.8f * sqrtf(2.0f * brakeAccel * rest)));
+    const float brakeRest = std::max(0.0f, rest - 2.0f);   // die letzten 2 Einheiten: nur Ausroll-Tempo
+    const float wanted = std::min(ms, std::max(kCoastDrag * rest, 0.8f * sqrtf(2.0f * brakeAccel * brakeRest)));
     const float maxAngle = d > 8.0f ? 1.2f : 0.5f;
     const bool ahead = fabsf(diff) < maxAngle;
     if (ahead) c.thrust = ThrustForSpeed(wanted, vFwd, ms);
@@ -313,7 +323,11 @@ enum class TargetEnd { None, Arrived, GaveUp };
 // fest (Ziel in einem Stationsteil oder dahinter) – dann wird das Ziel
 // gelöscht, statt ewig gegen die Wand zu schieben. 4 s reichen, damit ein
 // Schiff, das erst wenden muss (und sich dabei kurz entfernt), nicht
-// fälschlich aufgibt.
+// fälschlich aufgibt. Im Ankunftskreis (näher als kArriveRadius) gibt der
+// Wächter nie auf: Dort ist das Schiff schon am Ziel und nur noch zu schnell.
+// Ohne diese Ausnahme könnte ein Ziel, das dicht neben ein schnelles Schiff
+// gesetzt wird, nie "um 0,3 näher" kommen – das Schiff bräuchte zum Bremsen
+// und Zurückkehren vielleicht länger als 4 s und gäbe am Ziel auf.
 // Solange die Maustaste gehalten wird (holding), folgt das Ziel dem Zeiger:
 // Dann gilt weder "angekommen" (das Ziel bleibt, das Schiff wartet dort)
 // noch der Wächter, und der Wächter beginnt nach dem Loslassen frisch.
@@ -349,8 +363,8 @@ struct FlightTarget {
             *end = TargetEnd::Arrived;
             return c;
         }
-        if (d < bestDist - 0.3f) {
-            bestDist = d;
+        if (d < bestDist - 0.3f || d < kArriveRadius) {
+            bestDist = std::min(bestDist, d);
             sinceBest = 0.0f;
         } else {
             sinceBest += dt;
