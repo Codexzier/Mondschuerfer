@@ -257,18 +257,29 @@ struct SteerCommand {
 //     wanted = min(maxSpeed, 1,4 * r),  r = d - 0,8
 // (0,8 = Reserve, kStopShort). Weit weg ist das die Höchstgeschwindigkeit,
 // in der Nähe sinkt es auf 0. ThrustForSpeed regelt darauf.
-//   - Aktiv bremsen mit Rückwärtsschub: Ist das Schiff trotzdem schneller
-//     als wanted – z. B. weil der Spieler ein Ziel kurz VOR das fliegende
-//     Schiff klickt –, gibt es Gegenschub, statt nur auszurollen. Ebenso,
-//     wenn das Ziel nicht voraus liegt: Dann soll das Schiff erst langsam
-//     werden und wenden, statt in einem weiten Bogen vorbeizuschießen.
+//   - Aktiv bremsen mit Rückwärtsschub: Ist das Schiff mehr als 0,5
+//     Einheiten/s schneller als wanted – z. B. weil der Spieler ein Ziel
+//     kurz VOR das fliegende Schiff klickt –, gibt es Gegenschub, je größer
+//     der Überschuss, desto stärker. Ebenso, wenn das Ziel nicht voraus
+//     liegt: Dann soll das Schiff erst langsam werden und wenden, statt in
+//     einem weiten Bogen vorbeizuschießen.
+//     Achtung, eine Falle der Physik: Solange IRGENDEIN Schub gegeben wird,
+//     auch rückwärts, gilt nur die kleine Reibung 0,35 statt 1,4
+//     (World::UpdateShipPhysics). Ein schwacher Gegenschub bremst darum
+//     SCHWÄCHER als bloßes Ausrollen. Ein schnelles Schiff schießt so beim
+//     Übergang etwas über wanted hinaus und bremst dann fast bis zum Ziel
+//     mit schwachem Gegenschub. Es fliegt dabei etwa 1,9 * r statt 1,4 * r
+//     an; nur das Grundschiff (maxSpeed 16) rollt wirklich aus. Das ist
+//     gewollt: Es kommt so etwas schneller an und ist in Zielnähe trotzdem
+//     langsam genug (bei d = 4 gut 6 Einheiten/s, siehe unten).
 // Warum nicht schneller anfliegen und erst kurz vor dem Ziel kräftig
 // bremsen? Das wäre zwar schneller da, aber ein schnelles Schiff kann nicht
 // eng kurven: Bei Tempo v und 2,9 rad/s Drehrate ist der Radius seiner
 // Kurve v / 2,9 – bei 20 Einheiten/s also knapp 7 Einheiten (der Kreis ist
 // fast 14 Einheiten breit). Liegt das Ziel etwas seitlich, fliegt es daran
-// vorbei und umkreist es, bevor es anhält. Mit dem Ausroll-Tempo ist das
-// Schiff in Zielnähe langsam genug, um direkt darauf zu kurven.
+// vorbei und umkreist es, bevor es anhält. Mit dem Tempo von oben (bei
+// d = 4 gut 6 Einheiten/s, Kurvenradius gut 2 Einheiten) ist das Schiff in
+// Zielnähe langsam genug, um direkt darauf zu kurven.
 //
 // Schub nur, wenn das Ziel ungefähr voraus liegt: weit weg (ab 15
 // Einheiten) bis 1,2 rad (knapp 70°) Abweichung – das Schiff fliegt dann
