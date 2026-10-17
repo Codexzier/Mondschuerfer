@@ -66,8 +66,6 @@ constexpr float kArriveRadius = 1.5f;
 // Das Schiff bremst, wendet und kommt zurück, statt weit hinter dem Ziel
 // auszurollen.
 constexpr float kArriveSpeed = 1.2f;
-// Rückwärtsschub (Bremsen) wirkt mit 70 % der Kraft (World::UpdateShipPhysics).
-constexpr float kBrakeFactor = 0.7f;
 // Beim Anflug wird so gebremst, als läge das Ziel 0,8 Einheiten näher
 // (siehe SteerToPoint). Das ist die Reserve gegen Überschießen.
 constexpr float kStopShort = 0.8f;
@@ -250,38 +248,37 @@ struct SteerCommand {
 // Lenken: Sollwinkel zum Ziel, Drehbefehl = Winkelfehler * 2,8 (wie der
 // Autopilot, SteerTo in shared/Ai.cpp).
 //
-// Bremsen, damit das Schiff AM Ziel stehen bleibt. Zwei Wege:
+// Bremsen, damit das Schiff AM Ziel stehen bleibt:
 //   - Ausrollen: Ohne Schub nimmt das Tempo pro Sekunde um 1,4 * Tempo ab.
 //     Ein Schiff mit Tempo v kommt so noch v / 1,4 Einheiten weit (Summe
 //     einer abklingenden Bewegung: v * (1 + (1-1,4dt) + (1-1,4dt)^2 + ...)
 //     * dt = v / 1,4). Bei Restweg r darf es also höchstens 1,4 * r schnell sein.
-//   - Aktiv bremsen mit Rückwärtsschub: Verzögerung a = 0,7 * 1,9 *
-//     maxSpeed. Aus der Bewegungsgleichung (Bremsweg = v² / (2a)) folgt das
-//     höchste Tempo, bei dem das Schiff auf dem Restweg r noch anhalten
-//     kann: v = Wurzel(2 * a * r). Davon nur 80 % als Sicherheitsreserve.
-// Das Wunschtempo ist der größere der beiden Werte, höchstens maxSpeed:
-//     wanted = min(maxSpeed, max(1,4 * r, 0,8 * Wurzel(2 * a * (r - 2)))),  r = d - 0,8
-// (0,8 = Reserve, kStopShort; ist r - 2 kleiner als 0, zählt 0). Weit weg
-// ist das die Höchstgeschwindigkeit, in der Nähe sinkt es auf 0.
-// Warum "r - 2"? Aktives Bremsen erlaubt in Zielnähe ein hohes Tempo (bei
-// r = 2 und maxSpeed 32 wären es gut 10 Einheiten/s). So schnell kann das
-// Schiff aber nicht mehr eng genug kurven: Bei Tempo v und 2,9 rad/s
-// Drehrate ist sein Wendekreis v / 2,9 groß – bei 10 Einheiten/s also etwa
-// 3,4 Einheiten. Liegt das Ziel etwas seitlich, flöge es daran vorbei und
-// müsste in einer Schleife zurückkommen. Darum gilt auf den letzten 2
-// Einheiten nur noch das sanfte Ausroll-Tempo 1,4 * r, mit dem das Schiff
-// genau auf das Ziel zu kurven kann. ThrustForSpeed regelt darauf. Ist das Schiff
-// trotzdem zu schnell – z. B. weil der Spieler ein Ziel kurz VOR das
-// fliegende Schiff klickt –, wird mit Rückwärtsschub gebremst. Ebenso, wenn
-// das Ziel nicht voraus liegt: Dann soll das Schiff erst langsam werden und
-// wenden, statt in einem weiten Bogen vorbeizuschießen.
+// Das ist das Wunschtempo, höchstens maxSpeed:
+//     wanted = min(maxSpeed, 1,4 * r),  r = d - 0,8
+// (0,8 = Reserve, kStopShort). Weit weg ist das die Höchstgeschwindigkeit,
+// in der Nähe sinkt es auf 0. ThrustForSpeed regelt darauf.
+//   - Aktiv bremsen mit Rückwärtsschub: Ist das Schiff trotzdem schneller
+//     als wanted – z. B. weil der Spieler ein Ziel kurz VOR das fliegende
+//     Schiff klickt –, gibt es Gegenschub, statt nur auszurollen. Ebenso,
+//     wenn das Ziel nicht voraus liegt: Dann soll das Schiff erst langsam
+//     werden und wenden, statt in einem weiten Bogen vorbeizuschießen.
+// Warum nicht schneller anfliegen und erst kurz vor dem Ziel kräftig
+// bremsen? Das wäre zwar schneller da, aber ein schnelles Schiff kann nicht
+// eng kurven: Bei Tempo v und 2,9 rad/s Drehrate ist der Radius seiner
+// Kurve v / 2,9 – bei 20 Einheiten/s also knapp 7 Einheiten (der Kreis ist
+// fast 14 Einheiten breit). Liegt das Ziel etwas seitlich, fliegt es daran
+// vorbei und umkreist es, bevor es anhält. Mit dem Ausroll-Tempo ist das
+// Schiff in Zielnähe langsam genug, um direkt darauf zu kurven.
 //
-// Schub nur, wenn das Ziel ungefähr voraus liegt: weit weg bis 1,2 rad
-// (knapp 70°) Abweichung – das Schiff fliegt dann eine Kurve –, auf den
-// letzten 8 Einheiten nur bis 0,5 rad. Sonst könnte das Schiff in der Nähe
-// des Ziels im Kreis darum herumfliegen. Liegt das Ziel hinter dem Schiff,
-// dreht es also erst und bremst dabei mit Rückwärtsschub ab (siehe oben),
-// dann fliegt es los.
+// Schub nur, wenn das Ziel ungefähr voraus liegt: weit weg (ab 15
+// Einheiten) bis 1,2 rad (knapp 70°) Abweichung – das Schiff fliegt dann
+// eine Kurve –, ab 8 Einheiten nur noch bis 0,5 rad (knapp 30°);
+// dazwischen wird der Bereich gleichmäßig enger (0,1 rad pro Einheit).
+// Sonst könnte das Schiff in der Nähe des Ziels im Kreis darum herumfliegen.
+// Gleichmäßig statt mit einem Sprung bei 8 Einheiten: Ein Sprung würde ein
+// Schiff, das gerade schräg anfliegt, schlagartig vom Gas auf die Bremse
+// werfen. Liegt das Ziel hinter dem Schiff, dreht es also erst und bremst
+// dabei mit Rückwärtsschub ab (siehe oben), dann fliegt es los.
 inline SteerCommand SteerToPoint(Vector3 pos, Vector3 vel, float yaw, float maxSpeed, Vector3 target) {
     SteerCommand c;
     const float d = Dist2D(pos, target);
@@ -296,10 +293,8 @@ inline SteerCommand SteerToPoint(Vector3 pos, Vector3 vel, float yaw, float maxS
     const float vFwd = vel.x * fwd.x + vel.z * fwd.z;
     const float ms = std::max(1.0f, maxSpeed);
     const float rest = std::max(0.0f, d - kStopShort);
-    const float brakeAccel = kBrakeFactor * kAccelFactor * ms;
-    const float brakeRest = std::max(0.0f, rest - 2.0f);   // die letzten 2 Einheiten: nur Ausroll-Tempo
-    const float wanted = std::min(ms, std::max(kCoastDrag * rest, 0.8f * sqrtf(2.0f * brakeAccel * brakeRest)));
-    const float maxAngle = d > 8.0f ? 1.2f : 0.5f;
+    const float wanted = std::min(ms, kCoastDrag * rest);
+    const float maxAngle = Clamp(0.5f + 0.1f * (d - 8.0f), 0.5f, 1.2f);   // 0,5 bis 8 Einheiten, 1,2 ab 15
     const bool ahead = fabsf(diff) < maxAngle;
     if (ahead) c.thrust = ThrustForSpeed(wanted, vFwd, ms);
     // Zu schnell für den Restweg (oder das Ziel liegt nicht voraus): bremsen.
