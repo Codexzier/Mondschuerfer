@@ -1130,6 +1130,7 @@ int main(int argc, char** argv) {
     SetTraceLogLevel(LOG_ERROR);
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(opt.winW, opt.winH, "Mondschürfer - Kenney Space Kit");
+    SetGamepadMappings("030000005e040000120b000009050000,Xbox Series Controller,a:b0,b:b1,x:b2,y:b3,back:b6,guide:b8,start:b7,leftstick:b9,rightstick:b10,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a3,righty:a4,lefttrigger:a2,righttrigger:a5,platform:Linux,");
     SetWindowMinSize(960, 540);
     // raylib schließt das Fenster standardmäßig bei ESC. Das Spiel braucht
     // ESC aber für Pause und Abdocken, also keine "Beenden-Taste".
