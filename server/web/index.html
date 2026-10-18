@@ -1,0 +1,327 @@
+<!doctype html>
+<!--
+  Verwaltungsseite des Mondschürfer-Servers.
+
+  Wer liefert diese Datei aus? server/src/WebServer.cpp (nur nach Anmeldung mit
+  ADMIN_USER / ADMIN_PASSWORD aus docker-compose.yml).
+
+  Wie funktioniert die Seite?
+    - Dieses HTML ist nur das Gerüst: Überschriften, leere Tabellen, das Formular.
+    - app.js fragt alle 2 Sekunden GET /api/status ab und füllt die Elemente
+      (alles mit den hier vergebenen id-Attributen).
+    - Das Formular "Spielparameter" schickt app.js per POST /api/settings.
+
+  Wichtig wegen der Sicherheitsregeln (Content-Security-Policy des Servers):
+    - Keine <script>-Blöcke und keine onclick="..." im HTML: Der Browser führt
+      nur app.js aus. Ereignisse werden in app.js mit addEventListener verbunden.
+    - Keine style="..."-Attribute: Aussehen steht nur in style.css.
+    - Keine externen Dateien (Schriften, Bibliotheken aus dem Internet).
+-->
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <meta name="color-scheme" content="dark">
+    <title>Mondschürfer – Serververwaltung</title>
+    <!-- Symbol im Browser-Tab als data:-Adresse (erlaubt: img-src 'self' data:), spart eine Anfrage -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23ffa033'/%3E%3Ccircle cx='11' cy='12' r='3' fill='%23c97a1f'/%3E%3Ccircle cx='20' cy='20' r='4' fill='%23c97a1f'/%3E%3Ccircle cx='21' cy='10' r='1.6' fill='%23c97a1f'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="topbar-inner">
+        <div class="brand">
+            <svg class="brand-icon" viewBox="0 0 32 32" aria-hidden="true">
+                <circle cx="16" cy="16" r="13" class="moon-body"/>
+                <circle cx="11" cy="12" r="3" class="moon-crater"/>
+                <circle cx="20" cy="20" r="4" class="moon-crater"/>
+                <circle cx="21" cy="10" r="1.6" class="moon-crater"/>
+            </svg>
+            <div class="brand-text">
+                <span class="brand-kicker">Mondschürfer · Serververwaltung</span>
+                <h1 id="server-name">Verbinde …</h1>
+            </div>
+        </div>
+        <div class="conn" aria-live="polite">
+            <span class="conn-pill">
+                <span id="conn-dot" class="dot dot-wait" aria-hidden="true"></span>
+                <span id="conn-text">Verbinde …</span>
+            </span>
+            <span id="last-update" class="muted small">noch keine Daten</span>
+        </div>
+    </div>
+    <!-- Erscheint nur bei Verbindungsproblemen (app.js blendet es ein/aus). Steht in der
+         Kopfzeile, damit es auch beim Scrollen sichtbar bleibt. -->
+    <div id="banner" class="banner" role="alert" hidden></div>
+</header>
+
+
+<main id="main" class="layout">
+
+    <!-- ============================ Auslastung ============================ -->
+    <section class="panel" aria-labelledby="load-title">
+        <div class="panel-head">
+            <h2 id="load-title">Auslastung</h2>
+            <span class="muted small">wird alle 2 Sekunden aktualisiert</span>
+        </div>
+        <div class="metrics">
+            <div class="metric metric-wide">
+                <div class="metric-label">Schritt-Last</div>
+                <div class="metric-value" id="m-load">–</div>
+                <div class="bar"><div class="bar-fill" id="m-load-bar"></div></div>
+                <div class="metric-sub" id="m-tick">Ø – ms · max – ms pro Schritt</div>
+            </div>
+            <div class="metric metric-wide">
+                <div class="metric-label">Spieler online</div>
+                <div class="metric-value" id="m-players">–</div>
+                <div class="bar"><div class="bar-fill" id="m-players-bar"></div></div>
+                <div class="metric-sub" id="m-players-sub">von – erlaubten</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Zuschauer</div>
+                <div class="metric-value" id="m-spectators">–</div>
+                <div class="metric-sub" id="m-spectators-sub">Plätze: –</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">CPU</div>
+                <div class="metric-value" id="m-cpu">–</div>
+                <div class="metric-sub" id="m-cores">– Kerne · 100 % = 1 Kern</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Arbeitsspeicher</div>
+                <div class="metric-value" id="m-ram">–</div>
+                <div class="metric-sub">belegt vom Serverprozess</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Netzwerk</div>
+                <div class="metric-value metric-value-sm"><span class="arrow-in" aria-label="eingehend">↓</span> <span id="m-net-in">–</span></div>
+                <div class="metric-value metric-value-sm"><span class="arrow-out" aria-label="ausgehend">↑</span> <span id="m-net-out">–</span></div>
+                <div class="metric-sub">ein / aus</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Laufzeit</div>
+                <div class="metric-value" id="m-uptime">–</div>
+                <div class="metric-sub">seit dem Start des Servers</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Abgelieferte Ressourcen</div>
+                <div class="metric-value" id="m-delivered">–</div>
+                <div class="metric-sub">insgesamt, alle Spieler</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Ausbaustufe Station</div>
+                <div class="metric-value" id="m-stage">–</div>
+                <div class="pips" id="m-stage-pips" aria-hidden="true"></div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Feindliche Schiffe</div>
+                <div class="metric-value" id="m-enemies">–</div>
+                <div class="metric-sub" id="m-enemies-sub">Soll: –</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Registrierte Konten</div>
+                <div class="metric-value" id="m-accounts">–</div>
+                <div class="metric-sub">Spielerkonten auf dem Server</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Spielport</div>
+                <div class="metric-value" id="m-port">–</div>
+                <div class="metric-sub">UDP, im Spiel unter Mehrspieler eintragen</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========================= Eingeloggte Spieler ========================= -->
+    <section class="panel" aria-labelledby="players-title">
+        <div class="panel-head">
+            <h2 id="players-title">Eingeloggte Spieler</h2>
+            <span class="muted small" id="players-count">–</span>
+        </div>
+        <div class="search">
+            <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true">
+                <circle cx="8.5" cy="8.5" r="5.5"/>
+                <line x1="12.6" y1="12.6" x2="17" y2="17"/>
+            </svg>
+            <input id="player-search" type="search" placeholder="Spieler suchen …" autocomplete="off"
+                   spellcheck="false" aria-label="Spielerliste nach Namen filtern" maxlength="32">
+            <span id="search-hits" class="search-hits muted small" aria-live="polite"></span>
+        </div>
+        <div class="table-wrap">
+            <table class="data-table players-table">
+                <thead>
+                <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col" class="col-progress">Fortschritt</th>
+                    <th scope="col">Runde</th>
+                    <th scope="col" title="A = Antrieb, P = Panzerung, W = Waffen, L = Lager (je Stufe 0–5)">Aufrüstungen</th>
+                    <th scope="col" class="num" title="Zeit mit dem aktuellen Raumschiff">Schiffszeit</th>
+                    <th scope="col" class="num wrap" title="Dauer der aktuellen Sitzung">Angemeldet seit</th>
+                    <th scope="col" class="num wrap" title="Alle Sitzungen zusammen">Gesamte Anmeldezeit</th>
+                    <th scope="col" class="num wrap" title="Abschüsse / Abstürze / erreichte Ziele">Abschüsse / Abstürze / Ziele</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" class="num">Ping</th>
+                </tr>
+                </thead>
+                <tbody id="players-body"></tbody>
+            </table>
+        </div>
+        <p id="players-empty" class="empty" hidden></p>
+    </section>
+
+    <div class="columns">
+        <!-- ============================ Bestenliste ============================ -->
+        <section class="panel" aria-labelledby="hs-title">
+            <div class="panel-head">
+                <h2 id="hs-title">Bestenliste</h2>
+                <span class="muted small">kürzeste Zeit bis zum Ziel (100.000)</span>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table hs-table">
+                    <thead>
+                    <tr>
+                        <th scope="col" class="num">Rang</th>
+                        <th scope="col">Name</th>
+                        <th scope="col" class="num">Zeit</th>
+                        <th scope="col">Runde</th>
+                        <th scope="col" class="num">Datum</th>
+                    </tr>
+                    </thead>
+                    <tbody id="hs-body"></tbody>
+                </table>
+            </div>
+            <p id="hs-empty" class="empty" hidden>Noch hat niemand das Ziel erreicht. Der erste Eintrag wartet!</p>
+        </section>
+
+        <!-- ========================== Spielparameter ========================== -->
+        <section class="panel" aria-labelledby="settings-title">
+            <div class="panel-head">
+                <h2 id="settings-title">Spielparameter</h2>
+                <span id="dirty-note" class="badge badge-accent" hidden>Ungespeicherte Änderungen</span>
+            </div>
+            <form id="settings-form" class="settings" novalidate>
+                <div class="field">
+                    <label for="f-serverName">Servername</label>
+                    <input id="f-serverName" name="serverName" type="text" autocomplete="off" spellcheck="false" required>
+                    <div class="field-help"><span id="f-serverName-count">0 / 40 Byte</span><span class="default-hint" id="d-serverName"></span></div>
+                </div>
+
+                <div class="field">
+                    <label for="f-difficulty">Schwierigkeitsgrad</label>
+                    <select id="f-difficulty" name="difficulty">
+                        <option value="easy">Leicht – keine feindlichen Raumschiffe</option>
+                        <option value="medium">Mittel – 3 feindliche Raumschiffe</option>
+                        <option value="hard">Schwer – 20 feindliche Raumschiffe</option>
+                        <option value="custom">Benutzerdefiniert – Anzahl selbst wählen</option>
+                    </select>
+                    <div class="field-help"><span class="default-hint" id="d-difficulty"></span></div>
+                </div>
+
+                <div class="field">
+                    <label for="f-enemyShips">Anzahl feindlicher Raumschiffe</label>
+                    <input id="f-enemyShips" name="enemyShips" type="number" min="0" max="40" step="1" inputmode="numeric">
+                    <div class="field-help"><span id="f-enemyShips-help">nur bei „Benutzerdefiniert“ einstellbar</span></div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label for="f-tradeStations">Handelsstationen</label>
+                        <input id="f-tradeStations" name="tradeStations" type="number" min="1" max="5" step="1" inputmode="numeric">
+                        <div class="field-help">Ressourcen abgeben/verkaufen <span class="default-hint" id="d-tradeStations"></span></div>
+                    </div>
+                    <div class="field">
+                        <label for="f-shipyards">Werften (Aufrüststationen)</label>
+                        <input id="f-shipyards" name="shipyards" type="number" min="1" max="4" step="1" inputmode="numeric">
+                        <div class="field-help">Raumschiff aufrüsten <span class="default-hint" id="d-shipyards"></span></div>
+                    </div>
+                </div>
+
+                <fieldset class="field moon-choice">
+                    <legend>Mondoberfläche</legend>
+                    <label class="moon-option">
+                        <input type="radio" name="moon" value="grey">
+                        <span class="swatch swatch-grey" aria-hidden="true"></span>
+                        <span>Grau</span>
+                    </label>
+                    <label class="moon-option">
+                        <input type="radio" name="moon" value="orange">
+                        <span class="swatch swatch-orange" aria-hidden="true"></span>
+                        <span>Orange-Rot <span class="muted small">(Originalfarbe der 3D-Modelle)</span></span>
+                    </label>
+                    <label class="moon-option">
+                        <input type="radio" name="moon" value="blue">
+                        <span class="swatch swatch-blue" aria-hidden="true"></span>
+                        <span>Blau</span>
+                    </label>
+                    <div class="field-help"><span class="default-hint" id="d-moon"></span></div>
+                </fieldset>
+
+                <div class="field max-players">
+                    <div class="max-players-input">
+                        <label for="f-maxPlayers">Maximale Spieler</label>
+                        <input id="f-maxPlayers" name="maxPlayers" type="number" min="1" max="64" step="1" inputmode="numeric">
+                        <div class="field-help"><span id="f-maxPlayers-help">1 bis 64</span> <span class="default-hint" id="d-maxPlayers"></span></div>
+                    </div>
+                    <div class="hw">
+                        <!-- HARDWARE-EMPFEHLUNG -->
+                        <!-- Grundlage: Messung mit --benchmark 64 und einem Netzwerk-Lasttest auf einem x86-Server.
+                             Die Rechenzeit liegt bei ca. 1 % des Budgets; begrenzend ist der Upload
+                             (ca. 9 KB/s pro Spieler bei 16, ca. 20-26 KB/s bei 64 Spielern).
+                             Raspberry-Pi-Werte sind daraus geschätzt, nicht auf einem Pi gemessen.
+                             Dies ist die einzige Stelle dieser Tabelle in der Seite. -->
+                        <table class="hw-table">
+                            <caption>Empfehlung nach Hardware</caption>
+                            <thead>
+                            <tr><th scope="col">System</th><th scope="col" class="num">Empf. max. Spieler</th><th scope="col">Bemerkung</th></tr>
+                            </thead>
+                            <tbody>
+                            <tr><td>Raspberry Pi 4 (4 GB)</td><td class="num">24</td><td>per LAN-Kabel; über WLAN eher 8–12; Upload ca. 2,5 Mbit/s</td></tr>
+                            <tr><td>Raspberry Pi 5</td><td class="num">48</td><td>Upload ca. 8 Mbit/s</td></tr>
+                            <tr><td>AMD Ryzen 5 / Intel Core i5 (ab ca. 2018) oder besser</td><td class="num">64 (Obergrenze)</td><td>Upload ca. 12–15 Mbit/s</td></tr>
+                            </tbody>
+                        </table>
+                        <!-- /HARDWARE-EMPFEHLUNG -->
+                        <p class="hint">
+                            Die Simulation braucht pro Schritt meist nur Bruchteile einer Millisekunde. Der Engpass ist
+                            fast immer das Netzwerk: Der Upload pro Spieler wächst mit der Spielerzahl, weil jeder mehr Schiffe
+                            in seiner Umgebung sieht (ca. 9 KB/s bei 16, ca. 13 KB/s bei 32, ca. 25 KB/s bei 64 Spielern;
+                            siehe Spalte „Bemerkung“). Auf dem eigenen System messen:
+                            <code>mondschuerfer-server --benchmark 64</code>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button type="submit" id="btn-save" class="btn btn-primary">Speichern</button>
+                    <button type="button" id="btn-discard" class="btn">Änderungen verwerfen</button>
+                    <button type="button" id="btn-reset" class="btn btn-ghost">Auf Standard zurücksetzen</button>
+                </div>
+                <p class="muted small reset-note">„Auf Standard zurücksetzen“ stellt die Werte aus docker-compose.yml wieder her.</p>
+                <p id="stale-note" class="note note-warn" hidden>
+                    Die Einstellungen wurden inzwischen auf dem Server geändert. „Änderungen verwerfen“ lädt den aktuellen Stand.
+                </p>
+                <div id="settings-msg" class="note" role="status" aria-live="polite" hidden></div>
+            </form>
+        </section>
+    </div>
+</main>
+
+<footer class="footer muted small">
+    Mondschürfer-Server · Diese Seite ist mit Benutzername und Passwort geschützt.
+    Für den Zugriff über das Internet nur hinter HTTPS (Reverse-Proxy) oder VPN betreiben.
+</footer>
+
+<!-- Bestätigungsdialog (statt confirm(), damit er zum dunklen Design passt) -->
+<dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title">
+    <form method="dialog" class="dialog-body">
+        <h3 id="confirm-title">Welt neu aufbauen?</h3>
+        <div id="confirm-text" class="confirm-text"></div>
+        <div class="actions">
+            <button value="ok" class="btn btn-primary" id="confirm-ok">Fortfahren</button>
+            <button value="cancel" class="btn" id="confirm-cancel">Abbrechen</button>
+        </div>
+    </form>
+</dialog>
+</body>
+</html>

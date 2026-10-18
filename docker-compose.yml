@@ -1,0 +1,262 @@
+# =============================================================================
+# docker-compose.yml – Mondschürfer-Server mit Docker Compose betreiben
+#
+# WOFÜR?
+#   Beschreibt, WIE der Server-Container laufen soll: aus welchem Dockerfile er
+#   gebaut wird, welche Ports nach außen gehen, wo die Daten liegen, welche
+#   Einstellungen gelten und welche Sicherheitsgrenzen er bekommt. Statt eines
+#   langen "docker run ..."-Befehls genügt dann:
+#
+#       cp .env.example .env          # einmalig; danach ADMIN_PASSWORD in .env setzen
+#       docker compose up -d --build  # bauen und im Hintergrund starten
+#       docker compose logs -f        # Ausgaben ansehen (Strg+C beendet nur die Anzeige)
+#       docker compose down           # stoppen und Container entfernen (Daten bleiben!)
+#
+#   Ausführliche Anleitung: server/README.md
+#
+# WOHER KOMMEN DIE WERTE?
+#   ${NAME} wird beim Start durch die Variable NAME ersetzt. Docker Compose
+#   liest sie aus der Datei .env im selben Ordner (Vorlage: .env.example) oder
+#   aus der Umgebung der Shell.
+#     ${NAME:-wert}        wert, falls NAME fehlt oder leer ist (Standardwert)
+#     ${NAME:?meldung}     Abbruch mit "meldung", falls NAME fehlt oder leer ist
+#   Die Spielparameter (Schwierigkeit, Stationen ...) sind nur STANDARDWERTE:
+#   Wer sie auf der Verwaltungsseite ändert, speichert sie in /data/settings.txt,
+#   und diese Datei hat danach Vorrang. "Zurücksetzen" auf der Webseite löscht
+#   sie wieder; dann gelten erneut die Werte von hier.
+#
+# SICHERHEIT (Kurzfassung, Begründungen jeweils unten)
+#   - Spielport 7777/UDP ist von außen erreichbar (dafür ist er da).
+#   - Die Verwaltungsseite ist nur auf DIESEM Rechner erreichbar (127.0.0.1),
+#     außer man setzt WEB_PUBLISH_ADDRESS in .env (Heimnetz, unverschlüsselt).
+#   - Der Container läuft als Nicht-root-Benutzer, mit schreibgeschütztem
+#     Dateisystem (nur /data ist beschreibbar) und ohne Sonderrechte.
+#   - Ohne ADMIN_USER/ADMIN_PASSWORD startet Compose gar nicht erst.
+# =============================================================================
+
+# Projektname: bestimmt die Namen von Container und Image ("mondschuerfer-server"),
+# unabhängig davon, wie der Ordner heißt, in dem diese Datei liegt.
+name: mondschuerfer
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Der Spielserver (mit eingebauter Verwaltungs-Webseite)
+  # ---------------------------------------------------------------------------
+  server:
+    # Selbst bauen statt aus dem Internet laden. Kontext ist der Hauptordner
+    # ("."), weil der Server auch shared/ und third_party/ braucht; welche
+    # Dateien wirklich mitgeschickt werden, regelt .dockerignore.
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+
+    # Nach einem Absturz oder Neustart des Rechners automatisch wieder starten –
+    # außer man hat den Container selbst gestoppt ("docker compose stop").
+    restart: unless-stopped
+
+    ports:
+      # Spiel: UDP-Port 7777 auf allen Netzwerkkarten dieses Rechners.
+      # Für Spieler aus dem Internet zusätzlich im Router weiterleiten
+      # (UDP 7777 -> dieser Rechner). Anderer Port, z. B. 7800 nach außen:
+      # "7800:7777/udp" (links = außen, rechts = im Container) – die Spieler
+      # verbinden sich dann mit ADRESSE:7800.
+      - "7777:7777/udp"
+      # Verwaltungsseite: NUR über 127.0.0.1, also nur von diesem Rechner aus
+      # (Browser auf http://localhost:8080). Warum so streng?
+      #   - Die Seite spricht nur unverschlüsseltes HTTP. Benutzername und
+      #     Passwort gehen bei jeder Anfrage im Klartext (Base64) übers Netz;
+      #     jeder im selben WLAN könnte mitlesen.
+      #   - Achtung: Ports, die Docker freigibt, umgehen oft die Firewall des
+      #     Rechners (z. B. ufw), weil Docker eigene iptables-Regeln setzt.
+      # Von einem anderen Rechner zugreifen – drei Wege, vom sichersten an:
+      #   1. SSH-Tunnel (nichts öffnen):  ssh -L 8080:127.0.0.1:8080 benutzer@server
+      #      und dann auf dem eigenen Rechner http://localhost:8080 öffnen.
+      #   2. Über das Internet: das Profil "online" unten (Caddy mit HTTPS).
+      #   3. Bewusst im Heimnetz öffnen (unverschlüsselt!): in .env
+      #      WEB_PUBLISH_ADDRESS=0.0.0.0 (alle Netzwerkkarten) oder z. B.
+      #      WEB_PUBLISH_ADDRESS=192.168.1.20 (nur diese Adresse des Rechners).
+      #      Nie so ins Internet weiterleiten.
+      - "${WEB_PUBLISH_ADDRESS:-127.0.0.1}:8080:8080"
+
+    volumes:
+      # Datenordner: Konten, Bestenliste, Einstellungen der Webseite, Server-Salz.
+      # Ein "benanntes Volume" verwaltet Docker selbst (unter /var/lib/docker).
+      # Es übersteht "docker compose down" und neue Images; weg ist es nur mit
+      # "docker compose down -v" oder "docker volume rm mondschuerfer-data".
+      # Sicherung: siehe server/README.md, Abschnitt "Datensicherung".
+      - mondschuerfer-data:/data
+      # Optional (nur Linux-Gastgeber): Uhrzeit in den Server-Meldungen in der
+      # Ortszeit statt UTC. Das Image enthält keine Zeitzonen-Datenbank, liest
+      # aber /etc/localtime, wenn man sie vom Gastgeber leiht:
+      # - /etc/localtime:/etc/localtime:ro
+
+    environment:
+      # --- Verwaltungsseite: Pflicht -----------------------------------------
+      # Ohne diese beiden Werte bricht "docker compose" mit der Meldung ab.
+      # Der Server prüft zusätzlich: Passwort mind. 10 Zeichen und kein
+      # Standardwort ("changeme", "passwort", "admin" ...). Sonst startet nur
+      # die Webseite nicht (das Spiel läuft trotzdem, Grund steht im Log).
+      ADMIN_USER: ${ADMIN_USER:?Bitte ADMIN_USER in .env setzen (Vorlage .env.example)}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Bitte ADMIN_PASSWORD in .env setzen (Vorlage .env.example, mind. 10 Zeichen)}
+
+      # --- Spielparameter (Standardwerte; auf der Webseite änderbar) ----------
+      # Name in der Serverliste/Lobby des Spiels (max. 40 Zeichen)
+      SERVER_NAME: ${SERVER_NAME:-Mondschürfer-Server}
+      # easy (keine Piraten) | medium (3) | hard (20) | custom (ENEMY_SHIPS)
+      # (auch deutsch: leicht | mittel | schwer | benutzerdefiniert)
+      DIFFICULTY: ${DIFFICULTY:-medium}
+      # Anzahl Piraten 0–40, wirkt NUR mit DIFFICULTY=custom (leer = 3)
+      ENEMY_SHIPS: ${ENEMY_SHIPS:-}
+      # Handelsstationen 1–5 und Werften 1–4 (Änderung baut die Welt neu auf)
+      TRADE_STATIONS: ${TRADE_STATIONS:-1}
+      SHIPYARDS: ${SHIPYARDS:-1}
+      # grey | orange | blue (grau | orange | blau)
+      MOON_COLOR: ${MOON_COLOR:-grey}
+      # gleichzeitig angemeldete Spieler 1–64 (dazu bis zu 16 Zuschauer);
+      # Hardware-Empfehlung: server/README.md
+      MAX_PLAYERS: ${MAX_PLAYERS:-16}
+
+      # --- Schutz -------------------------------------------------------------
+      # Höchstens so viele Verbindungen von EINER öffentlichen IP-Adresse
+      # (0 = unbegrenzt). Heimnetz-Adressen (192.168.x usw.) sind ausgenommen.
+      MAX_CONNECTIONS_PER_IP: ${MAX_CONNECTIONS_PER_IP:-8}
+
+      # --- Innenleben des Containers: NICHT ändern ----------------------------
+      # Diese Werte passen zu den Ports/Volumes oben und zum Dockerfile. Wer z. B.
+      # einen anderen Port nach außen möchte, ändert nur die LINKE Seite bei
+      # "ports:", nicht diese Werte.
+      MONDSCHUERFER_PORT: "7777"          # UDP-Port im Container
+      MONDSCHUERFER_WEB_PORT: "8080"      # TCP-Port der Webseite im Container
+      MONDSCHUERFER_WEB_BIND: "0.0.0.0"   # im Container nötig (Docker reicht Anfragen über eine eigene Netzwerkkarte herein)
+      MONDSCHUERFER_DATA: /data           # Volume (siehe oben)
+      MONDSCHUERFER_WEB_ROOT: /app/web    # HTML/JS/CSS der Webseite im Image
+      # Nur von diesem Dienst (Name im Docker-Netz) wird der Header X-Real-IP
+      # als echte Besucheradresse übernommen (Sperre nach Fehlversuchen hinter
+      # Caddy, siehe server/Caddyfile). Läuft Caddy nicht, gilt niemand als Proxy.
+      MONDSCHUERFER_TRUSTED_PROXY: caddy
+
+    # --- Sicherheitsgrenzen ---------------------------------------------------
+    # Ganzes Dateisystem des Containers schreibgeschützt. Der Server schreibt
+    # nur nach /data (Volume). Ein Angreifer könnte so z. B. keine Programme
+    # im Container ablegen oder das Server-Programm austauschen.
+    read_only: true
+    # Kleiner Arbeitsspeicher-Ordner für Programme, die /tmp erwarten (der
+    # Server selbst braucht ihn nicht). noexec: dort Abgelegtes ist nicht
+    # ausführbar.
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    # Linux-"Capabilities" sind einzelne root-Sonderrechte (z. B. Netzwerk
+    # umkonfigurieren, Dateibesitzer ändern). Der Server braucht keins davon
+    # (seine Ports liegen über 1024), also alle entfernen.
+    cap_drop:
+      - ALL
+    # Verhindert, dass ein Prozess im Container sich später mehr Rechte
+    # verschafft (z. B. über setuid-Programme wie "su").
+    security_opt:
+      - no-new-privileges:true
+    # Obergrenzen gegen Ausreißer: Der Server braucht 7 Threads (Spiel,
+    # Speichern, Webseite mit 4 Arbeits-Threads) und meist unter 20 MB
+    # Arbeitsspeicher (gemessen: ~3 MB leer, ~7 MB mit 64 Spielern).
+    # (Auf manchen Raspberry-Pi-Systemen ist die Speicherbegrenzung im Kernel
+    # abgeschaltet; Docker gibt dann nur eine Warnung aus.)
+    pids_limit: 64
+    mem_limit: 256m
+    # "docker compose stop" schickt SIGTERM und wartet so lange, bevor es hart
+    # abbricht. Der Server braucht 1–2 s zum Speichern; etwas Reserve für
+    # langsame SD-Karten (Raspberry Pi).
+    stop_grace_period: 20s
+    # Log-Ausgaben begrenzen: höchstens 3 Dateien à 10 MB, danach werden die
+    # ältesten verworfen. Ohne Grenze kann das Log über Monate die Festplatte
+    # (bzw. SD-Karte) füllen.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # OPTIONAL: HTTPS-Vorbau für die Verwaltungsseite ("Reverse-Proxy" Caddy)
+  #
+  # Nur nötig, wenn die Verwaltungsseite über das INTERNET erreichbar sein soll.
+  # Läuft NICHT bei "docker compose up", sondern nur mit dem Profil "online":
+  #
+  #     docker compose --profile online up -d --build
+  #
+  # Was passiert dann?
+  #   Caddy nimmt Anfragen auf Port 443 (HTTPS) und 80 (nur Umleitung auf HTTPS)
+  #   an, holt sich automatisch ein kostenloses Zertifikat von Let's Encrypt für
+  #   DOMAIN und reicht die entschlüsselten Anfragen im internen Docker-Netz an
+  #   server:8080 weiter. Passwort und Daten sind auf dem Weg durchs Internet
+  #   damit verschlüsselt.
+  # Voraussetzungen:
+  #   - DOMAIN in .env, z. B. DOMAIN=mond.example.org (eigene Domain oder ein
+  #     DynDNS-Name), die auf die öffentliche IP dieses Anschlusses zeigt.
+  #   - Router: TCP 80 und TCP 443 an diesen Rechner weiterleiten (80 braucht
+  #     Let's Encrypt für die Bestätigung, dass die Domain dir gehört).
+  # Die lokale Freigabe 127.0.0.1:8080 oben bleibt zusätzlich bestehen.
+  # Konfiguration: server/Caddyfile. Hintergründe: server/README.md, "Sicherheit".
+  # ---------------------------------------------------------------------------
+  caddy:
+    # Offizielles Caddy-Image, Hauptversion 2 (Updates: docker compose --profile online pull)
+    image: caddy:2-alpine
+    profiles:
+      - online
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "80:80"           # HTTP: Let's-Encrypt-Prüfung und Umleitung auf HTTPS
+      - "443:443"         # HTTPS
+      - "443:443/udp"     # HTTP/3 (QUIC), schneller auf Mobilgeräten; optional
+    environment:
+      # Wird in server/Caddyfile als {$DOMAIN} eingesetzt. Hier bewusst nicht
+      # ${DOMAIN:?...}: Compose prüft das für ALLE Dienste, auch ohne das
+      # Profil "online" – dann bräuchte jeder eine DOMAIN. Stattdessen prüft
+      # der Startbefehl unten, ob DOMAIN gesetzt ist.
+      DOMAIN: ${DOMAIN:-}
+    # Startbefehl: erst prüfen, ob DOMAIN gesetzt ist (sonst klare Meldung im
+    # Log statt eines rätselhaften Caddy-Fehlers), dann Caddy starten.
+    #   $$DOMAIN: das doppelte $ verhindert, dass Compose selbst einsetzt; die
+    #             Shell im Container sieht $DOMAIN.
+    #   exec:     Caddy ersetzt die Shell und bekommt so "docker stop" (SIGTERM) direkt.
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$DOMAIN" ]; then
+          echo "FEHLER: DOMAIN ist nicht gesetzt. Bitte in .env eintragen, z. B. DOMAIN=mond.example.org" >&2
+          exit 1
+        fi
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    volumes:
+      - ./server/Caddyfile:/etc/caddy/Caddyfile:ro   # Konfiguration (nur lesbar)
+      - caddy-data:/data                             # Zertifikate und Schlüssel – nicht löschen,
+                                                     # sonst neues Zertifikat (Let's Encrypt begrenzt das)
+      - caddy-config:/config                         # Caddys eigene Laufzeit-Konfiguration
+    # Gleiche Härtung wie beim Server. Caddy braucht als einziges Sonderrecht
+    # NET_BIND_SERVICE, um die Ports 80/443 (unter 1024) öffnen zu dürfen.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Benannte Volumes. "name:" legt den Namen bei Docker fest (sonst würde der
+# Projektname davorgesetzt) – so passen die Befehle in server/README.md.
+volumes:
+  mondschuerfer-data:
+    name: mondschuerfer-data
+  caddy-data:
+    name: mondschuerfer-caddy-data
+  caddy-config:
+    name: mondschuerfer-caddy-config

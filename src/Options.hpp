@@ -1,0 +1,76 @@
+#pragma once
+// ---------------------------------------------------------------------------
+// Options.hpp – der Bildschirm "Optionen" (Umsetzung: Options.cpp).
+//
+// Wofür ist die Datei da?
+//   Die Optionen zeigen ein Fenster mittig über dem Bild mit
+//     - Musik an/aus (Umschalter) und Musiklautstärke (Schieberegler in
+//       5-%-Schritten),
+//     - einer Übersicht der Steuerung als Tabelle: Tastatur/Maus, Xbox- und
+//       PlayStation-Controller (nur zum Nachlesen, nicht änderbar),
+//     - dem Knopf "Zurück".
+//   Änderungen wirken sofort (die Musik wird gleich lauter/leiser) und
+//   werden in der Einstellungsdatei gespeichert (ClientConfig), damit sie
+//   beim nächsten Start noch gelten.
+//
+// Wer benutzt sie?
+//   - src/main.cpp: aus dem Hauptmenü und aus der Pause des Einzelspielers
+//     (eigener Bildschirm Screen::Options, danach zurück dorthin).
+//   - src/Multiplayer.cpp: aus der Pause des Mehrspielers (das Spiel läuft
+//     dort auf dem Server weiter; die Optionen liegen wie die Pause darüber).
+//   Jeder Aufrufer besitzt ein eigenes OptionsScreen-Objekt. Das ist
+//   unproblematisch, weil die Werte selbst nicht hier liegen, sondern in
+//   g_audio (wirkt sofort) und g_clientConfig (wird gespeichert).
+//
+// Abhängigkeiten: Ui.hpp (Panel, Knopf, Schieberegler, Umschalter, Texte),
+// Audio.hpp (g_audio: Musikwerte, Bedientöne), ClientConfig.hpp
+// (g_clientConfig: Speichern), raylib (Tastatur, Maus, Zeichnen).
+//
+// Ablauf:
+//   Open()  einmal beim Öffnen,
+//   Draw()  danach jedes Frame (zwischen BeginDrawing und EndDrawing, nach
+//           der 3D-Welt), bis es true liefert; dann schließt der Aufrufer
+//           die Optionen und kehrt zu seinem Menü zurück.
+//
+// Bedienung:
+//   Maus:     Umschalter bzw. Zeile anklicken, Regler ziehen, "Zurück".
+//   Tastatur: Pfeil hoch/runter (oder W/S) wählt die Zeile, Pfeil links/
+//             rechts (oder A/D) ändert die Lautstärke um 5 %, Enter/Leertaste
+//             schaltet die Musik um bzw. drückt "Zurück", ESC = zurück.
+//   Controller: linker Stick bewegt den Zeiger, A klickt (Regler: A halten
+//             und ziehen), Steuerkreuz wie die Pfeiltasten, B = zurück
+//             (PlayStation: Kreuz, Kreis). Siehe "Controller in Menüs" in Ui.hpp.
+// ---------------------------------------------------------------------------
+
+class OptionsScreen {
+public:
+    // Beim Öffnen: Auswahl auf die erste Zeile, Frame-Zähler auf 0.
+    void Open();
+
+    // Zeichnet die Optionen und verarbeitet Maus und Tastatur dieses Frames.
+    // Liefert true, wenn sie geschlossen werden sollen ("Zurück" oder ESC);
+    // ungespeicherte Änderungen sind dann schon gespeichert.
+    bool Draw();
+
+    // Die beiden Aktionen der Optionen. Draw() benutzt sie bei Klick oder
+    // Taste; öffentlich, damit die Testoption --music-test (main.cpp) genau
+    // denselben Weg gehen kann wie ein Spieler.
+    //   SetMusicOn: Musik an/aus, wird sofort gespeichert.
+    //   SetVolume:  Lautstärke 0..1, gerundet auf 5-%-Schritte; save = false
+    //               merkt die Änderung nur vor (ClientConfig::unsaved) –
+    //               gespeichert wird dann beim Loslassen des Reglers oder
+    //               beim Schließen der Optionen.
+    void SetMusicOn(bool on);
+    void SetVolume(float v, bool save);
+
+private:
+    // Wählbare Zeilen (Tastatursteuerung), von oben nach unten
+    enum Row { ROW_MUSIC, ROW_VOLUME, ROW_BACK, ROW_COUNT };
+
+    // Schließen: Ziehen beenden, Ungespeichertes speichern, Ton "zurück".
+    void Close();
+
+    int sel_ = ROW_MUSIC;    // per Tastatur ausgewählte Zeile
+    int frames_ = 0;         // Frames seit Open() (Tasten erst ab dem 2. Frame, siehe Draw)
+    bool dragging_ = false;  // Lautstärkeregler wird gerade mit der Maus gezogen (siehe ui::Slider)
+};
