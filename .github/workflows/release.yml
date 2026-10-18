@@ -1,10 +1,11 @@
 name: Build und Release
 
-# Release: Tag pushen (z. B. "git tag v1.0 && git push origin v1.0").
+# Release: auf GitHub unter "Releases" ein neues Release mit Tag (z. B. v1.0) veroeffentlichen.
+# Die Builds werden dann automatisch an dieses Release angehaengt.
 # Zum Testen ohne Release: im Actions-Tab "Run workflow" - die Builds liegen dann als Artefakte vor.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -87,11 +88,16 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Release erstellen
+      - name: Release erstellen oder Dateien anhaengen
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" artifacts/* \
-            --repo "${{ github.repository }}" \
-            --title "Mondschuerfer ${{ github.ref_name }}" \
-            --generate-notes
+          # Existiert das Release schon (z. B. ueber die Webseite angelegt), werden die Dateien nur angehaengt.
+          if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" artifacts/* --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "${{ github.ref_name }}" artifacts/* \
+              --repo "${{ github.repository }}" \
+              --title "Mondschuerfer ${{ github.ref_name }}" \
+              --generate-notes
+          fi
