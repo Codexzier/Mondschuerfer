@@ -1,0 +1,97 @@
+name: Build und Release
+
+# Release: Tag pushen (z. B. "git tag v1.0 && git push origin v1.0").
+# Zum Testen ohne Release: im Actions-Tab "Run workflow" - die Builds liegen dann als Artefakte vor.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            archive: Mondschuerfer-Windows.zip
+          - name: Linux
+            # Aeltere Ubuntu-Version, damit die Binary auch mit aelterer glibc laeuft
+            os: ubuntu-22.04
+            archive: Mondschuerfer-Linux.tar.gz
+          - name: macOS
+            os: macos-latest
+            archive: Mondschuerfer-macOS.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux-Pakete installieren
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+
+      - name: Bauen (Windows, MinGW)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Bauen
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Paket schnueren
+        shell: bash
+        run: |
+          mkdir -p dist/Mondschuerfer
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp build/Mondschuerfer.exe dist/Mondschuerfer/
+            cp build/*.dll dist/Mondschuerfer/ 2>/dev/null || true
+          else
+            cp build/Mondschuerfer dist/Mondschuerfer/
+          fi
+          cp -r build/assets dist/Mondschuerfer/assets
+          cp README.md dist/Mondschuerfer/
+          cd dist
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            tar -czf "../${{ matrix.archive }}" Mondschuerfer
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "../${{ matrix.archive }}" Mondschuerfer
+          else
+            zip -r -q "../${{ matrix.archive }}" Mondschuerfer
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.archive }}
+
+  release:
+    name: Release veroeffentlichen
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Release erstellen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" artifacts/* \
+            --repo "${{ github.repository }}" \
+            --title "Mondschuerfer ${{ github.ref_name }}" \
+            --generate-notes
