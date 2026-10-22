@@ -47,7 +47,7 @@ namespace cfg {
 constexpr int GOAL_POINTS = 100000;
 
 // Welt
-constexpr float WORLD_HALF = 150.0f;        // Spielfeld geht von -WORLD_HALF bis +WORLD_HALF (x und z), also 300 x 300
+constexpr float WORLD_HALF = 300.0f;        // Spielfeld geht von -WORLD_HALF bis +WORLD_HALF (x und z), also 600 x 600
 // Flughöhe über der Mondoberfläche (y). Alle Schiffe fliegen in dieser Höhe,
 // die Spiellogik ist also im Grunde zweidimensional (x/z). Stationsteile, die
 // höher als SHIP_ALTITUDE - 0,6 sind, werden zu Hindernissen (WorldGen.cpp).

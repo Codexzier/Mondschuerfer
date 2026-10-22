@@ -40,7 +40,7 @@
 //   Reihenfolge dagegen garantiert (von links nach rechts).
 //
 // Koordinaten: x = Osten, z = Süden (-z = Norden), y = Höhe. Die Karte geht
-// von -cfg::WORLD_HALF bis +cfg::WORLD_HALF (300 x 300 Einheiten), die
+// von -cfg::WORLD_HALF bis +cfg::WORLD_HALF (600 x 600 Einheiten), die
 // Kartenmitte (0, 0) ist die erste Handelsstation.
 //
 // Abhängigkeiten: World.hpp (und darüber Config.hpp mit den Balancing-Werten,

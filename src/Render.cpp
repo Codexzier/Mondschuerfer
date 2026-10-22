@@ -170,7 +170,7 @@ void World::Draw(const Camera3D& cam) const {
     // Das Modell "terrain" ist eine flache Platte von 1 m x 1 m. Zwei Platten:
     //   1. 1400 m groß als Umgebung bis zum Horizont, etwas dunkler und 5 cm
     //      tiefer (sonst Z-Fighting mit der zweiten Platte).
-    //   2. das Spielfeld: 2 * WORLD_HALF + 30 = 330 m (Feld ±150 m plus 15 m
+    //   2. das Spielfeld: 2 * WORLD_HALF + 30 = 630 m (Feld ±300 m plus 15 m
     //      Rand), heller, damit man sieht, wo das Spielfeld endet.
     // Der tint wird mit der (umgefärbten) Gesteinsfarbe multipliziert.
     // Beim orangefarbenen Mond (Originalfarbe) den Boden kaum abdunkeln
