@@ -290,6 +290,11 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
   bleibt scharf, nach oben und unten wird das Bild unscharf (HUD und Menüs bleiben scharf).
   Schieberegler in 10-%-Schritten, ganz links „Aus“. Wirkt sofort, im Spiel wie in den
   Menü-Hintergründen.
+- **Kantenglättung** – glättet die Kanten der 3D-Welt (MSAA). Regler mit den Stufen Aus, 2x, 4x,
+  8x und 16x; Standard 4x. Kann die Grafikkarte eine Stufe nicht, steht daneben, wie viel sie
+  kann, und es wird diese Stufe benutzt.
+- **FXAA** – glättet Kanten zusätzlich per Shader; Regler in 10-%-Schritten, ganz links „Aus“
+  (Standard). Lässt sich zusammen mit der Kantenglättung einschalten.
 - **Steuerung** – Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
   (alle übrigen Tasten, z. B. im Stationsfenster, stehen oben im Abschnitt „Steuerung“).
 - Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Regler verstellen, Enter umschalten, ESC zurück.
@@ -308,15 +313,18 @@ name Anna
 music 1
 music_volume 0.50
 tilt_shift 0.50
+msaa 4
+fxaa 0.00
 ```
 
-`music` ist `1` (an) oder `0` (aus), `music_volume` und `tilt_shift` je eine Zahl von `0` bis `1`
-(Punkt oder Komma; `tilt_shift 0` = Effekt aus). Fehlt die Datei oder eine Zeile, gelten die
-Standardwerte (Musik an, Lautstärke 50 %, Tilt-Shift 50 %).
+`music` ist `1` (an) oder `0` (aus), `music_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
+(Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`. Fehlt die Datei
+oder eine Zeile, gelten die Standardwerte (Musik an, Lautstärke 50 %, Tilt-Shift 50 %,
+Kantenglättung 4x, FXAA aus).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
 `src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/TiltShift.*`
-(Tilt-Shift-Effekt), `src/ClientConfig.*` (Datei).
+(Tilt-Shift, Kantenglättung, FXAA), `src/ClientConfig.*` (Datei).
 
 ---
 
@@ -350,8 +358,8 @@ Mondschuerfer/
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
-│   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Tilt-Shift, Steuerungsübersicht
-│   ├── TiltShift.cpp/.hpp Kameraeffekt Tilt-Shift (Unschärfe oben/unten, Stärke aus den Optionen)
+│   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Tilt-Shift, Kantenglättung, FXAA, Steuerungsübersicht
+│   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA (Werte aus den Optionen)
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader

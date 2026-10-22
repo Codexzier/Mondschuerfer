@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Options.cpp – Bildschirm "Optionen": Musik an/aus, Musiklautstärke,
-// Tilt-Shift-Stärke und eine Übersicht der Steuerung (Schnittstelle und Bedienung: Options.hpp).
+// Tilt-Shift, Kantenglättung, FXAA und eine Übersicht der Steuerung (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
 // Multiplayer.cpp (Mehrspieler-Pause), jeweils über ein OptionsScreen-Objekt.
@@ -21,7 +21,8 @@
 //   2. Tastatur: Zeile wählen, Lautstärke ändern, umschalten, zurück.
 //   3. Abschnitt "Musik": Umschalter und Schieberegler zeichnen und dabei
 //      die Maus auswerten.
-//   4. Abschnitt "Grafik": Schieberegler für Tilt-Shift (TiltShift.hpp).
+//   4. Abschnitt "Grafik": Schieberegler für Tilt-Shift, Kantenglättung
+//      (MSAA) und FXAA (alle umgesetzt in TiltShift.cpp).
 //   5. Abschnitt "Steuerung": feste Tabelle (kControls unten).
 //   6. Knopf "Zurück".
 // Wo sich ein Wert ändert, laufen alle Wege (Maus, Tastatur, Testoption)
@@ -34,6 +35,7 @@
 #include "Audio.hpp"
 #include "ClientConfig.hpp"
 #include "Controls.hpp"
+#include "TiltShift.hpp"
 #include "Ui.hpp"
 #include "raylib.h"
 #include <cmath>
@@ -91,19 +93,20 @@ constexpr float kColumn[4] = {0.0f, 0.29f, 0.60f, 0.79f};
 // ===========================================================================
 constexpr float kPanelW = 1080.0f;   // Fensterbreite
 constexpr float kPad = 40.0f;        // Innenabstand links/rechts
-constexpr float kRowH = 52.0f;       // Höhe der Zeilen "Musik" und "Lautstärke"
+constexpr float kRowH = 44.0f;       // Höhe der wählbaren Zeilen (Musik, Lautstärke, Grafik)
+constexpr float kRowGap = 6.0f;      // Abstand unter jeder wählbaren Zeile
 constexpr float kCtrlX = 300.0f;     // Abstand der Bedienelemente vom linken Zeilenrand
-constexpr float kTableRowH = 26.0f;  // Zeilenhöhe der Steuerungstabelle
+constexpr float kTableRowH = 24.0f;  // Zeilenhöhe der Steuerungstabelle
 constexpr float kTableText = 18.0f;  // Schriftgröße der Tabelle
 constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Gesamthöhe des Fensters, Summe der Abschnitte von oben nach unten (in
-// derselben Reihenfolge wie in Draw): Rand 24, Überschrift 64, "MUSIK" 30,
-// zwei Zeilen à 52 + 8 Abstand, Hinweiszeile 42, "GRAFIK" 30, eine Zeile
-// 52 + 8, "STEUERUNG" 30, Tabellenkopf 30, Tabellenzeilen, Abstand 16, Knopf,
-// Rand 24.
+// derselben Reihenfolge wie in Draw): Rand 24, Überschrift 56, "MUSIK" 30,
+// zwei Zeilen, Hinweiszeile 42, "GRAFIK" 30, drei Zeilen, "STEUERUNG" 30,
+// Tabellenkopf 30, Tabellenzeilen, Abstand 16, Knopf, Rand 24 (bei 900 px
+// Fensterhöhe zusammen 894 px).
 float PanelHeight() {
-    return 24.0f + 64.0f + 30.0f + 2.0f * (kRowH + 8.0f) + 42.0f + 30.0f + (kRowH + 8.0f) + 30.0f + 30.0f +
+    return 24.0f + 56.0f + 30.0f + 2.0f * (kRowH + kRowGap) + 42.0f + 30.0f + 3.0f * (kRowH + kRowGap) + 30.0f + 30.0f +
            kControlCount * kTableRowH + 16.0f + kButtonH + 24.0f;
 }
 
@@ -136,11 +139,15 @@ void OptionsScreen::Open() {
     frames_ = 0;
     dragging_ = false;
     draggingTilt_ = false;
+    draggingMsaa_ = false;
+    draggingFxaa_ = false;
 }
 
 void OptionsScreen::Close() {
     dragging_ = false;
     draggingTilt_ = false;
+    draggingMsaa_ = false;
+    draggingFxaa_ = false;
     g_clientConfig.SaveIfChanged();   // z. B. Lautstärke per Pfeiltasten geändert
     g_audio.Play(Sfx::UiBack);
 }
@@ -181,6 +188,32 @@ void OptionsScreen::SetTiltShift(float v, bool save) {
     else g_clientConfig.unsaved = true;
 }
 
+// Kantenglättung: Stufe 0..4 = Aus, 2x, 4x, 8x, 16x. In der Datei steht die
+// Zahl der Abtastpunkte (0, 2, 4, 8, 16); MsaaLevel rechnet zurück.
+int OptionsScreen::MsaaLevel(int samples) {
+    int level = 0;
+    while (level < 4 && (2 << level) <= samples) ++level;   // 2 -> 1, 4 -> 2, 8 -> 3, 16 -> 4
+    return level;
+}
+
+void OptionsScreen::SetMsaaLevel(int level, bool save) {
+    if (level < 0) level = 0;
+    if (level > 4) level = 4;
+    g_clientConfig.msaa = level == 0 ? 0 : (1 << level);
+    if (save) g_clientConfig.Save();
+    else g_clientConfig.unsaved = true;
+}
+
+// FXAA-Stärke wie SetTiltShift in 10-%-Schritten (0 = aus).
+void OptionsScreen::SetFxaa(float v, bool save) {
+    v = std::round(v * 10.0f) / 10.0f;
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    g_clientConfig.fxaa = v;
+    if (save) g_clientConfig.Save();
+    else g_clientConfig.unsaved = true;
+}
+
 // ===========================================================================
 // Zeichnen und Bedienen (Ablauf siehe Dateikopf)
 // ===========================================================================
@@ -201,7 +234,7 @@ bool OptionsScreen::Draw() {
     const float iw = pw - 2.0f * kPad * s;        // Breite des Inhalts
     float y = panel.y + 24 * s;
     TextCentered("OPTIONEN", W * 0.5f, y, 46 * s, ACCENT);
-    y += 64 * s;
+    y += 56 * s;
 
     // --- 2. Tastatur -------------------------------------------------------------
     // Erst ab dem zweiten Frame: Die Taste, die die Optionen geöffnet hat
@@ -215,28 +248,25 @@ bool OptionsScreen::Draw() {
     // Knopf "Zurück", dann klickt A dort (ausgewertet unten bei "Auswerten").
     const bool keys = frames_ > 1;
     bool toggle = false, close = false;
-    float volStep = 0.0f, tiltStep = 0.0f;
+    float volStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
+    int msaaStep = 0;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
     if (keys) {
         if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel_ = (sel_ + 1) % ROW_COUNT;
         // + ROW_COUNT - 1 statt - 1: bleibt positiv (in C++ ist -1 % 3 = -1)
         if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_UP)) sel_ = (sel_ + ROW_COUNT - 1) % ROW_COUNT;
-        if (sel_ == ROW_VOLUME) {
-            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT) || IsKeyPressed(KEY_D) || IsKeyPressedRepeat(KEY_D) ||
-                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT))
-                volStep = 0.05f;
-            if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsKeyPressed(KEY_A) || IsKeyPressedRepeat(KEY_A) ||
-                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT))
-                volStep = -0.05f;
-        }
-        if (sel_ == ROW_TILT) {
-            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT) || IsKeyPressed(KEY_D) || IsKeyPressedRepeat(KEY_D) ||
-                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT))
-                tiltStep = 0.1f;
-            if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsKeyPressed(KEY_A) || IsKeyPressedRepeat(KEY_A) ||
-                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT))
-                tiltStep = -0.1f;
-        }
+        // Pfeil rechts/links: verstellt den Regler der gewählten Zeile
+        int dir = 0;
+        if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT) || IsKeyPressed(KEY_D) || IsKeyPressedRepeat(KEY_D) ||
+            PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT))
+            dir = 1;
+        if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsKeyPressed(KEY_A) || IsKeyPressedRepeat(KEY_A) ||
+            PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT))
+            dir = -1;
+        if (sel_ == ROW_VOLUME) volStep = 0.05f * dir;
+        if (sel_ == ROW_TILT) tiltStep = 0.1f * dir;
+        if (sel_ == ROW_MSAA) msaaStep = dir;
+        if (sel_ == ROW_FXAA) fxaaStep = 0.1f * dir;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
             else if (sel_ == ROW_BACK) close = true;
@@ -265,7 +295,7 @@ bool OptionsScreen::Draw() {
     }
     Text("Menü: \"Main Menu Theme\"  ·  Spiel: \"Lunar Silence 01\"", sw.x + sw.width + 30 * s, y + (kRowH * s - 17 * s) * 0.5f,
          17 * s, MUTED);
-    y += (kRowH + 8) * s;
+    y += (kRowH + kRowGap) * s;
 
     // Zeile "Lautstärke": Schieberegler plus Prozentanzeige.
     const Rectangle rowVol{x, y, iw, kRowH * s};
@@ -288,7 +318,7 @@ bool OptionsScreen::Draw() {
     Text(pct, slider.x + slider.width + 30 * s, y + labelY, label, g_audio.MusicEnabled() ? TEXT : MUTED);
     if (!g_audio.MusicEnabled())
         Text("(Musik ist aus)", slider.x + slider.width + 120 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
-    y += (kRowH + 8) * s;
+    y += (kRowH + kRowGap) * s;
 
     // Hinweis zur Taste M; ist der Ton gerade stumm, auffälliger in Orange –
     // sonst wundert man sich, warum der Regler nichts bewirkt.
@@ -319,7 +349,53 @@ bool OptionsScreen::Draw() {
     const std::string tiltText =
         g_clientConfig.tiltShift > 0.0f ? std::to_string(std::lround(g_clientConfig.tiltShift * 100.0f)) + " %" : std::string("Aus");
     Text(tiltText, tiltSlider.x + tiltSlider.width + 30 * s, y + labelY, label, g_clientConfig.tiltShift > 0.0f ? TEXT : MUTED);
-    y += (kRowH + 8) * s;
+    y += (kRowH + kRowGap) * s;
+
+    // Zeile "Kantenglättung": Regler mit fünf Stufen Aus, 2x, 4x, 8x, 16x
+    // (Wert 0, 0.25, 0.5, 0.75, 1). Kann die Grafikkarte die Stufe nicht,
+    // steht daneben, wie viel sie kann (TiltShift begrenzt dann darauf).
+    const Rectangle rowMsaa{x, y, iw, kRowH * s};
+    const bool overMsaa = CheckCollisionPointRec(mouse, rowMsaa);
+    if (overMsaa && MouseMoved()) sel_ = ROW_MSAA;
+    DrawRow(rowMsaa, sel_ == ROW_MSAA || draggingMsaa_);
+    Text("Kantenglättung", x + 22 * s, y + labelY, label, TEXT);
+    const Rectangle msaaSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+    float msaaValue = MsaaLevel(g_clientConfig.msaa) * 0.25f;
+    const bool wasDraggingMsaa = draggingMsaa_;
+    if (Slider(msaaSlider, msaaValue, draggingMsaa_, sel_ == ROW_MSAA, 0.25f)) {
+        SetMsaaLevel(static_cast<int>(std::lround(msaaValue * 4.0f)), false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (draggingMsaa_) sel_ = ROW_MSAA;
+    if (wasDraggingMsaa && !draggingMsaa_) g_clientConfig.SaveIfChanged();
+    const std::string msaaText = g_clientConfig.msaa > 0 ? std::to_string(g_clientConfig.msaa) + "x" : std::string("Aus");
+    Text(msaaText, msaaSlider.x + msaaSlider.width + 30 * s, y + labelY, label, g_clientConfig.msaa > 0 ? TEXT : MUTED);
+    const int maxSamples = tiltshift::MaxSamples();
+    if (g_clientConfig.msaa > maxSamples) {
+        const std::string note = maxSamples > 0 ? "(GPU max. " + std::to_string(maxSamples) + "x)" : std::string("(nicht möglich)");
+        Text(note, msaaSlider.x + msaaSlider.width + 100 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
+    }
+    y += (kRowH + kRowGap) * s;
+
+    // Zeile "FXAA": Glätten per Shader, Stärke in 10-%-Schritten (0 = "Aus").
+    const Rectangle rowFxaa{x, y, iw, kRowH * s};
+    const bool overFxaa = CheckCollisionPointRec(mouse, rowFxaa);
+    if (overFxaa && MouseMoved()) sel_ = ROW_FXAA;
+    DrawRow(rowFxaa, sel_ == ROW_FXAA || draggingFxaa_);
+    Text("FXAA", x + 22 * s, y + labelY, label, TEXT);
+    const Rectangle fxaaSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+    float fxaa = g_clientConfig.fxaa;
+    const bool wasDraggingFxaa = draggingFxaa_;
+    if (Slider(fxaaSlider, fxaa, draggingFxaa_, sel_ == ROW_FXAA, 0.1f)) {
+        SetFxaa(fxaa, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (draggingFxaa_) sel_ = ROW_FXAA;
+    if (wasDraggingFxaa && !draggingFxaa_) g_clientConfig.SaveIfChanged();
+    const std::string fxaaText =
+        g_clientConfig.fxaa > 0.0f ? std::to_string(std::lround(g_clientConfig.fxaa * 100.0f)) + " %" : std::string("Aus");
+    Text(fxaaText, fxaaSlider.x + fxaaSlider.width + 30 * s, y + labelY, label, g_clientConfig.fxaa > 0.0f ? TEXT : MUTED);
+    y += (kRowH + kRowGap) * s;
 
     // --- 5. Abschnitt Steuerung --------------------------------------------------------
     Text("STEUERUNG", x, y, 20 * s, MUTED);
@@ -361,7 +437,7 @@ bool OptionsScreen::Draw() {
 
     // --- Auswerten ------------------------------------------------------------------
     // Controller-A ohne Zeiger auf einem Bedienelement: wie Enter
-    if (padA && !(PadPointerActive() && (overMusic || overVol || overTilt || backHover))) {
+    if (padA && !(PadPointerActive() && (overMusic || overVol || overTilt || overMsaa || overFxaa || backHover))) {
         if (sel_ == ROW_MUSIC) toggle = true;
         else if (sel_ == ROW_BACK) close = true;
     }
@@ -371,6 +447,14 @@ bool OptionsScreen::Draw() {
     }
     if (tiltStep != 0.0f) {
         SetTiltShift(g_clientConfig.tiltShift + tiltStep, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (msaaStep != 0) {
+        SetMsaaLevel(MsaaLevel(g_clientConfig.msaa) + msaaStep, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (fxaaStep != 0.0f) {
+        SetFxaa(g_clientConfig.fxaa + fxaaStep, false);
         g_audio.Play(Sfx::UiMove, 0.6f);
     }
     if (toggle) {

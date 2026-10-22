@@ -1,22 +1,27 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// TiltShift.hpp – Kameraeffekt "Tilt-Shift" (Umsetzung: TiltShift.cpp).
+// TiltShift.hpp – Kameraeffekte der 3D-Welt: Tilt-Shift, Kantenglättung
+// (MSAA 2x bis 16x) und Glätten per Shader (FXAA) (Umsetzung: TiltShift.cpp).
 //
 // Wofür ist die Datei da?
 //   Tilt-Shift lässt die Spielwelt wie ein Miniaturmodell wirken: Ein
 //   waagerechter Streifen in der Bildmitte bleibt scharf, nach oben und unten
 //   wird das Bild zunehmend unscharf.
 //   Die Stärke stellt man in den Optionen ein (0 = aus); sie steht in
-//   g_clientConfig.tiltShift und wird von dort jedes Frame gelesen.
+//   g_clientConfig.tiltShift und wird von dort jedes Frame gelesen. Ebenso
+//   die Kantenglättung (g_clientConfig.msaa: 0, 2, 4, 8, 16 Abtastpunkte) und
+//   die FXAA-Stärke (g_clientConfig.fxaa 0..1, 0 = aus). Beides lässt sich
+//   gleichzeitig einschalten.
 //
 // Wie funktioniert das?
-//   Begin() lenkt das Zeichnen der 3D-Welt in ein eigenes Bild
-//   (RenderTexture) um, End() zeichnet dieses Bild dann mit einem Shader
-//   auf den Bildschirm, der abseits der Mitte weichzeichnet und Kanten per
-//   FXAA glättet (das Zwischenbild hat keine MSAA-Kantenglättung). HUD und Menüs
-//   kommen erst danach und bleiben deshalb scharf.
-//   Ist der Effekt aus (oder der Shader nicht verfügbar), tun Begin() und
-//   End() nichts – es wird dann wie bisher direkt auf den Bildschirm gezeichnet.
+//   Begin() lenkt das Zeichnen der 3D-Welt in ein eigenes Bild um (mit
+//   Kantenglättung: ein MSAA-Bild), End() zeichnet dieses Bild dann mit
+//   einem Shader auf den Bildschirm, der abseits der Mitte weichzeichnet und
+//   Kanten per FXAA glättet. HUD und Menüs kommen erst danach und bleiben
+//   deshalb scharf (sie nutzen weiter die 4-fache Kantenglättung des
+//   Fensters, siehe main.cpp).
+//   Ist der Shader nicht verfügbar, tun Begin() und End() nichts – es wird
+//   dann direkt auf den Bildschirm gezeichnet (mit der MSAA des Fensters).
 //
 // Wer benutzt sie?
 //   src/main.cpp (Einzelspieler und Hauptmenü) und src/Multiplayer.cpp
@@ -41,7 +46,11 @@ void Begin(Color clear);
 // (nur wenn Begin() umgelenkt hat).
 void End();
 
-// Shader und Bild freigeben (vor CloseWindow).
+// Höchste MSAA-Stufe, die die Grafikkarte kann (0 = keine). Für die Anzeige
+// in den Optionen; höhere Einstellungen werden darauf begrenzt.
+int MaxSamples();
+
+// Shader und Bilder freigeben (vor CloseWindow).
 void Shutdown();
 
 } // namespace tiltshift
