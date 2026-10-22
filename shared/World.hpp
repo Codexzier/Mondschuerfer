@@ -73,7 +73,8 @@ enum class ShipKind { Player = 0, Pirate = 1, Elite = 2, Miner = 3 };
 // GoMine -> Mining -> GoSell -> Docked -> GoMine: der Kreislauf der Händler.
 // Flee: Händler flieht vor einem Piraten.
 enum class AiState { Wander = 0, Attack = 1, GoMine = 2, Mining = 3, GoSell = 4, Docked = 5, Flee = 6 };
-enum class StationType { Trade = 0, Shipyard = 1 };
+// Dealer = Raumschiffsverkäufer (andere Schiffe kaufen, World::BuyShip)
+enum class StationType { Trade = 0, Shipyard = 1, Dealer = 2 };
 
 // Eingaben für ein Schiff (vom Spieler, vom Autopiloten oder über das Netzwerk).
 // Die KI-Schiffe benutzen dieselbe Struktur: UpdateAi berechnet ein ShipInput
@@ -260,6 +261,15 @@ struct GoalEvent {
     int round = 1;          // 1 = mit neuem Schiff, >1 = mit behaltenen Aufrüstungen
 };
 
+// Ein eigenes Schiff, das gerade nicht geflogen wird (geparkt beim
+// Raumschiffsverkäufer gekauft, an der Handelsstation im Tab "Schiff"
+// wählbar). Jedes Schiff behält seine eigenen Aufrüstungen und seinen Schild.
+struct OwnedShip {
+    int type = cfg::SHIP_START;               // cfg::ShipTypeId
+    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0};
+    float hp = -1.0f;                         // Schild beim Parken, -1 = voll
+};
+
 // Ausgang einer Einzelspieler-Partie (der Mehrspieler kennt kein Spielende).
 enum class Outcome { None, Dead, Won };
 
@@ -278,7 +288,9 @@ struct PlayerState {
 
     long long balance = 0;       // Kontostand (Ziel: cfg::GOAL_POINTS)
     long long delivered = 0;     // selbst abgelieferte Ressourcen (Statistik)
-    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0};   // Stufe je cfg::Upgrade, 0..cfg::UPGRADE_LEVELS
+    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0};   // Stufe je cfg::Upgrade, 0..cfg::UPGRADE_LEVELS (des geflogenen Schiffs)
+    int shipType = cfg::SHIP_START;              // Typ des geflogenen Schiffs (cfg::ShipTypeId)
+    std::vector<OwnedShip> hangar;               // weitere eigene Schiffe (je Typ höchstens eins)
 
     float scanEnergy = cfg::SCANNER_MAX_ENERGY;
     bool scanOn = false;
@@ -358,8 +370,19 @@ public:
     bool Repair(PlayerState& ps);              // false = nichts zu reparieren oder kein Geld
     int UpgradeCost(const PlayerState& ps, int type) const;  // -1 wenn maximal
     bool BuyUpgrade(PlayerState& ps, int type);
-    // Schiffswerte aus den Aufrüstungsstufen setzen. refill = Schild ganz auffüllen (neues Schiff).
+    // Schiffswerte aus Schiffstyp und Aufrüstungsstufen setzen. refill = Schild ganz auffüllen (neues Schiff).
     void ApplyUpgrades(PlayerState& ps, bool refill);
+    // Raumschiffsverkäufer: Preis eines Schiffstyps (mit tradeIn abzüglich
+    // TradeInValue, kann dann auch negativ sein = Gutschrift), -1 = nicht
+    // kaufbar (schon im Besitz oder ungültig). BuyShip prüft wie BuyUpgrade
+    // nicht, an welcher Station der Spieler angedockt ist.
+    bool OwnsShipType(const PlayerState& ps, int type) const;
+    int TradeInValue(const PlayerState& ps) const;
+    int ShipPrice(const PlayerState& ps, int type, bool tradeIn) const;
+    bool BuyShip(PlayerState& ps, int type, bool tradeIn);
+    // Handelsstation, Tab "Schiff": zu einem geparkten Schiff (hangar) wechseln.
+    bool SwitchShip(PlayerState& ps, int type);
+    float ScannerRadius(const PlayerState& ps) const;
 
     // Kurzformen für den Einzelspieler (wirken auf den eigenen Spieler)
     void Dock(int station) { Dock(Me(), station); }
@@ -368,6 +391,8 @@ public:
     bool Repair() { return Repair(Me()); }
     int UpgradeCost(int type) const { return UpgradeCost(Me(), type); }
     bool BuyUpgrade(int type) { return BuyUpgrade(Me(), type); }
+    bool BuyShip(int type, bool tradeIn) { return BuyShip(Me(), type, tradeIn); }
+    bool SwitchShip(int type) { return SwitchShip(Me(), type); }
 
     // --- Abfragen (HUD, KI, Server) ----------------------------------------
     int StationStage() const;          // Ausbaustufe der Handelsstationen 0..7 (aus totalDelivered)
@@ -378,7 +403,8 @@ public:
     int CountStations(StationType type) const;
     // Was würde Taste F jetzt bewirken? Reihenfolge: Station (andocken) vor
     // Wrack vor entdeckter Lagerstätte (abbauen).
-    // 0 nichts, 1 Lagerstätte, 2 Wrack, 3 Handelsstation, 4 Werft (id = Lagerstätte/Wrack/Stationsindex)
+    // 0 nichts, 1 Lagerstätte, 2 Wrack, 3 Handelsstation, 4 Werft, 5 Raumschiffsverkäufer
+    // (id = Lagerstätte/Wrack/Stationsindex)
     int InteractTarget(const PlayerState& ps, int* kind, int* id) const;
     int InteractTarget(int* kind, int* id) const { return InteractTarget(Me(), kind, id); }
     bool PlayerAlive(const PlayerState& ps) const;
@@ -447,6 +473,7 @@ public:
     // Modell-IDs (beim Start aufgelöst)
     struct Models {
         int player, pirateA, pirateB, elite, miner, cargoA, cargoB;
+        int shipTypes[cfg::SHIP_TYPE_COUNT];   // Modelle der Spieler-Schiffstypen (cfg::SHIP_TYPES)
         int terrain;
         int crystalSmall, crystalA, crystalB;
     } mdl{};

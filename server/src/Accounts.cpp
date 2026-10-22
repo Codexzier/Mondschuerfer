@@ -404,6 +404,25 @@ bool Accounts::Load(std::string& error) {
                 for (int u = 0; u < cfg::UP_COUNT && std::getline(is, part, ','); ++u)
                     ParseInt(part, p.upgrades[u], 0, cfg::UPGRADE_LEVELS);
             }
+            else if (k == "ship") ParseInt(v, p.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
+            else if (k == "hangar") {
+                // "Typ:u,u,u,u:Schild;Typ:..." -> geparkte Schiffe
+                std::istringstream is(v);
+                std::string entry;
+                while (std::getline(is, entry, ';') && p.hangar.size() < static_cast<size_t>(cfg::SHIP_TYPE_COUNT)) {
+                    std::istringstream es(entry);
+                    std::string part[3];
+                    int n = 0;
+                    while (n < 3 && std::getline(es, part[n], ':')) ++n;
+                    PlayerProgress::Parked h;
+                    if (n != 3 || !ParseInt(part[0], h.type, 0, cfg::SHIP_TYPE_COUNT - 1)) continue;
+                    std::istringstream us(part[1]);
+                    std::string u;
+                    for (int i = 0; i < cfg::UP_COUNT && std::getline(us, u, ','); ++i) ParseInt(u, h.upgrades[i], 0, cfg::UPGRADE_LEVELS);
+                    if (ParseDouble(part[2], d)) h.hp = static_cast<float>(std::clamp(d, -1.0, 100000.0));
+                    p.hangar.push_back(h);
+                }
+            }
             else if (k == "pos") {
                 // "x,z,yaw,seed". Nur übernehmen, wenn alle vier Teile gültig
                 // sind; ob der Ort in der Karte liegt, prüft RestoreProgress.
@@ -525,6 +544,16 @@ void Accounts::SaveAccounts() {
         out += " delivered=" + std::to_string(p.delivered);
         out += " upgrades=";
         for (int u = 0; u < cfg::UP_COUNT; ++u) out += (u ? "," : "") + std::to_string(p.upgrades[u]);
+        out += " ship=" + std::to_string(p.shipType);
+        if (!p.hangar.empty()) {
+            out += " hangar=";
+            for (size_t i = 0; i < p.hangar.size(); ++i) {
+                const auto& h = p.hangar[i];
+                out += (i ? ";" : "") + std::to_string(h.type) + ":";
+                for (int u = 0; u < cfg::UP_COUNT; ++u) out += (u ? "," : "") + std::to_string(h.upgrades[u]);
+                out += ":" + NumText(h.hp);
+            }
+        }
         out += " cargo=" + std::to_string(p.cargo);
         out += " hp=" + NumText(p.hp);
         out += " shipTime=" + NumText(p.shipTime);

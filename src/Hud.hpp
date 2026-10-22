@@ -53,11 +53,17 @@ struct DockRequest {
     bool undock = false;
     bool repair = false;
     int buy = -1;          // Upgrade-Typ (cfg::Upgrade) oder -1
+    int buyShip = -1;      // Raumschiffsverkäufer: Schiffstyp (cfg::ShipTypeId) oder -1
+    bool tradeIn = false;  // ... dabei das alte Schiff in Zahlung geben
+    int switchShip = -1;   // Handelsstation, Tab "Schiff": zu diesem Schiffstyp wechseln, -1 = nein
 };
 
-// Stationsfenster des eigenen Spielers (w.Me()). Handelsstation: Verkaufs-
-// ergebnis, Kontostand, Stationsausbau, Reparieren [R]. Werft: vier
-// Aufrüstungen [1]-[4]. Beide: Abdocken [F]/[ESC], am Controller Y oder B
+// Stationsfenster des eigenen Spielers (w.Me()). Handelsstation: Tab
+// "Station" mit Verkaufsergebnis, Kontostand, Stationsausbau, Reparieren [R];
+// Tab "Schiff" zum Wechseln zwischen den eigenen Schiffen [1]-[3] (Tab-Taste
+// bzw. LB/RB wechselt den Tab). Werft: vier Aufrüstungen [1]-[4].
+// Raumschiffsverkäufer: Schiffe kaufen [1]-[4] oder mit Inzahlunggabe
+// [Umschalt+1]-[4]. Alle: Abdocken [F]/[ESC], am Controller Y oder B
 // (Knöpfe mit dem Controller-Zeiger und A).
 // interactive = false: nur Anzeige, Tasten und Klicks werden ignoriert. Das
 // gilt im Simulationsmodus (der Autopilot entscheidet) und in den ersten

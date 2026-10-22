@@ -654,7 +654,7 @@ void MultiplayerScreen::UpdateAutopilotDock(float dt) {
         autoDockNextAction_ += 0.4f;
         if (w.stations[me.dockedAt].type == StationType::Trade) {
             if (w.RepairCost(me) > 0 && me.balance >= cfg::REPAIR_COST_PER_POINT) net_.SendDockAction(net::DockActionType::Repair);
-        } else {
+        } else if (w.stations[me.dockedAt].type == StationType::Shipyard) {
             int t = CheapestUpgrade(w, me.balance - 300);
             if (t >= 0) net_.SendDockAction(net::DockActionType::BuyUpgrade, t);
         }
@@ -1174,6 +1174,10 @@ void MultiplayerScreen::DrawPlaying() {
         DockRequest req = DrawDockPanel(w, dockFrames_ > 1 && !opt_.autopilot);
         if (req.repair) net_.SendDockAction(net::DockActionType::Repair);
         if (req.buy >= 0) net_.SendDockAction(net::DockActionType::BuyUpgrade, req.buy);
+        // BuyShip: Schiffstyp, Bit 7 = in Zahlung geben (siehe DockActionMsg)
+        if (req.buyShip >= 0)
+            net_.SendDockAction(net::DockActionType::BuyShip, static_cast<uint8_t>(req.buyShip | (req.tradeIn ? 0x80 : 0)));
+        if (req.switchShip >= 0) net_.SendDockAction(net::DockActionType::SwitchShip, static_cast<uint8_t>(req.switchShip));
         if (req.undock) {
             net_.SendDockAction(net::DockActionType::Undock);
             undockSentT_ = 0.0f;   // Fenster ausblenden, bis der Server das Abdocken bestätigt
@@ -1481,7 +1485,7 @@ void MultiplayerScreen::DrawSpectatorMarkers(const World& w) {
     for (const Station& st : w.stations) {
         const bool trade = st.type == StationType::Trade;
         Vector2 p = GetWorldToScreen(st.pos, cam_);
-        Color c = trade ? ACCENT : kYardColor;
+        Color c = trade ? ACCENT : (st.type == StationType::Shipyard ? kYardColor : Color{150, 255, 90, 255});
         float ty = p.y + 30 * s / std::max(0.4f, specZoom_ * 1.6f);
         TextCentered(st.name, p.x, ty, 17 * s, c);
         if (trade) TextCentered(Fmt("Stufe %d", w.StationStage()), p.x, ty + 19 * s, 15 * s, MUTED);
