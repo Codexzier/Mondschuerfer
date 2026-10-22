@@ -12,7 +12,8 @@
 // Wie funktioniert das?
 //   Begin() lenkt das Zeichnen der 3D-Welt in ein eigenes Bild
 //   (RenderTexture) um, End() zeichnet dieses Bild dann mit einem Shader
-//   auf den Bildschirm, der abseits der Mitte weichzeichnet. HUD und Menüs
+//   auf den Bildschirm, der abseits der Mitte weichzeichnet und Kanten per
+//   FXAA glättet (das Zwischenbild hat keine MSAA-Kantenglättung). HUD und Menüs
 //   kommen erst danach und bleiben deshalb scharf.
 //   Ist der Effekt aus (oder der Shader nicht verfügbar), tun Begin() und
 //   End() nichts – es wird dann wie bisher direkt auf den Bildschirm gezeichnet.
