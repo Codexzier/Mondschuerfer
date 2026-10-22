@@ -286,9 +286,13 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
 - **Musik: An / Aus** – Umschalter (Mausklick, oder Zeile wählen und Enter).
 - **Lautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
   Die Änderung ist sofort zu hören.
+- **Tilt-Shift** – Kameraeffekt, der die Welt wie ein Miniaturmodell wirken lässt: Die Bildmitte
+  bleibt scharf, nach oben und unten wird das Bild unscharf (HUD und Menüs bleiben scharf).
+  Schieberegler in 10-%-Schritten, ganz links „Aus“. Wirkt sofort, im Spiel wie in den
+  Menü-Hintergründen.
 - **Steuerung** – Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
   (alle übrigen Tasten, z. B. im Stationsfenster, stehen oben im Abschnitt „Steuerung“).
-- Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Lautstärke, Enter umschalten, ESC zurück.
+- Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Regler verstellen, Enter umschalten, ESC zurück.
 - Mit dem Controller: Zeiger mit dem linken Stick, A klickt (Regler: A halten und ziehen),
   Steuerkreuz wie die Pfeiltasten, B zurück.
 
@@ -303,13 +307,16 @@ server localhost:7777
 name Anna
 music 1
 music_volume 0.50
+tilt_shift 0.50
 ```
 
-`music` ist `1` (an) oder `0` (aus), `music_volume` eine Zahl von `0` bis `1` (Punkt oder Komma).
-Fehlt die Datei oder eine Zeile, gelten die Standardwerte (Musik an, 50 %).
+`music` ist `1` (an) oder `0` (aus), `music_volume` und `tilt_shift` je eine Zahl von `0` bis `1`
+(Punkt oder Komma; `tilt_shift 0` = Effekt aus). Fehlt die Datei oder eine Zeile, gelten die
+Standardwerte (Musik an, Lautstärke 50 %, Tilt-Shift 50 %).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
-`src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/ClientConfig.*` (Datei).
+`src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/TiltShift.*`
+(Tilt-Shift-Effekt), `src/ClientConfig.*` (Datei).
 
 ---
 
@@ -343,7 +350,8 @@ Mondschuerfer/
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
-│   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Steuerungsübersicht
+│   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Tilt-Shift, Steuerungsübersicht
+│   ├── TiltShift.cpp/.hpp Kameraeffekt Tilt-Shift (Unschärfe oben/unten, Stärke aus den Optionen)
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
