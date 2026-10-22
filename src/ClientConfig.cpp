@@ -131,6 +131,9 @@ bool ClientConfig::Load() {
         } else if (key == "music_volume") {
             float v = 0.0f;
             if (ParseNumber(Clean(value, 16), v)) musicVolume = v > 1.0f ? 1.0f : v;   // ParseNumber liefert nie < 0
+        } else if (key == "tilt_shift") {
+            float v = 0.0f;
+            if (ParseNumber(Clean(value, 16), v)) tiltShift = v > 1.0f ? 1.0f : v;
         }
         // andere Schlüssel: ignorieren (z. B. aus einer neueren Spielversion)
     }
@@ -147,6 +150,7 @@ bool ClientConfig::Save() {
     f << "name " << Clean(name, kMaxNameLen) << '\n';
     f << "music " << (musicEnabled ? 1 : 0) << '\n';
     f << "music_volume " << FormatVolume(musicVolume) << '\n';
+    f << "tilt_shift " << FormatVolume(tiltShift) << '\n';
     // Absichtlich KEIN Passwort (siehe ClientConfig.hpp).
     f.close();   // erst beim Schließen ist sicher alles geschrieben
     if (!f) return false;

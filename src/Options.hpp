@@ -6,6 +6,8 @@
 //   Die Optionen zeigen ein Fenster mittig über dem Bild mit
 //     - Musik an/aus (Umschalter) und Musiklautstärke (Schieberegler in
 //       5-%-Schritten),
+//     - der Stärke des Kameraeffekts Tilt-Shift (Schieberegler in
+//       10-%-Schritten, 0 = aus; siehe TiltShift.hpp),
 //     - einer Übersicht der Steuerung als Tabelle: Tastatur/Maus, Xbox- und
 //       PlayStation-Controller (nur zum Nachlesen, nicht änderbar),
 //     - dem Knopf "Zurück".
@@ -35,7 +37,7 @@
 // Bedienung:
 //   Maus:     Umschalter bzw. Zeile anklicken, Regler ziehen, "Zurück".
 //   Tastatur: Pfeil hoch/runter (oder W/S) wählt die Zeile, Pfeil links/
-//             rechts (oder A/D) ändert die Lautstärke um 5 %, Enter/Leertaste
+//             rechts (oder A/D) ändert die Lautstärke um 5 % bzw. Tilt-Shift um 10 %, Enter/Leertaste
 //             schaltet die Musik um bzw. drückt "Zurück", ESC = zurück.
 //   Controller: linker Stick bewegt den Zeiger, A klickt (Regler: A halten
 //             und ziehen), Steuerkreuz wie die Pfeiltasten, B = zurück
@@ -65,12 +67,16 @@ public:
 
 private:
     // Wählbare Zeilen (Tastatursteuerung), von oben nach unten
-    enum Row { ROW_MUSIC, ROW_VOLUME, ROW_BACK, ROW_COUNT };
+    enum Row { ROW_MUSIC, ROW_VOLUME, ROW_TILT, ROW_BACK, ROW_COUNT };
 
     // Schließen: Ziehen beenden, Ungespeichertes speichern, Ton "zurück".
     void Close();
 
+    // Tilt-Shift-Stärke 0..1 (10-%-Schritte, 0 = aus); save wie bei SetVolume.
+    void SetTiltShift(float v, bool save);
+
     int sel_ = ROW_MUSIC;    // per Tastatur ausgewählte Zeile
     int frames_ = 0;         // Frames seit Open() (Tasten erst ab dem 2. Frame, siehe Draw)
     bool dragging_ = false;  // Lautstärkeregler wird gerade mit der Maus gezogen (siehe ui::Slider)
+    bool draggingTilt_ = false;   // dasselbe für den Tilt-Shift-Regler
 };

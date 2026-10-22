@@ -29,6 +29,7 @@
 //     name Anna
 //     music 1
 //     music_volume 0.50
+//     tilt_shift 0.50
 // Unbekannte Zeilen werden ignoriert (so bleiben ältere Spielversionen mit
 // neueren Dateien verträglich). Fehlende Zeilen behalten ihren Standardwert
 // (z. B. eine Datei aus der Zeit vor den Musik-Einstellungen).
@@ -47,6 +48,7 @@ struct ClientConfig {
     std::string name;                         // zuletzt erfolgreich angemeldeter Spielername
     bool musicEnabled = true;                 // Optionen: Musik an/aus           (Zeile "music 1|0")
     float musicVolume = 0.5f;                 // Optionen: Musiklautstärke 0..1   (Zeile "music_volume 0.50")
+    float tiltShift = 0.5f;                   // Optionen: Tilt-Shift-Stärke 0..1, 0 = aus (Zeile "tilt_shift 0.50")
 
     // Steht NICHT in der Datei: true, wenn ein Wert geändert, aber noch nicht
     // gespeichert wurde. Setzt, wer ändert, ohne gleich zu speichern (die

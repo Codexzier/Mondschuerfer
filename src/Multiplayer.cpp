@@ -29,6 +29,7 @@
 #include "Assets.hpp"
 #include "Audio.hpp"
 #include "Hud.hpp"
+#include "TiltShift.hpp"
 #include "raylib.h"
 #include "raymath.h"
 #include <algorithm>
@@ -931,9 +932,11 @@ void MultiplayerScreen::DrawBackdrop() {
     Vector3 shift = Vector3Scale(right, -24.0f);
     cam.target = Vector3Add(cam.target, shift);
     cam.position = Vector3Add(cam.position, shift);
+    tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
     BeginMode3D(cam);
     backdrop_.Draw(cam);
     EndMode3D();
+    tiltshift::End();
 
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     DrawRectangleGradientH(0, 0, static_cast<int>(W * 0.8f), static_cast<int>(H), Color{10, 12, 20, 245}, Color{10, 12, 20, 0});
@@ -1148,10 +1151,12 @@ void MultiplayerScreen::DrawPlaying() {
         return;
     }
     World& w = net_.GetWorld();
+    tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
     BeginMode3D(cam_);
     w.Draw(cam_);
     controls_.DrawTarget3D(elapsed_);   // Mausziel (nur wenn eins gesetzt ist)
     EndMode3D();
+    tiltshift::End();
 
     // Randpfeile des HUD sollen nicht unter dem Panel "Beste Piloten" landen
     const Rectangle tp = TopPilotsRect();
@@ -1414,9 +1419,11 @@ void MultiplayerScreen::DrawSpectating() {
     const float s = Scale();
     const float H = static_cast<float>(GetScreenHeight());
     World& w = net_.GetWorld();
+    tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
     BeginMode3D(cam_);
     w.Draw(cam_);
     EndMode3D();
+    tiltshift::End();
     DrawSpectatorMarkers(w);
 
     const Rectangle area = SpectatorMapArea();

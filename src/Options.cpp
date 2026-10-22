@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// Options.cpp – Bildschirm "Optionen": Musik an/aus, Musiklautstärke und eine
-// Übersicht der Steuerung (Schnittstelle und Bedienung: Options.hpp).
+// Options.cpp – Bildschirm "Optionen": Musik an/aus, Musiklautstärke,
+// Tilt-Shift-Stärke und eine Übersicht der Steuerung (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
 // Multiplayer.cpp (Mehrspieler-Pause), jeweils über ein OptionsScreen-Objekt.
@@ -21,8 +21,9 @@
 //   2. Tastatur: Zeile wählen, Lautstärke ändern, umschalten, zurück.
 //   3. Abschnitt "Musik": Umschalter und Schieberegler zeichnen und dabei
 //      die Maus auswerten.
-//   4. Abschnitt "Steuerung": feste Tabelle (kControls unten).
-//   5. Knopf "Zurück".
+//   4. Abschnitt "Grafik": Schieberegler für Tilt-Shift (TiltShift.hpp).
+//   5. Abschnitt "Steuerung": feste Tabelle (kControls unten).
+//   6. Knopf "Zurück".
 // Wo sich ein Wert ändert, laufen alle Wege (Maus, Tastatur, Testoption)
 // über SetMusicOn bzw. SetVolume: Dort wird der Wert an g_audio gegeben,
 // in g_clientConfig eingetragen und gespeichert.
@@ -98,11 +99,12 @@ constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Gesamthöhe des Fensters, Summe der Abschnitte von oben nach unten (in
 // derselben Reihenfolge wie in Draw): Rand 24, Überschrift 64, "MUSIK" 30,
-// zwei Zeilen à 52 + 8 Abstand, Hinweiszeile 42, "STEUERUNG" 30, Tabellenkopf
-// 30, Tabellenzeilen, Abstand 16, Knopf, Rand 24.
+// zwei Zeilen à 52 + 8 Abstand, Hinweiszeile 42, "GRAFIK" 30, eine Zeile
+// 52 + 8, "STEUERUNG" 30, Tabellenkopf 30, Tabellenzeilen, Abstand 16, Knopf,
+// Rand 24.
 float PanelHeight() {
-    return 24.0f + 64.0f + 30.0f + 2.0f * (kRowH + 8.0f) + 42.0f + 30.0f + 30.0f + kControlCount * kTableRowH + 16.0f +
-           kButtonH + 24.0f;
+    return 24.0f + 64.0f + 30.0f + 2.0f * (kRowH + 8.0f) + 42.0f + 30.0f + (kRowH + 8.0f) + 30.0f + 30.0f +
+           kControlCount * kTableRowH + 16.0f + kButtonH + 24.0f;
 }
 
 // Hintergrund einer wählbaren Zeile. Ausgewählt (Tastatur) oder unter der
@@ -133,10 +135,12 @@ void OptionsScreen::Open() {
     sel_ = ROW_MUSIC;
     frames_ = 0;
     dragging_ = false;
+    draggingTilt_ = false;
 }
 
 void OptionsScreen::Close() {
     dragging_ = false;
+    draggingTilt_ = false;
     g_clientConfig.SaveIfChanged();   // z. B. Lautstärke per Pfeiltasten geändert
     g_audio.Play(Sfx::UiBack);
 }
@@ -162,6 +166,17 @@ void OptionsScreen::SetVolume(float v, bool save) {
     if (v > 1.0f) v = 1.0f;
     g_audio.SetMusicVolume(v);
     g_clientConfig.musicVolume = v;
+    if (save) g_clientConfig.Save();
+    else g_clientConfig.unsaved = true;
+}
+
+// Wie SetVolume, aber in 10-%-Schritten; wirkt ab dem nächsten Frame, weil
+// TiltShift.cpp den Wert jedes Frame aus g_clientConfig liest.
+void OptionsScreen::SetTiltShift(float v, bool save) {
+    v = std::round(v * 10.0f) / 10.0f;
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    g_clientConfig.tiltShift = v;
     if (save) g_clientConfig.Save();
     else g_clientConfig.unsaved = true;
 }
@@ -200,7 +215,7 @@ bool OptionsScreen::Draw() {
     // Knopf "Zurück", dann klickt A dort (ausgewertet unten bei "Auswerten").
     const bool keys = frames_ > 1;
     bool toggle = false, close = false;
-    float volStep = 0.0f;
+    float volStep = 0.0f, tiltStep = 0.0f;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
     if (keys) {
         if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel_ = (sel_ + 1) % ROW_COUNT;
@@ -213,6 +228,14 @@ bool OptionsScreen::Draw() {
             if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsKeyPressed(KEY_A) || IsKeyPressedRepeat(KEY_A) ||
                 PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT))
                 volStep = -0.05f;
+        }
+        if (sel_ == ROW_TILT) {
+            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT) || IsKeyPressed(KEY_D) || IsKeyPressedRepeat(KEY_D) ||
+                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT))
+                tiltStep = 0.1f;
+            if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsKeyPressed(KEY_A) || IsKeyPressedRepeat(KEY_A) ||
+                PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT))
+                tiltStep = -0.1f;
         }
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
@@ -275,7 +298,30 @@ bool OptionsScreen::Draw() {
         Text("Taste M schaltet jederzeit den ganzen Ton stumm (Effekte und Musik).", x, y + 4 * s, 17 * s, MUTED);
     y += 42 * s;
 
-    // --- 4. Abschnitt Steuerung --------------------------------------------------------
+    // --- 4. Abschnitt Grafik -----------------------------------------------------------
+    // Zeile "Tilt-Shift": Schieberegler plus Prozentanzeige (0 = "Aus").
+    Text("GRAFIK", x, y, 20 * s, MUTED);
+    y += 30 * s;
+    const Rectangle rowTilt{x, y, iw, kRowH * s};
+    const bool overTilt = CheckCollisionPointRec(mouse, rowTilt);
+    if (overTilt && MouseMoved()) sel_ = ROW_TILT;
+    DrawRow(rowTilt, sel_ == ROW_TILT || draggingTilt_);
+    Text("Tilt-Shift", x + 22 * s, y + labelY, label, TEXT);
+    const Rectangle tiltSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+    float tilt = g_clientConfig.tiltShift;
+    const bool wasDraggingTilt = draggingTilt_;
+    if (Slider(tiltSlider, tilt, draggingTilt_, sel_ == ROW_TILT, 0.1f)) {
+        SetTiltShift(tilt, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (draggingTilt_) sel_ = ROW_TILT;
+    if (wasDraggingTilt && !draggingTilt_) g_clientConfig.SaveIfChanged();
+    const std::string tiltText =
+        g_clientConfig.tiltShift > 0.0f ? std::to_string(std::lround(g_clientConfig.tiltShift * 100.0f)) + " %" : std::string("Aus");
+    Text(tiltText, tiltSlider.x + tiltSlider.width + 30 * s, y + labelY, label, g_clientConfig.tiltShift > 0.0f ? TEXT : MUTED);
+    y += (kRowH + 8) * s;
+
+    // --- 5. Abschnitt Steuerung --------------------------------------------------------
     Text("STEUERUNG", x, y, 20 * s, MUTED);
     TextRight("Tastatur, Maus und Controller gehen jederzeit, auch gemischt.", x + iw, y + 2 * s, 17 * s, MUTED);
     y += 30 * s;
@@ -300,7 +346,7 @@ bool OptionsScreen::Draw() {
     }
     y += kControlCount * rowH + 16 * s;
 
-    // --- 5. Zurück ------------------------------------------------------------------
+    // --- 6. Zurück ------------------------------------------------------------------
     // Links daneben eine kurze Tastenhilfe für die Optionen selbst.
     const Rectangle back{x + iw - 260 * s, y, 260 * s, kButtonH * s};
     bool backHover = false;
@@ -308,19 +354,23 @@ bool OptionsScreen::Draw() {
     if (backHover && MouseMoved()) sel_ = ROW_BACK;
     // Hilfezeile passend zum zuletzt benutzten Gerät (Controls.hpp)
     const std::string help = controls::ActiveDevice() == controls::Device::KeyboardMouse
-                                 ? std::string("Pfeiltasten: wählen, Lautstärke    Enter: umschalten    ESC: zurück")
-                                 : std::string("Steuerkreuz: wählen, Lautstärke    ") + controls::KeyName(controls::Act::Confirm) +
+                                 ? std::string("Pfeiltasten: wählen, Regler    Enter: umschalten    ESC: zurück")
+                                 : std::string("Steuerkreuz: wählen, Regler    ") + controls::KeyName(controls::Act::Confirm) +
                                        ": umschalten    " + controls::KeyName(controls::Act::Back) + ": zurück";
     Text(help, x, y + (kButtonH * s - 16 * s) * 0.5f, 16 * s, MUTED);
 
     // --- Auswerten ------------------------------------------------------------------
     // Controller-A ohne Zeiger auf einem Bedienelement: wie Enter
-    if (padA && !(PadPointerActive() && (overMusic || overVol || backHover))) {
+    if (padA && !(PadPointerActive() && (overMusic || overVol || overTilt || backHover))) {
         if (sel_ == ROW_MUSIC) toggle = true;
         else if (sel_ == ROW_BACK) close = true;
     }
     if (volStep != 0.0f) {
         SetVolume(g_audio.MusicVolume() + volStep, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (tiltStep != 0.0f) {
+        SetTiltShift(g_clientConfig.tiltShift + tiltStep, false);
         g_audio.Play(Sfx::UiMove, 0.6f);
     }
     if (toggle) {
