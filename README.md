@@ -281,13 +281,16 @@ Beim Wechsel zwischen Menü und Spiel blendet die Musik weich über (das alte St
 leiser, das neue in 1,5 s lauter). Ein Stück, das gerade nicht läuft, wird angehalten und setzt
 später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
 
-**Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*):
+**Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*) mit drei Karteireitern:
 
+*Musik*
 - **Musik: An / Aus** – Umschalter (Mausklick, oder Zeile wählen und Enter).
 - **Lautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
   Die Änderung ist sofort zu hören.
+
+*Grafik* (wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf)
 - **Tilt-Shift** – Kameraeffekt, der die Welt wie ein Miniaturmodell wirken lässt: Die Bildmitte
-  bleibt scharf, nach oben und unten wird das Bild unscharf (HUD und Menüs bleiben scharf).
+  bleibt scharf, nach oben und unten wird das Bild unscharf.
   Schieberegler in 10-%-Schritten, ganz links „Aus“. Wirkt sofort, im Spiel wie in den
   Menü-Hintergründen.
 - **Kantenglättung** – glättet die Kanten der 3D-Welt (MSAA). Regler mit den Stufen Aus, 2x, 4x,
@@ -295,11 +298,17 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
   kann, und es wird diese Stufe benutzt.
 - **FXAA** – glättet Kanten zusätzlich per Shader; Regler in 10-%-Schritten, ganz links „Aus“
   (Standard). Lässt sich zusammen mit der Kantenglättung einschalten.
-- **Steuerung** – Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
+
+*Steuerung*
+- Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
   (alle übrigen Tasten, z. B. im Stationsfenster, stehen oben im Abschnitt „Steuerung“).
-- Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Regler verstellen, Enter umschalten, ESC zurück.
-- Mit dem Controller: Zeiger mit dem linken Stick, A klickt (Regler: A halten und ziehen),
-  Steuerkreuz wie die Pfeiltasten, B zurück.
+
+Bedienung:
+- Maus: Karteireiter anklicken, Umschalter/Zeile anklicken, Regler ziehen.
+- Tastatur: **Tab** nächste Seite (Umschalt+Tab vorige), ↑ / ↓ Zeile wählen (ganz oben die
+  Karteireiter, dort wechselt ← / → die Seite), ← / → Regler verstellen, Enter umschalten, ESC zurück.
+- Controller: **LB / RB** (PlayStation: L1 / R1) wechselt die Seite, Zeiger mit dem linken Stick,
+  A klickt (Regler: A halten und ziehen), Steuerkreuz wie die Pfeiltasten, B zurück.
 
 Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte und Musik); die
 Einstellungen in den Optionen bleiben dabei erhalten.
@@ -358,7 +367,7 @@ Mondschuerfer/
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
-│   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Tilt-Shift, Kantenglättung, FXAA, Steuerungsübersicht
+│   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Musik, Grafik, Steuerung)
 │   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA (Werte aus den Optionen)
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar

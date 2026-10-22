@@ -3,17 +3,20 @@
 // Options.hpp – der Bildschirm "Optionen" (Umsetzung: Options.cpp).
 //
 // Wofür ist die Datei da?
-//   Die Optionen zeigen ein Fenster mittig über dem Bild mit
+//   Die Optionen zeigen ein Fenster mittig über dem Bild mit drei
+//   Karteireitern (Seiten) und darunter dem Knopf "Zurück":
+//   Seite "Musik":
 //     - Musik an/aus (Umschalter) und Musiklautstärke (Schieberegler in
-//       5-%-Schritten),
+//       5-%-Schritten).
+//   Seite "Grafik":
 //     - der Stärke des Kameraeffekts Tilt-Shift (Schieberegler in
 //       10-%-Schritten, 0 = aus; siehe TiltShift.hpp),
 //     - der Kantenglättung (Regler: Aus, 2x, 4x, 8x, 16x) und der Stärke
 //       von FXAA (Glätten per Shader, 10-%-Schritte, 0 = aus); beides
-//       lässt sich gleichzeitig einschalten,
+//       lässt sich gleichzeitig einschalten.
+//   Seite "Steuerung":
 //     - einer Übersicht der Steuerung als Tabelle: Tastatur/Maus, Xbox- und
-//       PlayStation-Controller (nur zum Nachlesen, nicht änderbar),
-//     - dem Knopf "Zurück".
+//       PlayStation-Controller (nur zum Nachlesen, nicht änderbar).
 //   Änderungen wirken sofort (die Musik wird gleich lauter/leiser) und
 //   werden in der Einstellungsdatei gespeichert (ClientConfig), damit sie
 //   beim nächsten Start noch gelten.
@@ -38,13 +41,16 @@
 //           die Optionen und kehrt zu seinem Menü zurück.
 //
 // Bedienung:
-//   Maus:     Umschalter bzw. Zeile anklicken, Regler ziehen, "Zurück".
-//   Tastatur: Pfeil hoch/runter (oder W/S) wählt die Zeile, Pfeil links/
-//             rechts (oder A/D) verstellt den Regler der Zeile, Enter/Leertaste
+//   Maus:     Karteireiter, Umschalter bzw. Zeile anklicken, Regler ziehen,
+//             "Zurück".
+//   Tastatur: Tab (Umschalt+Tab rückwärts) wechselt die Seite, Pfeil
+//             hoch/runter (oder W/S) wählt die Zeile (auch die Karteireiter),
+//             Pfeil links/rechts (oder A/D) verstellt den Regler der Zeile bzw.
+//             wechselt auf den Karteireitern die Seite, Enter/Leertaste
 //             schaltet die Musik um bzw. drückt "Zurück", ESC = zurück.
-//   Controller: linker Stick bewegt den Zeiger, A klickt (Regler: A halten
-//             und ziehen), Steuerkreuz wie die Pfeiltasten, B = zurück
-//             (PlayStation: Kreuz, Kreis). Siehe "Controller in Menüs" in Ui.hpp.
+//   Controller: LB/RB wechselt die Seite, linker Stick bewegt den Zeiger,
+//             A klickt (Regler: A halten und ziehen), Steuerkreuz wie die
+//             Pfeiltasten, B = zurück (PlayStation: L1/R1, Kreuz, Kreis). Siehe "Controller in Menüs" in Ui.hpp.
 // ---------------------------------------------------------------------------
 
 class OptionsScreen {
@@ -69,8 +75,17 @@ public:
     void SetVolume(float v, bool save);
 
 private:
-    // Wählbare Zeilen (Tastatursteuerung), von oben nach unten
-    enum Row { ROW_MUSIC, ROW_VOLUME, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_BACK, ROW_COUNT };
+    // Karteireiter (Seiten) der Optionen
+    enum Tab { TAB_MUSIC, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
+    // Wählbare Zeilen (Tastatursteuerung); welche davon zu sehen sind, hängt
+    // von der Seite ab (RowsOf). ROW_TABS = die Karteireiter selbst.
+    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_BACK };
+
+    // Wählbare Zeilen der Seite tab von oben nach unten; liefert die Anzahl
+    // (rows braucht Platz für 5).
+    static int RowsOf(int tab, int* rows);
+    // Seite wechseln (siehe Options.cpp).
+    void SetTab(int tab, bool keepTabsRow);
 
     // Schließen: Ziehen beenden, Ungespeichertes speichern, Ton "zurück".
     void Close();
@@ -84,6 +99,7 @@ private:
     void SetMsaaLevel(int level, bool save);
     void SetFxaa(float v, bool save);
 
+    int tab_ = TAB_MUSIC;    // gewählte Seite
     int sel_ = ROW_MUSIC;    // per Tastatur ausgewählte Zeile
     int frames_ = 0;         // Frames seit Open() (Tasten erst ab dem 2. Frame, siehe Draw)
     bool dragging_ = false;  // Lautstärkeregler wird gerade mit der Maus gezogen (siehe ui::Slider)
