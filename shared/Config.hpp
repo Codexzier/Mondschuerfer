@@ -279,6 +279,28 @@ constexpr MissionDef MISSIONS[MISSION_TYPE_COUNT] = {
       "Die Ware ist sicher angekommen. Setzen sie nun ihre Aufgabe fort.",
       "Sie haben versagt. Setzen sie ihre vorige Arbeit fort."}},
 };
+// Funksprüche außerhalb der Missionen (PlayerState::cue ab CUE_NEWSTART):
+// beim Beginn eines neuen Spiels und beim Fortsetzen (Einzelspieler: Knopf
+// "Fortsetzen", Mehrspieler: Anmeldung mit vorhandenem Fortschritt).
+constexpr int CUE_NEWSTART = MISSION_TYPE_COUNT * 3;
+constexpr int CUE_RETURN = CUE_NEWSTART + 1;
+constexpr int CUE_COUNT = CUE_RETURN + 1;   // gültige Werte für PlayerState::cue: 0 .. CUE_COUNT - 1
+struct CueDef {
+    const char* name;      // Überschrift im Funkspruch-Kasten
+    const char* clip;      // Datei in assets/clips, "" = keine
+    const char* subtitle;
+};
+constexpr CueDef GENERAL_CUES[CUE_COUNT - CUE_NEWSTART] = {
+    {"Willkommen", "clip_newstart.mpg",
+     "Willkommen Commander, Sammeln und liefern sie uns die Kristalle. Wenn sie genug geliefert haben, können sie den Mond verlassen."},
+    {"Willkommen zurück", "clip_return.mpg",
+     "Schön das sie wieder da sind. Beginnen sie mit der Arbeit und bringen sie weiter die Kristalle."},
+};
+// Überschrift, Clip und Untertitel des Funkspruchs cue (0 .. CUE_COUNT - 1).
+constexpr CueDef CueInfo(int cue) {
+    return cue >= CUE_NEWSTART ? GENERAL_CUES[cue - CUE_NEWSTART]
+                               : CueDef{MISSIONS[cue / 3].name, MISSIONS[cue / 3].clip[cue % 3], MISSIONS[cue / 3].subtitle[cue % 3]};
+}
 
 // Mehrspieler (nur Server)
 constexpr float MP_RESPAWN_TIME = 4.0f;      // Sekunden bis zum neuen Raumschiff nach einem Absturz

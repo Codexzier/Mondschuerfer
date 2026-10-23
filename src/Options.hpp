@@ -7,7 +7,8 @@
 //   Karteireitern (Seiten) und darunter dem Knopf "Zurück":
 //   Seite "Ton":
 //     - Musik an/aus (Umschalter), Musiklautstärke und Lautstärke der
-//       Missions-Clips (Schieberegler in 5-%-Schritten).
+//       Missions-Clips (Schieberegler in 5-%-Schritten), Untertitel der
+//       Funksprüche an/aus (Umschalter).
 //   Seite "Grafik":
 //     - der Stärke des Kameraeffekts Tilt-Shift (Schieberegler in
 //       10-%-Schritten, 0 = aus; siehe TiltShift.hpp),
@@ -48,7 +49,8 @@
 //             hoch/runter (oder W/S) wählt die Zeile (auch die Karteireiter),
 //             Pfeil links/rechts (oder A/D) verstellt den Regler der Zeile bzw.
 //             wechselt auf den Karteireitern die Seite, Enter/Leertaste
-//             schaltet die Musik um bzw. drückt "Zurück", ESC = zurück.
+//             schaltet die Musik bzw. die Untertitel um oder drückt
+//             "Zurück", ESC = zurück.
 //   Controller: LB/RB wechselt die Seite, linker Stick bewegt den Zeiger,
 //             A klickt (Regler: A halten und ziehen), Steuerkreuz wie die
 //             Pfeiltasten, B = zurück (PlayStation: L1/R1, Kreuz, Kreis). Siehe "Controller in Menüs" in Ui.hpp.
@@ -82,16 +84,19 @@ private:
     enum Tab { TAB_SOUND, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
     // Wählbare Zeilen (Tastatursteuerung); welche davon zu sehen sind, hängt
     // von der Seite ab (RowsOf). ROW_TABS = die Karteireiter selbst.
-    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_BACK };
+    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_BACK };
 
     // Wählbare Zeilen der Seite tab von oben nach unten; liefert die Anzahl
-    // (rows braucht Platz für 5).
+    // (rows braucht Platz für 6).
     static int RowsOf(int tab, int* rows);
     // Seite wechseln (siehe Options.cpp).
     void SetTab(int tab, bool keepTabsRow);
 
     // Schließen: Ziehen beenden, Ungespeichertes speichern, Ton "zurück".
     void Close();
+
+    // Untertitel der Funksprüche an/aus, wird wie SetMusicOn sofort gespeichert.
+    void SetSubtitlesOn(bool on);
 
     // Tilt-Shift-Stärke 0..1 (10-%-Schritte, 0 = aus); save wie bei SetVolume.
     void SetTiltShift(float v, bool save);

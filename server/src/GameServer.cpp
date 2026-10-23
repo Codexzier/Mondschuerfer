@@ -1295,6 +1295,9 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
         else
             world_.Notify(ps, "Willkommen, " + name + "! Finde Kristalle mit dem Scanner [E].", Color{255, 200, 120, 255});
         world_.Notify(ps, "Ziel: 100.000 Ressourcenpunkte auf dem Konto.", Color{200, 220, 255, 255});
+        // Funkspruch unten rechts: neues Spiel bzw. Fortsetzen (clip_newstart/clip_return)
+        ps.cue = resumed || returning ? cfg::CUE_RETURN : cfg::CUE_NEWSTART;
+        ps.cueT = cfg::CUE_TIME;
     }
 
     SendWelcome(c);
