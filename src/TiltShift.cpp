@@ -24,6 +24,11 @@
 //     diagonalen Nachbarn die Richtung einer Kante und mittelt entlang dieser
 //     Kante. Die Stärke mischt zwischen Original (0) und geglättet (1).
 //   MSAA und FXAA lassen sich zusammen benutzen.
+//   Der Shader liest das Bild nur mit textureLod(..., 0.0): texture() braucht
+//   die Ableitungen der Texturkoordinaten, und die sind in Schleifen und
+//   Verzweigungen, die je Bildpunkt anders laufen (der Weichzeichner), nicht
+//   festgelegt. Manche Grafiktreiber liefern dort dann Unsinn (weiße oder
+//   flackernde Flächen).
 // ---------------------------------------------------------------------------
 #include "TiltShift.hpp"
 #include "ClientConfig.hpp"
@@ -56,11 +61,11 @@ const float FXAA_REDUCE_MUL = 1.0 / 8.0;
 const float FXAA_SPAN_MAX = 8.0;
 vec3 Fxaa(vec2 uv) {
     const vec3 toLuma = vec3(0.299, 0.587, 0.114);
-    float lNW = dot(texture(texture0, uv + vec2(-1.0, -1.0) * texel).rgb, toLuma);
-    float lNE = dot(texture(texture0, uv + vec2(1.0, -1.0) * texel).rgb, toLuma);
-    float lSW = dot(texture(texture0, uv + vec2(-1.0, 1.0) * texel).rgb, toLuma);
-    float lSE = dot(texture(texture0, uv + vec2(1.0, 1.0) * texel).rgb, toLuma);
-    float lM = dot(texture(texture0, uv).rgb, toLuma);
+    float lNW = dot(textureLod(texture0, uv + vec2(-1.0, -1.0) * texel, 0.0).rgb, toLuma);
+    float lNE = dot(textureLod(texture0, uv + vec2(1.0, -1.0) * texel, 0.0).rgb, toLuma);
+    float lSW = dot(textureLod(texture0, uv + vec2(-1.0, 1.0) * texel, 0.0).rgb, toLuma);
+    float lSE = dot(textureLod(texture0, uv + vec2(1.0, 1.0) * texel, 0.0).rgb, toLuma);
+    float lM = dot(textureLod(texture0, uv, 0.0).rgb, toLuma);
     float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
     float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
     // Richtung quer zum Helligkeitsgefälle = entlang der Kante
@@ -68,10 +73,10 @@ vec3 Fxaa(vec2 uv) {
     float reduce = max((lNW + lNE + lSW + lSE) * 0.25 * FXAA_REDUCE_MUL, FXAA_REDUCE_MIN);
     float rcpMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
     dir = clamp(dir * rcpMin, vec2(-FXAA_SPAN_MAX), vec2(FXAA_SPAN_MAX)) * texel;
-    vec3 a = 0.5 * (texture(texture0, uv + dir * (1.0 / 3.0 - 0.5)).rgb +
-                    texture(texture0, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
-    vec3 b = a * 0.5 + 0.25 * (texture(texture0, uv - dir * 0.5).rgb +
-                               texture(texture0, uv + dir * 0.5).rgb);
+    vec3 a = 0.5 * (textureLod(texture0, uv + dir * (1.0 / 3.0 - 0.5), 0.0).rgb +
+                    textureLod(texture0, uv + dir * (2.0 / 3.0 - 0.5), 0.0).rgb);
+    vec3 b = a * 0.5 + 0.25 * (textureLod(texture0, uv - dir * 0.5, 0.0).rgb +
+                               textureLod(texture0, uv + dir * 0.5, 0.0).rgb);
     // Liegt das weitere Mittel außerhalb der Nachbarhelligkeiten, hat es
     // über die Kante hinaus gegriffen: dann das engere nehmen.
     float lB = dot(b, toLuma);
@@ -83,7 +88,7 @@ void main() {
     // |d| < 0.2 bleibt ganz scharf, danach wächst die Unschärfe weich an.
     float d = abs(fragTexCoord.y - 0.5) * 2.0;
     float r = smoothstep(0.2, 1.0, d) * radius;
-    vec3 sum = texture(texture0, fragTexCoord).rgb;
+    vec3 sum = textureLod(texture0, fragTexCoord, 0.0).rgb;
     if (fxaa > 0.0) sum = mix(sum, Fxaa(fragTexCoord), fxaa);
     if (r > 0.25) {
         // 24 Punkte auf einer Spirale (goldener Winkel 2.39996 rad): gleichmäßig
@@ -91,7 +96,7 @@ void main() {
         for (int i = 1; i <= 24; ++i) {
             float a = float(i) * 2.39996;
             vec2 o = vec2(cos(a), sin(a)) * sqrt(float(i) / 24.0) * r;
-            sum += texture(texture0, fragTexCoord + o * texel).rgb;
+            sum += textureLod(texture0, fragTexCoord + o * texel, 0.0).rgb;
         }
         sum /= 25.0;
     }
@@ -217,6 +222,9 @@ void Begin(Color clear) {
         if (resolve_.id != 0) UnloadRenderTexture(resolve_);
         resolve_ = LoadRenderTexture(w, h);
         SetTextureFilter(resolve_.texture, TEXTURE_FILTER_BILINEAR);
+        // Am Bildrand nicht auf die gegenüberliegende Seite greifen (raylib
+        // stellt standardmäßig "Wiederholen" ein)
+        SetTextureWrap(resolve_.texture, TEXTURE_WRAP_CLAMP);
     }
     int samples = g_clientConfig.msaa < maxSamples_ ? g_clientConfig.msaa : maxSamples_;
     usingMsaa_ = samples >= 2 && EnsureMsaa(w, h, samples);
