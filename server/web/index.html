@@ -155,7 +155,8 @@
                     <th scope="col">Name</th>
                     <th scope="col" class="col-progress">Fortschritt</th>
                     <th scope="col">Runde</th>
-                    <th scope="col" title="A = Antrieb, P = Panzerung, W = Waffen, L = Lager (je Stufe 0–5)">Aufrüstungen</th>
+                    <th scope="col" title="A = Antrieb, P = Panzerung, W = Waffen, L = Lager (je Stufe 0–5), K = Kanonen (Stufe 0–2)">Aufrüstungen</th>
+                    <th scope="col" class="num" title="Verbleibende Leben">Leben</th>
                     <th scope="col" class="num" title="Zeit mit dem aktuellen Raumschiff">Schiffszeit</th>
                     <th scope="col" class="num wrap" title="Dauer der aktuellen Sitzung">Angemeldet seit</th>
                     <th scope="col" class="num wrap" title="Alle Sitzungen zusammen">Gesamte Anmeldezeit</th>
@@ -256,6 +257,12 @@
                     </label>
                     <div class="field-help"><span class="default-hint" id="d-moon"></span></div>
                 </fieldset>
+
+                <div class="field">
+                    <label for="f-lives">Leben pro Spieler</label>
+                    <input id="f-lives" name="lives" type="number" min="1" max="100" step="1" inputmode="numeric">
+                    <div class="field-help"><span id="f-lives-help">1 bis 100</span> <span class="default-hint" id="d-lives"></span></div>
+                </div>
 
                 <div class="field max-players">
                     <div class="max-players-input">

@@ -60,17 +60,18 @@
 // bleibt. Entspricht den Feldern von PlayerState (shared/World.hpp), die nach
 // dem Abmelden noch gebraucht werden.
 struct PlayerProgress {
-    long long balance = 0;                      // Kontostand (Ziel: cfg::GOAL_POINTS)
+    long long balance = cfg::START_BALANCE;     // Kontostand (Ziel: cfg::GOAL_POINTS)
     long long delivered = 0;                    // selbst abgelieferte Ressourcen (Statistik)
-    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0}; // Stufen 0..cfg::UPGRADE_LEVELS
+    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0}; // Stufen 0..cfg::UPGRADE_MAX
     int shipType = 0;                           // Typ des geflogenen Schiffs (cfg::ShipTypeId)
     // Geparkte Schiffe (Raumschiffsverkäufer): Typ, eigene Stufen, Schild (-1 = voll)
     struct Parked {
         int type = 0;
-        int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0};
+        int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};
         float hp = -1.0f;
     };
     std::vector<Parked> hangar;
+    int lives = -1;                             // verbleibende Leben (-1 = voll, Einstellung des Servers)
     int cargo = 0;                              // Ladung im Schiff
     float hp = -1.0f;                           // Schild beim Abmelden (-1 = voll), verhindert "Abmelden heilt"
     double shipTime = 0.0;                      // Zeit mit dem aktuellen Schiff

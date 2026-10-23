@@ -12,7 +12,8 @@
 //   seed <Zahl>                           Startwert des Zufallsgenerators
 //   balance <Kontostand>
 //   delivered <insgesamt abgeliefert>     bestimmt die Ausbaustufe der Stationen
-//   upgrades <Tempo> <Panzerung> <Waffe> <Laderaum>   Stufen 0..5
+//   upgrades <Tempo> <Panzerung> <Waffe> <Laderaum> <Kanonen>   Stufen 0..5 (Kanonen 0..2; fehlt in alten Spielständen)
+//   lives <Leben>                         verbleibende Leben (fehlt in alten Spielständen = 3)
 //   stats <Spielzeit s> <Abschüsse> <nächste freie ID>
 //   scanner <Energie>
 //   player <x> <z> <Drehung> <Schild> <Ladung>
@@ -119,13 +120,14 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     f << "seed " << w.seed << '\n';
     f << "balance " << me.balance << '\n';
     f << "delivered " << w.totalDelivered << '\n';
-    f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << '\n';
+    f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << ' ' << me.upgrades[4] << '\n';
+    f << "lives " << me.lives << '\n';
     // Schiffstyp (vor "player", denn dort werden die Schiffswerte berechnet)
-    // und geparkte Schiffe: hangar Typ Stufe Stufe Stufe Stufe Schild
+    // und geparkte Schiffe: hangar Typ Stufe Stufe Stufe Stufe Stufe Schild
     f << "shiptype " << me.shipType << '\n';
     for (const OwnedShip& o : me.hangar)
         f << "hangar " << o.type << ' ' << o.upgrades[0] << ' ' << o.upgrades[1] << ' ' << o.upgrades[2] << ' '
-          << o.upgrades[3] << ' ' << o.hp << '\n';
+          << o.upgrades[3] << ' ' << o.upgrades[4] << ' ' << o.hp << '\n';
     // nextId: nächste freie ID für Schiffe, Lagerstätten und Wracks. Wird
     // mitgespeichert, damit nach dem Laden neu entstehende Objekte keine ID
     // bekommen, die eine gespeicherte Lagerstätte oder ein Wrack schon hat.
@@ -252,14 +254,22 @@ bool LoadGame(World& w) {
         ls >> key;
         if (key == "balance") ls >> me.balance;
         else if (key == "delivered") ls >> w.totalDelivered;
-        else if (key == "upgrades") ls >> me.upgrades[0] >> me.upgrades[1] >> me.upgrades[2] >> me.upgrades[3];
+        else if (key == "upgrades") { me.upgrades[4] = 0; ls >> me.upgrades[0] >> me.upgrades[1] >> me.upgrades[2] >> me.upgrades[3] >> me.upgrades[4]; }
+        else if (key == "lives") { ls >> me.lives; me.lives = std::clamp(me.lives, 1, limits::MAX_LIVES); }
         else if (key == "shiptype") ls >> me.shipType;   // begrenzt ApplyUpgrades
         else if (key == "hangar") {
-            OwnedShip o;
-            ls >> o.type >> o.upgrades[0] >> o.upgrades[1] >> o.upgrades[2] >> o.upgrades[3] >> o.hp;
-            o.type = std::clamp(o.type, 0, cfg::SHIP_TYPE_COUNT - 1);
-            for (int& u : o.upgrades) u = std::clamp(u, 0, cfg::UPGRADE_LEVELS);
-            if (!w.OwnsShipType(me, o.type) && ls) me.hangar.push_back(o);
+            // Typ, Stufen, Schild. Alte Spielstände haben 4 Stufen (ohne
+            // Kanonen), neue 5: am Anzahl der Werte unterscheiden.
+            std::vector<float> v;
+            for (float x; ls >> x;) v.push_back(x);
+            if (v.size() == 6 || v.size() == 7) {
+                OwnedShip o;
+                const int n = static_cast<int>(v.size()) - 2;
+                o.type = std::clamp(static_cast<int>(v[0]), 0, cfg::SHIP_TYPE_COUNT - 1);
+                for (int u = 0; u < n; ++u) o.upgrades[u] = std::clamp(static_cast<int>(v[1 + u]), 0, cfg::UPGRADE_MAX[u]);
+                o.hp = v.back();
+                if (!w.OwnsShipType(me, o.type)) me.hangar.push_back(o);
+            }
         }
         else if (key == "stats") ls >> me.playTime >> me.kills >> w.nextId;
         else if (key == "scanner") ls >> me.scanEnergy;
@@ -268,7 +278,7 @@ bool LoadGame(World& w) {
             ls >> p.pos.x >> p.pos.z >> p.yaw >> hp >> p.cargo;
             // Stufen begrenzen: Eine von Hand veränderte Datei darf nicht über
             // das Ende der Wertetabellen in Config.hpp hinaus lesen lassen.
-            for (int& u : me.upgrades) u = std::clamp(u, 0, cfg::UPGRADE_LEVELS);
+            for (int i = 0; i < cfg::UP_COUNT; ++i) me.upgrades[i] = std::clamp(me.upgrades[i], 0, cfg::UPGRADE_MAX[i]);
             // Tempo, max. Schild, Schaden und Laderaum aus den Stufen
             // berechnen. refill = true füllt den Schild auf das Maximum,
             // deshalb wird der gespeicherte Schild erst danach gesetzt.

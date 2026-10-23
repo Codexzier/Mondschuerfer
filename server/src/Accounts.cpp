@@ -397,12 +397,13 @@ bool Accounts::Load(std::string& error) {
             else if (k == "kills") ParseInt(v, p.kills, 0, 1000000000);
             else if (k == "deaths") ParseInt(v, p.deaths, 0, 1000000000);
             else if (k == "goals") ParseInt(v, p.goals, 0, 1000000000);
+            else if (k == "lives") ParseInt(v, p.lives, 1, limits::MAX_LIVES);
             else if (k == "upgrades") {
                 // "1,2,0,3" -> vier Stufen, jeweils auf 0..UPGRADE_LEVELS begrenzt
                 std::istringstream is(v);
                 std::string part;
                 for (int u = 0; u < cfg::UP_COUNT && std::getline(is, part, ','); ++u)
-                    ParseInt(part, p.upgrades[u], 0, cfg::UPGRADE_LEVELS);
+                    ParseInt(part, p.upgrades[u], 0, cfg::UPGRADE_MAX[u]);
             }
             else if (k == "ship") ParseInt(v, p.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
             else if (k == "hangar") {
@@ -418,7 +419,7 @@ bool Accounts::Load(std::string& error) {
                     if (n != 3 || !ParseInt(part[0], h.type, 0, cfg::SHIP_TYPE_COUNT - 1)) continue;
                     std::istringstream us(part[1]);
                     std::string u;
-                    for (int i = 0; i < cfg::UP_COUNT && std::getline(us, u, ','); ++i) ParseInt(u, h.upgrades[i], 0, cfg::UPGRADE_LEVELS);
+                    for (int i = 0; i < cfg::UP_COUNT && std::getline(us, u, ','); ++i) ParseInt(u, h.upgrades[i], 0, cfg::UPGRADE_MAX[i]);
                     if (ParseDouble(part[2], d)) h.hp = static_cast<float>(std::clamp(d, -1.0, 100000.0));
                     p.hangar.push_back(h);
                 }
@@ -554,6 +555,7 @@ void Accounts::SaveAccounts() {
                 out += ":" + NumText(h.hp);
             }
         }
+        out += " lives=" + std::to_string(p.lives);
         out += " cargo=" + std::to_string(p.cargo);
         out += " hp=" + NumText(p.hp);
         out += " shipTime=" + NumText(p.shipTime);
@@ -635,6 +637,7 @@ bool Accounts::LoadSettings(GameSettings& inOut) const {
         else if (key == "shipyards") ParseInt(value, inOut.shipyards, 1, limits::MAX_SHIPYARDS);
         else if (key == "moon") ParseMoonColor(value, inOut.moon);
         else if (key == "maxPlayers") ParseInt(value, inOut.maxPlayers, 1, limits::MAX_PLAYERS_LIMIT);
+        else if (key == "lives") ParseInt(value, inOut.lives, 1, limits::MAX_LIVES);
     }
     Sanitize(inOut);
     return true;
@@ -652,6 +655,7 @@ void Accounts::SaveSettings(const GameSettings& s) {
     out += "shipyards=" + std::to_string(s.shipyards) + "\n";
     out += std::string("moon=") + MoonColorKey(s.moon) + "\n";
     out += "maxPlayers=" + std::to_string(s.maxPlayers) + "\n";
+    out += "lives=" + std::to_string(s.lives) + "\n";
     QueueWrite(PathOf(SETTINGS_FILE), std::move(out), false, "Einstellungen");
 }
 

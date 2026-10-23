@@ -244,6 +244,7 @@ void WriteSettings(Writer& w, const GameSettings& s) {
     w.U8(static_cast<uint8_t>(s.shipyards));
     w.U8(static_cast<uint8_t>(s.moon));
     w.U8(static_cast<uint8_t>(s.maxPlayers));
+    w.U8(static_cast<uint8_t>(s.lives));
 }
 
 void ReadSettings(Reader& r, GameSettings& s) {
@@ -254,6 +255,7 @@ void ReadSettings(Reader& r, GameSettings& s) {
     s.shipyards = r.U8();
     s.moon = static_cast<MoonColor>(r.U8());
     s.maxPlayers = r.U8();
+    s.lives = r.U8();
     Sanitize(s);   // ungültige Werte (z. B. von einem fremden Server) auf erlaubte Grenzen bringen
 }
 
@@ -515,6 +517,7 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U16(e.round);
         w.U16(e.kills);
         w.F32(e.respawnT);
+        w.U8(e.lives);
     }
     w.U16(static_cast<uint16_t>(std::min<size_t>(m.ships.size(), 65535)));
     for (size_t i = 0; i < m.ships.size() && i < 65535; ++i) {
@@ -623,6 +626,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         e.round = r.U16();
         e.kills = r.U16();
         e.respawnT = r.F32();
+        e.lives = r.U8();
     }
     const uint16_t ns = r.U16();
     if (ns > MAX_LIST) return false;
@@ -858,6 +862,7 @@ std::vector<uint8_t> Encode(const PlayersMsg& m) {
         w.U8(flags);
         w.U16(p.kills);
         w.U16(p.goals);
+        w.U8(p.lives);
     }
     return w.buf;
 }
@@ -885,6 +890,7 @@ bool Decode(Reader& r, PlayersMsg& m) {
         p.docked = (flags & 2) != 0;
         p.kills = r.U16();
         p.goals = r.U16();
+        p.lives = r.U8();
         m.players.push_back(p);
     }
     return r.ok();

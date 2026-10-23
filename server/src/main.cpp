@@ -152,6 +152,7 @@ void ReadEnvironment(Options& o) {
         std::cerr << "Warnung: MOON_COLOR=\"" << text << "\" unbekannt (grey|orange|blue) – verwende "
                   << MoonColorKey(s.moon) << "\n";
     EnvInt("MAX_PLAYERS", s.maxPlayers, 1, limits::MAX_PLAYERS_LIMIT);
+    EnvInt("LIVES", s.lives, 1, limits::MAX_LIVES);
     Sanitize(s);
 }
 
@@ -176,7 +177,7 @@ void PrintUsage() {
         << "Spielparameter (Umgebungsvariablen, auf der Webseite änderbar):\n"
         << "  SERVER_NAME, DIFFICULTY (easy|medium|hard|custom), ENEMY_SHIPS (nur custom),\n"
         << "  TRADE_STATIONS (1-" << limits::MAX_TRADE_STATIONS << "), SHIPYARDS (1-" << limits::MAX_SHIPYARDS
-        << "), MOON_COLOR (grey|orange|blue), MAX_PLAYERS (1-" << limits::MAX_PLAYERS_LIMIT << ")\n"
+        << "), MOON_COLOR (grey|orange|blue), MAX_PLAYERS (1-" << limits::MAX_PLAYERS_LIMIT << "), LIVES (1-" << limits::MAX_LIVES << ")\n"
         << "Verwaltungsseite: ADMIN_USER und ADMIN_PASSWORD (mind. 10 Zeichen) müssen gesetzt sein.\n";
 }
 
@@ -272,7 +273,8 @@ void PrintSettings(const GameSettings& s) {
               << "   Stationen       : " << s.tradeStations << " Handelsstation(en), " << s.shipyards << " Werft(en)\n"
               << "   Mondoberfläche  : " << MoonColorName(s.moon) << "\n"
               << "   Max. Spieler    : " << s.maxPlayers << " (Obergrenze " << limits::MAX_PLAYERS_LIMIT
-              << "), dazu bis zu " << limits::MAX_SPECTATORS << " Zuschauer\n";
+              << "), dazu bis zu " << limits::MAX_SPECTATORS << " Zuschauer\n"
+              << "   Leben pro Spieler: " << s.lives << " (höchstens " << limits::MAX_LIVES << ")\n";
 }
 
 } // namespace

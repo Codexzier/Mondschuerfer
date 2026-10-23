@@ -32,6 +32,7 @@
 //
 // Abhängigkeiten: nur <string>. Umsetzung: GameSettings.cpp.
 // ---------------------------------------------------------------------------
+#include "Config.hpp"
 #include <string>
 
 // Schwierigkeitsgrad = Anzahl feindlicher Raumschiffe (Piraten) auf der Karte.
@@ -63,6 +64,7 @@ constexpr int MAX_SHIPYARDS = 4;        // Handelsstationen + Werften passen auf
 // (Bandbreite pro Snapshot, Rechenzeit pro Schritt, siehe server/README.md);
 // außerdem wird der Wert im Netzwerk als ein Byte übertragen.
 constexpr int MAX_PLAYERS_LIMIT = 64;
+constexpr int MAX_LIVES = 100;          // Obergrenze für "Leben pro Spieler" (im Netzwerk ein Byte)
 constexpr int MAX_SPECTATORS = 16;      // Zuschauer zusätzlich zu den Spielern (fest, nicht einstellbar)
 constexpr int MAX_SERVER_NAME = 40;     // in BYTES (UTF-8): ein "ü" zählt doppelt
 } // namespace limits
@@ -75,6 +77,7 @@ struct GameSettings {
     int shipyards = 1;         // Werften (Aufrüststationen) (1..4)
     MoonColor moon = MoonColor::Grey;
     int maxPlayers = 16;       // gleichzeitig angemeldete Spieler (ohne Zuschauer)
+    int lives = cfg::START_LIVES;   // Leben pro Spieler (1..limits::MAX_LIVES)
 };
 
 // Feindliche Schiffe für einen Schwierigkeitsgrad (bei Custom: customCount, begrenzt).

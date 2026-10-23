@@ -146,7 +146,7 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
         // Statusfenster oben links (360 x 300 bei Position 16,16 -> mit Rand
         // ungefähr bis x = 400, y = 330).
         float ly = std::max(p.y, 50 * s);
-        if (p.x < 400 * s && ly < 330 * s) ly = 330 * s;
+        if (p.x < 400 * s && ly < 360 * s) ly = 360 * s;
         TextCentered(name, p.x, ly, 20 * s, col);
     } else if (edgeArrow) {
         // Randmarkierung in Richtung der Station.
@@ -163,7 +163,7 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
         float ky = (H * 0.5f - margin) / std::max(1.0f, fabsf(d.y));
         float k = std::min(kx, ky);
         Vector2 e = Vector2Add(c, Vector2Scale(d, k));
-        if (e.x < 400 * s && e.y < 340 * s) e.y = 340 * s;              // nicht unter das Statusfenster
+        if (e.x < 400 * s && e.y < 370 * s) e.y = 370 * s;              // nicht unter das Statusfenster
         // Rechts oben: Minikarte (230 px + Legende -> ca. 260 breit, 300 hoch)
         // oder im Mehrspieler zusätzlich das Panel "Beste Piloten".
         const float rw = g_rightReserveW > 0.0f ? g_rightReserveW : 260 * s;
@@ -373,10 +373,10 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
         StationLabel(w, cam, i, i == nearTrade || i == nearYard || i == nearDealer);
 
     // --- Statuspanel oben links ------------------------------------------------
-    // 360 x 300 bei (16, 16). StationLabel (oben) und Multiplayer.cpp
+    // 360 x 330 bei (16, 16). StationLabel (oben) und Multiplayer.cpp
     // (DrawShipNames) halten diesen Bereich frei – bei Größenänderungen dort
     // mit anpassen. y wandert von oben nach unten durch die Zeilen.
-    Rectangle pr{16 * s, 16 * s, 360 * s, 300 * s};
+    Rectangle pr{16 * s, 16 * s, 360 * s, 330 * s};
     Panel(pr);
     float x = pr.x + 18 * s, y = pr.y + 14 * s, bw = pr.width - 36 * s;
     // Kontostand groß, rechts daneben das Spielziel (cfg::GOAL_POINTS = 100.000)
@@ -424,6 +424,10 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
         }
         cx += bw / 4.0f;
     }
+    // Kanonen (gleichzeitige Schüsse) und verbleibende Leben
+    y += 38 * s;
+    Text(TextFormat("KANONEN  %d", cfg::GUN_COUNT[std::clamp(me.upgrades[cfg::UP_GUNS], 0, cfg::UPGRADE_LEVELS)]), x, y, 18 * s, TEXT);
+    TextRight(TextFormat("LEBEN  %d", me.lives), x + bw, y, 18 * s, me.lives <= 1 ? BAD : TEXT);
 
     Minimap(w);
 
@@ -741,9 +745,9 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
         if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
     } else {
-        // --- Werft: vier Aufrüstungen, je eine Zeile mit Stufenkästchen,
+        // --- Werft: fünf Aufrüstungen, je eine Zeile mit Stufenkästchen,
         //     Wirkung (aktuell -> nächste Stufe) und Kaufknopf --------------------
-        Rectangle r{W * 0.5f - 400 * s, H * 0.5f - 285 * s, 800 * s, 570 * s};
+        Rectangle r{W * 0.5f - 400 * s, H * 0.5f - 300 * s, 800 * s, 600 * s};
         Panel(r);
         float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
         std::string title = station.name;
@@ -755,15 +759,15 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         y += 34 * s;
 
         // t läuft in der Reihenfolge von cfg::Upgrade (Antrieb, Panzerung,
-        // Bewaffnung, Lager). Die Werte-Tabellen in Config.hpp haben je
+        // Bewaffnung, Lager, Kanonen). Die Werte-Tabellen in Config.hpp haben je
         // UPGRADE_LEVELS + 1 Einträge (Index 0 = Startwert), daher ist
         // [lvl + 1] gültig, solange die Stufe nicht maximal ist.
         // Die Werte hängen vom Schiffstyp ab (cfg::ShipSpeed ...).
-        const char* names[4] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager"};
+        const char* names[cfg::UP_COUNT] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager", "Kanonen"};
         const int st = std::clamp(me.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
-        for (int t = 0; t < 4; ++t) {
+        for (int t = 0; t < cfg::UP_COUNT; ++t) {
             int lvl = me.upgrades[t];
-            bool maxed = lvl >= cfg::UPGRADE_LEVELS;
+            bool maxed = lvl >= cfg::UPGRADE_MAX[t];
             std::string desc;
             switch (t) {
                 case cfg::UP_SPEED:
@@ -781,15 +785,19 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
                                  : TextFormat("Schaden %.0f -> %.0f,  %.1f -> %.1f Schuss/s", cfg::ShipDamage(st, lvl),
                                               cfg::ShipDamage(st, lvl + 1), 1.0f / cfg::WEAPON_RATE[lvl], 1.0f / cfg::WEAPON_RATE[lvl + 1]);
                     break;
+                case cfg::UP_GUNS:
+                    desc = maxed ? TextFormat("%d Schüsse gleichzeitig", cfg::GUN_COUNT[lvl])
+                                 : TextFormat("%d  ->  %d Schüsse gleichzeitig", cfg::GUN_COUNT[lvl], cfg::GUN_COUNT[lvl + 1]);
+                    break;
                 default:
                     desc = maxed ? TextFormat("Kapazität %d", cfg::ShipCargo(st, lvl))
                                  : TextFormat("Kapazität %d  ->  %d", cfg::ShipCargo(st, lvl), cfg::ShipCargo(st, lvl + 1));
                     break;
             }
-            Rectangle row{x, y, bw, 78 * s};
+            Rectangle row{x, y, bw, 74 * s};
             DrawRectangleRec(row, Color{36, 42, 54, 220});
             Text(names[t], row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
-            for (int k = 0; k < cfg::UPGRADE_LEVELS; ++k) {
+            for (int k = 0; k < cfg::UPGRADE_MAX[t]; ++k) {
                 Color c = k < lvl ? ACCENT : Color{70, 76, 90, 255};
                 DrawRectangle(static_cast<int>(row.x + 16 * s + k * 22 * s), static_cast<int>(row.y + 46 * s),
                               static_cast<int>(18 * s), static_cast<int>(10 * s), c);
@@ -803,15 +811,15 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
             Rectangle b{row.x + row.width - 230 * s, row.y + 14 * s, 214 * s, 50 * s};
             bool buyHover = false;
             bool click = Button(b, bl, 22 * s, false, afford && interactive, &buyHover);
-            // Zifferntasten 1-4: In raylibs KeyboardKey liegen KEY_ONE..KEY_FOUR
-            // direkt hintereinander (ASCII '1'..'4'), daher KEY_ONE + t.
+            // Zifferntasten 1-5: In raylibs KeyboardKey liegen KEY_ONE..KEY_FIVE
+            // direkt hintereinander (ASCII '1'..'5'), daher KEY_ONE + t.
             bool keyBuy = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t));
             if (interactive && afford && (click || keyBuy)) {
                 req.buy = t;
             } else if (interactive && !afford && (keyBuy || (buyHover && PointerPressed()))) {
                 g_audio.Play(Sfx::Denied);
             }
-            y += 90 * s;
+            y += 82 * s;
         }
         y += 6 * s;
         Rectangle ub{x, y, bw, 50 * s};

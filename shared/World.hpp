@@ -106,6 +106,7 @@ struct Ship {
     float turnRate = 2.8f;        // Drehgeschwindigkeit in rad/s bei voll eingeschlagenem Ruder
     float damage = 10.0f;         // Schaden pro Treffer
     float fireInterval = 0.5f;    // Sekunden zwischen zwei Schüssen
+    int guns = 1;                 // gleichzeitige Schüsse (Upgrade Kanonen, cfg::GUN_COUNT)
     float fireCd = 0.0f;          // Restzeit bis zum nächsten möglichen Schuss
     int cargo = 0;                // Ladung (Spieler/Händler); bei Piraten: Beute, die im Wrack landet
     int cargoMax = 0;
@@ -283,9 +284,10 @@ struct PlayerState {
     std::string name;
     ShipInput input;             // Eingaben für den nächsten Update-Schritt
 
-    long long balance = 0;       // Kontostand (Ziel: cfg::GOAL_POINTS)
+    long long balance = cfg::START_BALANCE;   // Kontostand (Ziel: cfg::GOAL_POINTS)
     long long delivered = 0;     // selbst abgelieferte Ressourcen (Statistik)
-    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0};   // Stufe je cfg::Upgrade, 0..cfg::UPGRADE_LEVELS (des geflogenen Schiffs)
+    int lives = cfg::START_LIVES; // verbleibende Leben inkl. des aktuellen Schiffs (Mehrspieler: settings.lives)
+    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};   // Stufe je cfg::Upgrade, 0..cfg::UPGRADE_MAX (des geflogenen Schiffs)
     int shipType = cfg::SHIP_START;              // Typ des geflogenen Schiffs (cfg::ShipTypeId)
     std::vector<OwnedShip> hangar;               // weitere eigene Schiffe (je Typ höchstens eins)
 

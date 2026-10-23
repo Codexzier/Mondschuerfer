@@ -45,6 +45,9 @@ namespace cfg {
 // Ressourcenpunkte", World.cpp und GameServer.cpp) und im HUD (Hud.cpp).
 // Bei einer Änderung dort mit anpassen.
 constexpr int GOAL_POINTS = 100000;
+// Kontostand beim Start (neues Spiel, neuer Mehrspieler-Spieler, nach dem
+// letzten Leben). Zum Testen der neuen Inhalte 10.000; im normalen Spiel 0.
+constexpr long long START_BALANCE = 10000;
 
 // Welt
 constexpr float WORLD_HALF = 300.0f;        // Spielfeld geht von -WORLD_HALF bis +WORLD_HALF (x und z), also 600 x 600
@@ -111,7 +114,10 @@ constexpr int REPAIR_COST_PER_POINT = 2;
 constexpr int UPGRADE_LEVELS = 5;
 // Die Zahlenwerte der Aufzählung sind Teil von Netzwerkprotokoll
 // (DockAction-Parameter), Kontodatei und Spielstand: Reihenfolge nicht ändern.
-enum Upgrade { UP_SPEED = 0, UP_ARMOR = 1, UP_WEAPON = 2, UP_CARGO = 3, UP_COUNT = 4 };
+enum Upgrade { UP_SPEED = 0, UP_ARMOR = 1, UP_WEAPON = 2, UP_CARGO = 3, UP_GUNS = 4, UP_COUNT = 5 };
+// Höchste Stufe je Upgrade (die Kanonen haben nur 2 Stufen, alle anderen UPGRADE_LEVELS).
+// Die Stufe dient trotzdem als Index in Tabellen mit UPGRADE_LEVELS + 1 Einträgen.
+constexpr int UPGRADE_MAX[UP_COUNT] = {UPGRADE_LEVELS, UPGRADE_LEVELS, UPGRADE_LEVELS, UPGRADE_LEVELS, 2};
 
 // Höchstgeschwindigkeit (Einheiten/s). Die Beschleunigung ist 1,9 x dieser
 // Wert (World::UpdateShipPhysics): ein schnelleres Schiff zieht also auch
@@ -126,6 +132,10 @@ constexpr float ARMOR_VALUES[UPGRADE_LEVELS + 1]  = {100.0f, 150.0f, 200.0f, 260
 // Pirat (anfangs 40 Schild) braucht am Anfang also 4 Treffer.
 constexpr float WEAPON_DAMAGE[UPGRADE_LEVELS + 1] = {10.0f, 14.0f, 19.0f, 25.0f, 32.0f, 40.0f};
 constexpr float WEAPON_RATE[UPGRADE_LEVELS + 1]   = {0.50f, 0.45f, 0.40f, 0.36f, 0.33f, 0.30f};
+// Anzahl gleichzeitiger Schüsse (Ship::guns) je Kanonen-Stufe. Mehr Schüsse
+// treffen in einem leichten Fächer (GUN_SPREAD, Bogenmaß zwischen zwei Schüssen).
+constexpr int   GUN_COUNT[UPGRADE_LEVELS + 1]     = {1, 2, 3, 3, 3, 3};
+constexpr float GUN_SPREAD = 0.05f;
 // Lagerkapazität (Ship::cargoMax) = so viele Punkte bringt eine volle Ladung.
 // Mit Startlager 300 bräuchte man über 330 Fahrten bis zum Ziel, mit dem
 // größten Lager (4000) nur noch 25. Das Lager ist deshalb meist die
@@ -141,6 +151,7 @@ constexpr int UPGRADE_COST[UP_COUNT][UPGRADE_LEVELS] = {
     {1000, 2500, 5000, 8000, 13000},   // Panzerung (zusammen 29.500)
     {1000, 2500, 5000, 8000, 13000},   // Bewaffnung (zusammen 29.500)
     {600, 1600, 3500, 6500, 11000},    // Lager     (zusammen 23.200)
+    {4000, 9000, 0, 0, 0},             // Kanonen   (nur 2 Stufen, zusammen 13.000)
 };
 
 // Schiffstypen (Raumschiffsverkäufer)
@@ -183,6 +194,9 @@ constexpr float ShipArmor(int type, int lvl) { return SHIP_TYPES[type].shield * 
 constexpr float ShipDamage(int type, int lvl) { return WEAPON_DAMAGE[lvl] * SHIP_TYPES[type].weapon; }
 constexpr int ShipCargo(int type, int lvl) { return SHIP_TYPES[type].cargo * CARGO_VALUES[lvl] / CARGO_VALUES[0]; }
 constexpr float ShipScanner(int type) { return SCANNER_RADIUS * SHIP_TYPES[type].scanner; }
+// Leben: So viele Abstürze verträgt ein Spieler. Einzelspieler fest, im
+// Mehrspieler der Standard (GameSettings::lives, einstellbar bis limits::MAX_LIVES).
+constexpr int START_LIVES = 3;
 
 // Station wächst mit der Gesamtmenge abgelieferter Ressourcen
 // (World::totalDelivered). Stufe i ist erreicht, sobald insgesamt

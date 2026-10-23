@@ -37,11 +37,12 @@
     const FETCH_TIMEOUT_MS = 5000;   // danach gilt eine Anfrage als gescheitert
     const GOAL = 100000;             // cfg::GOAL_POINTS – Kontostand für das Spielziel
     const UPGRADE_MAX = 5;           // cfg::UPGRADE_LEVELS
-    const UPGRADES = [               // Reihenfolge wie cfg::Upgrade (UP_SPEED, UP_ARMOR, UP_WEAPON, UP_CARGO)
-        { letter: 'A', name: 'Antrieb' },
-        { letter: 'P', name: 'Panzerung' },
-        { letter: 'W', name: 'Waffen' },
-        { letter: 'L', name: 'Lager' },
+    const UPGRADES = [               // Reihenfolge wie cfg::Upgrade (UP_SPEED, UP_ARMOR, UP_WEAPON, UP_CARGO, UP_GUNS)
+        { letter: 'A', name: 'Antrieb', max: UPGRADE_MAX },
+        { letter: 'P', name: 'Panzerung', max: UPGRADE_MAX },
+        { letter: 'W', name: 'Waffen', max: UPGRADE_MAX },
+        { letter: 'L', name: 'Lager', max: UPGRADE_MAX },
+        { letter: 'K', name: 'Kanonen', max: 2 },   // cfg::UPGRADE_MAX[UP_GUNS]
     ];
     const MAX_STAGE = 7;             // cfg::STATION_STAGES - 1 (Stufen 0..7)
     const PRESET_ENEMIES = { easy: 0, medium: 3, hard: 20 };   // EnemiesForDifficulty()
@@ -276,12 +277,12 @@
         const wrap = el('span', 'upg');
         const parts = [];
         UPGRADES.forEach((u, i) => {
-            const lvl = Math.max(0, Math.min(UPGRADE_MAX, Number(levels && levels[i]) || 0));
-            parts.push(`${u.name} ${lvl}/${UPGRADE_MAX}`);
+            const lvl = Math.max(0, Math.min(u.max, Number(levels && levels[i]) || 0));
+            parts.push(`${u.name} ${lvl}/${u.max}`);
             const group = el('span', 'upg-group');
-            group.title = `${u.name}: Stufe ${lvl} von ${UPGRADE_MAX}`;
+            group.title = `${u.name}: Stufe ${lvl} von ${u.max}`;
             group.appendChild(el('span', 'upg-letter', u.letter));
-            for (let k = 0; k < UPGRADE_MAX; k++) group.appendChild(el('span', k < lvl ? 'upg-pip on' : 'upg-pip'));
+            for (let k = 0; k < u.max; k++) group.appendChild(el('span', k < lvl ? 'upg-pip on' : 'upg-pip'));
             wrap.appendChild(group);
         });
         wrap.setAttribute('aria-label', parts.join(', '));
@@ -327,6 +328,7 @@
         tr.appendChild(cell('Runde', '', round));
 
         tr.appendChild(cell('Aufrüstungen', 'cell-upgrades', upgradeCell(p.upgrades)));
+        tr.appendChild(cell('Leben', 'num', String(p.lives)));
         tr.appendChild(cell('Schiffszeit', 'num', fmtDuration(p.shipTime)));
         tr.appendChild(cell('Angemeldet seit', 'num', fmtDuration(p.session)));
         tr.appendChild(cell('Gesamte Anmeldezeit', 'num', fmtDuration(p.totalLogin)));
@@ -405,7 +407,7 @@
     // Formular "Spielparameter"
     // =========================================================================
     const form = () => $('settings-form');
-    const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers'];
+    const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers', 'lives'];
 
     // Aktuelle Eingaben als Objekt (gleicher Aufbau wie "settings" im JSON)
     function readForm() {
@@ -418,6 +420,7 @@
             shipyards: Number($('f-shipyards').value),
             moon: moon ? moon.value : '',
             maxPlayers: Number($('f-maxPlayers').value),
+            lives: Number($('f-lives').value),
         };
     }
 
@@ -434,6 +437,7 @@
         $('f-shipyards').value = s.shipyards;
         form().querySelectorAll('input[name="moon"]').forEach((r) => { r.checked = r.value === s.moon; });
         $('f-maxPlayers').value = s.maxPlayers;
+        $('f-lives').value = s.lives;
         updateEnemyField();
         updateNameCounter();
     }
@@ -470,6 +474,8 @@
         $('f-shipyards').max = limits.maxShipyards;
         $('f-maxPlayers').max = limits.maxPlayersLimit;
         setText('f-maxPlayers-help', `1 bis ${limits.maxPlayersLimit}`);
+        $('f-lives').max = limits.maxLives;
+        setText('f-lives-help', `1 bis ${limits.maxLives}`);
     }
 
     function showDefaults(def) {
@@ -480,6 +486,7 @@
         setText('d-shipyards', String(def.shipyards));
         setText('d-moon', MOON_NAMES[def.moon] || def.moon);
         setText('d-maxPlayers', String(def.maxPlayers));
+        setText('d-lives', String(def.lives));
     }
 
     const isDirty = () => state.baseline !== null && !sameSettings(readForm(), state.baseline);
@@ -551,6 +558,7 @@
             ['f-tradeStations', 'Handelsstationen'],
             ['f-shipyards', 'Werften'],
             ['f-maxPlayers', 'Maximale Spieler'],
+            ['f-lives', 'Leben pro Spieler'],
         ];
         for (const [id, label] of numbers) {
             const input = $(id);
@@ -643,6 +651,7 @@
         body.set('shipyards', String(s.shipyards));
         body.set('moon', s.moon);
         body.set('maxPlayers', String(s.maxPlayers));
+        body.set('lives', String(s.lives));
         await postSettings('/api/settings', body);
     }
 
@@ -654,7 +663,7 @@
             'Alle Spielparameter auf die Standardwerte aus docker-compose.yml zurücksetzen?',
             `Standard: ${DIFFICULTY_NAMES[def.difficulty] || '–'} (${def.enemyShips} feindliche Schiffe), ` +
                 `${def.tradeStations} Handelsstation(en), ${def.shipyards} Werft(en), Mond ${MOON_NAMES[def.moon] || '–'}, ` +
-                `max. ${def.maxPlayers} Spieler.`,
+                `max. ${def.maxPlayers} Spieler, ${def.lives} Leben.`,
         ];
         if (def.tradeStations !== cur.tradeStations || def.shipyards !== cur.shipyards || def.moon !== cur.moon) {
             text.push(REBUILD_TEXT);
