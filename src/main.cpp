@@ -26,7 +26,8 @@
 //     öffnet das Fenster, lädt Grafik (g_assets) und Ton (g_audio) und läuft
 //     dann in der Hauptschleife, bis das Fenster geschlossen wird.
 //   - Die Klasse App verwaltet die Bildschirme (enum Screen): Hauptmenü,
-//     Einzelspiel, Pause, Optionen, Simulation und Mehrspieler. Sie
+//     Einzelspiel, Pause, Optionen, Simulation, Mehrspieler und
+//     Karteneditor (src/MapEditor.hpp). Sie
 //     entscheidet jedes Frame, was gerechnet, abgespielt (Effekte, Musik)
 //     und gezeichnet wird.
 //
@@ -82,6 +83,7 @@
 #include "ClipPlayer.hpp"
 #include "Controls.hpp"
 #include "Hud.hpp"
+#include "MapEditor.hpp"
 #include "Multiplayer.hpp"
 #include "Options.hpp"
 #include "Save.hpp"
@@ -116,7 +118,8 @@ namespace {
 //   Simulation  der Autopilot spielt eine ganze Partie vor (mit HUD)
 //   Multiplayer alles erledigt das MultiplayerScreen-Objekt (die Optionen
 //               der Mehrspieler-Pause auch)
-enum class Screen { Menu, Playing, Paused, Options, Simulation, Multiplayer };
+//   Editor      Karteneditor, alles erledigt das MapEditorScreen-Objekt
+enum class Screen { Menu, Playing, Paused, Options, Simulation, Multiplayer, Editor };
 
 // Optionen für automatisierte Tests (Kommandozeile), im normalen Spiel ohne Bedeutung.
 // Zeiten beziehen sich auf die Spielzeit seit dem Start (App::elapsed_).
@@ -228,7 +231,7 @@ public:
         // In den Optionen nicht: Dort bleibt das Bild dahinter, wie es ist.
         float wheel = GetMouseWheelMove();
         if (wheel != 0.0f && screen_ != Screen::Menu && screen_ != Screen::Options &&
-            screen_ != Screen::Multiplayer)   // Mehrspieler zoomt selbst
+            screen_ != Screen::Multiplayer && screen_ != Screen::Editor)   // Mehrspieler und Editor zoomen selbst
             zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
 
         switch (screen_) {
@@ -256,6 +259,9 @@ public:
                 // selbst (feste 1/30-s-Schritte, höchstens 0,25 s pro Frame).
                 mp_->Update(rawDt);
                 if (mp_->WantsMenu()) BackToMenu();
+                break;
+            case Screen::Editor:
+                editor_->Update(dt);
                 break;
         }
         UpdateCamera(dt);
@@ -309,9 +315,16 @@ private:
     // Händler an und stellt das eigene Schiff neben die Handelsstation in der
     // Mitte. Danach werden – nur bei Testläufen – Werte aus der Kommandozeile
     // eingesetzt. Zur Begrüßung läuft der Funkspruch clip_newstart.
-    void NewGame() {
+    // mapStem: eigene Karte aus der Kartenauswahl (Dateistamm, MapFiles.hpp);
+    // leer = Zufallskarte wie bisher. Die Karte ersetzt nur die Kulisse.
+    void NewGame(const std::string& mapStem = std::string()) {
         unsigned int seed = opt_.seed ? opt_.seed : static_cast<unsigned int>(std::time(nullptr));
         world_.NewGame(seed, false);
+        GameMap map;
+        if (!mapStem.empty() && LoadMapFile(mapStem, map)) {
+            world_.ApplyMap(map);
+            world_.mapFile = mapStem;
+        }
         world_.Me().cue = cfg::CUE_NEWSTART;
         world_.Me().cueT = cfg::CUE_TIME;
         screen_ = Screen::Playing;
@@ -394,6 +407,14 @@ private:
         screen_ = Screen::Multiplayer;
     }
 
+    // Karteneditor öffnen (eigenes Objekt mit eigener Welt, wie der
+    // Mehrspieler). "Zurück" aus seiner Kartenliste führt über BackToMenu
+    // hierher zurück.
+    void EnterEditor() {
+        editor_ = std::make_unique<MapEditorScreen>();
+        screen_ = Screen::Editor;
+    }
+
     // Optionen öffnen. from = Bildschirm, zu dem "Zurück" führt (Menu oder
     // Paused). Das OptionsScreen-Objekt liest beim Zeichnen selbst die
     // aktuellen Werte aus g_audio; Open setzt nur Auswahl und Zähler zurück.
@@ -422,6 +443,8 @@ private:
     // Speichert NICHT – das entscheidet der Aufrufer (z. B. DrawPause).
     void BackToMenu() {
         g_audio.Play(Sfx::UiBack);
+        editor_.reset();
+        pickMap_ = false;
         if (mp_) {
             mp_.reset();                               // trennt die Verbindung
             // Der Server kann einen orangen oder blauen Mond eingestellt haben.
@@ -607,7 +630,7 @@ private:
         // Ereignisse sind "einmalig": nach dem Abspielen (oder Verwerfen im
         // Menü/in der Pause) leeren, sonst kämen sie im nächsten Frame wieder.
         world_.sounds.clear();
-        g_audio.SetMusicTrack(MenuBackground() ? MusicTrack::Menu : MusicTrack::Game);
+        g_audio.SetMusicTrack(MenuBackground() || screen_ == Screen::Editor ? MusicTrack::Menu : MusicTrack::Game);
         g_audio.Update(dt, loops);
         // Funkspruch-Clip der Mission (Bild zeichnet Hud.cpp): läuft nur im
         // Flug, hält in der Pause und angedockt an.
@@ -639,7 +662,8 @@ private:
     // aufgeholt. Gezielt wird auf den Boden (y = 0) unter dem Schiff.
     // ========================================================================
     void UpdateCamera(float dt) {
-        if (screen_ == Screen::Multiplayer) return;   // eigene Kameras in MultiplayerScreen::Update
+        // eigene Kameras in MultiplayerScreen::Update bzw. MapEditorScreen::Update
+        if (screen_ == Screen::Multiplayer || screen_ == Screen::Editor) return;
         const Ship& p = world_.Player();
         Vector3 target = p.pos;
         target.y = 0.0f;
@@ -697,6 +721,17 @@ private:
             EndDrawing();
             return;
         }
+        if (screen_ == Screen::Editor) {
+            // Der Editor zeichnet Karte und Oberfläche selbst (ohne Tilt-Shift,
+            // damit beim Bauen nichts unscharf ist)
+            BeginDrawing();
+            ClearBackground(Color{14, 17, 26, 255});
+            editor_->Draw();
+            ui::DrawPointer();
+            EndDrawing();
+            if (editor_->WantsMenu()) BackToMenu();
+            return;
+        }
         BeginDrawing();
         ClearBackground(Color{14, 17, 26, 255});
         tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
@@ -725,6 +760,7 @@ private:
                 break;
             case Screen::Simulation: DrawSimulation(); break;
             case Screen::Multiplayer: break;   // oben behandelt
+            case Screen::Editor: break;        // oben behandelt
         }
         ui::DrawPointer();   // Controller-Zeiger über allem (Ui.hpp)
         EndDrawing();
@@ -740,11 +776,12 @@ private:
         // bis 55 % der Breite: der Text bleibt lesbar, rechts sieht man die Welt.
         DrawRectangleGradientH(0, 0, static_cast<int>(W * 0.55f), static_cast<int>(H), Color{10, 12, 20, 235},
                                Color{10, 12, 20, 0});
-        // Sechs Knöpfe: Titel bei 12 % der Höhe, Knöpfe 54 px hoch mit 12 px
+        if (pickMap_) { DrawMapPicker(); return; }
+        // Sieben Knöpfe: Titel bei 12 % der Höhe, Knöpfe 54 px hoch mit 12 px
         // Abstand. Platzrechnung (alles mal s, und s ist höchstens Höhe / 900):
-        // 160 (Titel) + 6 * 66 (Knöpfe) + 24 + 3 * 28 (Erklärtext) = 664 * s,
-        // also höchstens 74 % der Höhe; mit den 12 % oben endet der Text bei
-        // spätestens 86 % – die Fußzeile beginnt erst bei 95 % (H - 44 * s).
+        // 160 (Titel) + 7 * 66 (Knöpfe) + 24 + 3 * 28 (Erklärtext) = 730 * s,
+        // also höchstens 82 % der Höhe; mit den 12 % oben endet der Text bei
+        // spätestens 94 % – die Fußzeile beginnt erst bei 95 % (H - 44 * s).
         // So passt es bei jeder Fenstergröße ab 960x540.
         float x = 90 * s;
         float y = H * 0.12f;
@@ -754,19 +791,25 @@ private:
         // ButtonList zeichnet die Knöpfe, verarbeitet Maus und Pfeiltasten/Enter
         // (menuSel_ = per Tastatur gewählter Knopf) und liefert den Index des
         // gedrückten Knopfs oder -1. "Fortsetzen" ist nur mit Spielstand aktiv.
-        std::vector<std::string> items = {"Neues Spiel", "Fortsetzen", "Mehrspieler", "Simulation (spielt selbst)", "Optionen",
-                                          "Beenden"};
-        std::vector<bool> enabled = {true, hasSave_, true, true, true, true};
+        std::vector<std::string> items = {"Neues Spiel", "Fortsetzen", "Mehrspieler", "Karteneditor", "Simulation (spielt selbst)",
+                                          "Optionen", "Beenden"};
+        std::vector<bool> enabled = {true, hasSave_, true, true, true, true, true};
         float bw = 420 * s, bh = 54 * s, gap = 12 * s;
         int choice = ButtonList(items, enabled, menuSel_, x + bw * 0.5f, y + 160 * s, bw, bh, gap, 26 * s);
-        if (choice >= 0 && choice <= 4) g_audio.Play(Sfx::UiConfirm);
+        if (choice >= 0 && choice <= 5) g_audio.Play(Sfx::UiConfirm);
         switch (choice) {
-            case 0: NewGame(); break;
+            case 0:
+                // Gibt es eigene Karten, erst die Karte wählen (DrawMapPicker)
+                mapList_.Refresh();
+                if (mapList_.Maps().empty()) NewGame();
+                else pickMap_ = true;
+                break;
             case 1: Continue(); break;
             case 2: EnterMultiplayer(MultiplayerOptions{}); break;
-            case 3: StartSimulation(); break;
-            case 4: OpenOptions(Screen::Menu); break;
-            case 5: quit_ = true; break;
+            case 3: EnterEditor(); break;
+            case 4: StartSimulation(); break;
+            case 5: OpenOptions(Screen::Menu); break;
+            case 6: quit_ = true; break;
             default: break;
         }
 
@@ -783,6 +826,32 @@ private:
         // "·" (Mittelpunkt) ist in der eingebauten Schrift enthalten.
         Text("Grafik und Ton: Kenney (CC0)  ·  Musik: dekker187", x, H - 44 * s, 18 * s, MUTED);
         TextRight(g_audio.Muted() ? "M Ton aus    F11 Vollbild" : "M Ton an    F11 Vollbild", W - 24 * s, H - 44 * s, 18 * s, MUTED);
+    }
+
+    // "Neues Spiel", wenn es eigene Karten gibt (Ordner "karten", MapFiles.hpp):
+    // links statt der Menüknöpfe eine Liste mit der Standardkarte (Zufall wie
+    // bisher) und allen gespeicherten Karten. Doppelklick oder Enter startet
+    // wie "Spielen"; ESC bzw. "Zurück" führt zu den Menüknöpfen.
+    void DrawMapPicker() {
+        const float s = Scale();
+        const float H = static_cast<float>(GetScreenHeight());
+        const float x = 90 * s, y = H * 0.12f, w = 520 * s;
+        Text("NEUES SPIEL", x, y, 56 * s, ACCENT);
+        Text("Auf welcher Karte?", x + 4 * s, y + 70 * s, 26 * s, TEXT);
+        const float bh = 54 * s, by = H * 0.86f - bh;
+        const bool start = mapList_.Draw({x, y + 116 * s, w, by - 20 * s - (y + 116 * s)}, s, "Standardkarte (Zufall)");
+        const float gap = 14 * s, bw = (w - gap) * 0.5f;
+        const bool play = Button({x, by, bw, bh}, "Spielen", 26 * s, false, mapList_.HasSelection());
+        const bool back = Button({x + bw + gap, by, bw, bh}, "Zurück", 26 * s, false);
+        if ((start || play) && mapList_.HasSelection()) {
+            const int i = mapList_.SelectedMap();
+            pickMap_ = false;
+            g_audio.Play(Sfx::UiConfirm);
+            NewGame(i >= 0 ? mapList_.Maps()[static_cast<size_t>(i)].stem : std::string());
+        } else if (back || ui::BackPressed()) {
+            pickMap_ = false;
+            g_audio.Play(Sfx::UiBack);
+        }
     }
 
     // Einzelspiel: HUD, dazu je nach Lage Endbildschirm oder Stationsfenster.
@@ -1023,6 +1092,9 @@ private:
     TestOptions opt_;
     World world_;                             // Einzelspiel, Simulation oder Menü-Hintergrund
     std::unique_ptr<MultiplayerScreen> mp_;   // nur im Mehrspieler vorhanden
+    std::unique_ptr<MapEditorScreen> editor_; // nur im Karteneditor vorhanden
+    MapListView mapList_;                     // Kartenauswahl bei "Neues Spiel"
+    bool pickMap_ = false;                    // Hauptmenü zeigt gerade die Kartenauswahl
     Screen screen_ = Screen::Menu;
     OptionsScreen options_;                   // Optionen aus Hauptmenü und Pause
     Screen optionsReturn_ = Screen::Menu;     // wohin "Zurück" aus den Optionen führt (Menu oder Paused)

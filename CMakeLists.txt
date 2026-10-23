@@ -28,6 +28,7 @@ endif ()
 set(MONDSCHUERFER_SHARED_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/World.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/WorldGen.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shared/GameMap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Ai.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Models.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/GameSettings.cpp
@@ -93,6 +94,8 @@ add_executable(Mondschuerfer
         src/Options.cpp
         src/TiltShift.cpp
         src/Controls.cpp
+        src/MapFiles.cpp
+        src/MapEditor.cpp
         ${MONDSCHUERFER_SHARED_SOURCES}
 )
 

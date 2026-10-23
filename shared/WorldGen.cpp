@@ -193,6 +193,24 @@ void World::GenerateTerrain() {
     }
 }
 
+// ===========================================================================
+// Eigene Karte (Karteneditor, shared/GameMap.hpp)
+//
+// GenerateTerrain läuft vorher trotzdem: Es zieht die Zufallszahlen in der
+// gewohnten Reihenfolge, Lagerstätten und Piraten entstehen also genau wie
+// ohne Karte (wichtig für den Spielstand, der nur den Seed speichert).
+// Danach wird die Deko im Spielfeld weggeworfen und durch die Teile der Karte
+// ersetzt. Der Felswall steht außerhalb von +-WORLD_HALF und bleibt.
+// ===========================================================================
+void World::ApplyMap(const GameMap& m) {
+    std::vector<Deco> keep;
+    for (const Deco& d : decos)
+        if (fabsf(d.pos.x) > cfg::WORLD_HALF || fabsf(d.pos.z) > cfg::WORLD_HALF) keep.push_back(d);
+    decos = std::move(keep);
+    for (const MapPiece& p : m.pieces) decos.push_back({ModelId(p.model), {p.x, MapPieceY(p), p.z}, p.yaw, p.scale, 0.0f});
+    monorails = FindMonorailLoops(m.pieces);
+}
+
 // ---------------------------------------------------------------------------
 // Stationen
 //
