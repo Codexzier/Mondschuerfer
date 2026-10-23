@@ -45,6 +45,9 @@ namespace cfg {
 // Ressourcenpunkte", World.cpp und GameServer.cpp) und im HUD (Hud.cpp).
 // Bei einer Änderung dort mit anpassen.
 constexpr int GOAL_POINTS = 100000;
+// Kontostand beim Start (neues Spiel, neuer Mehrspieler-Spieler, nach dem
+// letzten Leben). Zum Testen der neuen Inhalte 10.000; im normalen Spiel 0.
+constexpr long long START_BALANCE = 10000;
 
 // Welt
 constexpr float WORLD_HALF = 300.0f;        // Spielfeld geht von -WORLD_HALF bis +WORLD_HALF (x und z), also 600 x 600

@@ -284,7 +284,7 @@ struct PlayerState {
     std::string name;
     ShipInput input;             // Eingaben für den nächsten Update-Schritt
 
-    long long balance = 0;       // Kontostand (Ziel: cfg::GOAL_POINTS)
+    long long balance = cfg::START_BALANCE;   // Kontostand (Ziel: cfg::GOAL_POINTS)
     long long delivered = 0;     // selbst abgelieferte Ressourcen (Statistik)
     int lives = cfg::START_LIVES; // verbleibende Leben inkl. des aktuellen Schiffs (Mehrspieler: settings.lives)
     int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};   // Stufe je cfg::Upgrade, 0..cfg::UPGRADE_MAX (des geflogenen Schiffs)

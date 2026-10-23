@@ -371,7 +371,7 @@ void World::SpawnPlayerShip(PlayerState& ps) {
 // kills, deaths, goals) bleibt.
 // Aufgerufen von PlayerShipLost und GameServer (Abmelden im Absturz).
 void World::ResetProgress(PlayerState& ps) {
-    ps.balance = 0;
+    ps.balance = cfg::START_BALANCE;
     for (int& u : ps.upgrades) u = 0;
     ps.shipType = cfg::SHIP_START;   // auch gekaufte Schiffe sind weg
     ps.hangar.clear();

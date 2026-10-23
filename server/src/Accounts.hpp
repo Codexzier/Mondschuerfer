@@ -60,7 +60,7 @@
 // bleibt. Entspricht den Feldern von PlayerState (shared/World.hpp), die nach
 // dem Abmelden noch gebraucht werden.
 struct PlayerProgress {
-    long long balance = 0;                      // Kontostand (Ziel: cfg::GOAL_POINTS)
+    long long balance = cfg::START_BALANCE;     // Kontostand (Ziel: cfg::GOAL_POINTS)
     long long delivered = 0;                    // selbst abgelieferte Ressourcen (Statistik)
     int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0}; // Stufen 0..cfg::UPGRADE_MAX
     int shipType = 0;                           // Typ des geflogenen Schiffs (cfg::ShipTypeId)

@@ -1276,7 +1276,7 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
     if (const Ship* s = world_.PlayerShip(ps)) c.lastPos = s->pos;
     c.depositsSent = false;
 
-    const bool returning = account && (account->progress.balance > 0 || account->progress.round > 1 ||
+    const bool returning = account && (account->progress.balance != cfg::START_BALANCE || account->progress.round > 1 ||
                                        account->progress.upgrades[0] + account->progress.upgrades[1] +
                                                account->progress.upgrades[2] + account->progress.upgrades[3] +
                                                account->progress.upgrades[4] > 0 ||
