@@ -5,7 +5,7 @@
 // Ablauf eines Clips:
 //   1. Open(): Die Datei wird zweimal geöffnet. Der erste Decoder liest nur
 //      den Ton und entpackt ihn sofort ganz (die Clips sind wenige Sekunden
-//      lang, 16 kHz: unter 1 MB) in einen raylib-Sound. Der zweite liest nur
+//      lang, 32 kHz: etwa 2 MB) in einen raylib-Sound. Der zweite liest nur
 //      das Bild und bleibt offen. So braucht der Ton keinen Stream, der
 //      jedes Frame nachgefüllt werden müsste.
 //   2. Update(): Sound starten, eigene Uhr t_ weiterzählen und so viele
@@ -75,6 +75,14 @@ void ClipPlayer::Open(const std::string& file) {
             std::vector<float> pcm;
             while (plm_samples_t* smp = plm_decode_audio(a))
                 pcm.insert(pcm.end(), smp->interleaved, smp->interleaved + smp->count * 2);
+            // pl_mpeg liest nur MPEG-1-Ton (32, 44,1 oder 48 kHz). MPEG-2-Ton
+            // (z. B. 16 kHz) erkennt es nicht und liefert höchstens ein kurzes
+            // Knacken: Ist der Ton viel kürzer als das Bild, bleibt der Clip stumm.
+            const double len = rate > 0 ? static_cast<double>(pcm.size() / 2) / rate : 0.0;
+            if (len < 0.5 * plm_get_duration(a)) {
+                TraceLog(LOG_WARNING, "CLIP: Ton von %s nicht lesbar (nur MPEG-1 Layer II, 32/44,1/48 kHz)", path.c_str());
+                pcm.clear();
+            }
             plm_destroy(a);
             if (rate > 0 && !pcm.empty()) {
                 Wave wave{static_cast<unsigned int>(pcm.size() / 2), static_cast<unsigned int>(rate), 32, 2, pcm.data()};

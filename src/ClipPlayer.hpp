@@ -19,8 +19,11 @@
 // Abhängigkeiten:
 //   - raylib (Textur, Sound), third_party/pl_mpeg (MPEG-1-Video, MP2-Ton).
 //   - shared/Config.hpp: cfg::MISSIONS (Clip je Missionsart und Phase).
-//   Die Clips müssen MPEG-1 mit MP2-Ton sein (so liegen sie vor); anderes
-//   kann pl_mpeg nicht lesen. Fehlt eine Datei, bleibt es beim Untertitel.
+//   Die Clips müssen MPEG-1-Video mit MPEG-1-Layer-II-Ton (MP2, 32, 44,1
+//   oder 48 kHz) sein; anderes kann pl_mpeg nicht lesen. Umwandeln, das Bild
+//   bleibt dabei unverändert:
+//     ffmpeg -i alt.mpg -c:v copy -c:a mp2 -ar 32000 -ac 1 -b:a 128k -f mpeg neu.mpg
+//   Fehlt eine Datei, bleibt es beim Untertitel; unlesbarer Ton = stumm.
 // ---------------------------------------------------------------------------
 #include "raylib.h"
 #include <string>
