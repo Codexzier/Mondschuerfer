@@ -7,6 +7,8 @@
         zeichnet daraus Auslastung, Spielerliste, Bestenliste und Formular neu.
      2. Das Formular "Spielparameter" schickt Änderungen per POST an
         /api/settings bzw. /api/settings/reset.
+     3. Der Bereich "Schiffe" schickt die ganze Schiffsliste per POST an
+        /api/ships (eigenes Speichern, unabhängig von den Spielparametern).
 
    WOHER KOMMEN DIE DATEN?
      Der Spiel-Thread des Servers legt einmal pro Sekunde eine Kopie seines
@@ -42,7 +44,7 @@
         { letter: 'P', name: 'Panzerung', max: UPGRADE_MAX },
         { letter: 'W', name: 'Waffen', max: UPGRADE_MAX },
         { letter: 'L', name: 'Lager', max: UPGRADE_MAX },
-        { letter: 'K', name: 'Kanonen', max: 2 },   // cfg::UPGRADE_MAX[UP_GUNS]
+        { letter: 'K', name: 'Kanonen', max: 4 },   // cfg::UPGRADE_MAX[UP_GUNS] (je Schiff ShipType::guns - 1)
     ];
     const MAX_STAGE = 7;             // cfg::STATION_STAGES - 1 (Stufen 0..7)
     const PRESET_ENEMIES = { easy: 0, medium: 3, hard: 20 };   // EnemiesForDifficulty()
@@ -68,6 +70,10 @@
         baseline: null,        // Einstellungen, die zuletzt ins Formular geladen wurden
         savedPending: null,    // { settings, until }: gerade gespeichert, Spiel-Thread hat noch nicht übernommen
         saving: false,
+        shipsBaseline: null,   // Schiffe, die zuletzt in die Tabelle geladen wurden
+        shipsPending: null,    // { ships, until }: wie savedPending, für den Bereich "Schiffe"
+        shipsSaving: false,
+        shipModels: [],        // wählbare Modelle (aus /api/status)
         playersKey: '',        // Vergleichswert, um die Tabelle nur bei Änderungen neu zu bauen
         highscoreKey: '',
     };
@@ -222,6 +228,7 @@
         renderPlayers(d, false);
         renderHighscores(d);
         syncForm(d);
+        syncShips(d);
     }
 
     function renderHeader(d) {
@@ -689,6 +696,248 @@
     }
 
     // =========================================================================
+    // Bereich "Schiffe"
+    // Eine Zeile je Schiffstyp mit Eingabefeldern. Index 0 = Startschiff.
+    // Gespeichert wird immer die ganze Liste (POST /api/ships).
+    // =========================================================================
+    const shipsForm = () => $('ships-form');
+    const SHIP_NUMBERS = [   // Feld, Beschriftung, Grenzen aus "limits" in /api/status
+        ['shield', 'Schild', 'minShipShield', 'maxShipShield'],
+        ['scanner', 'Scanner', 'minShipPercent', 'maxShipPercent'],
+        ['speed', 'Antrieb', 'minShipSpeed', 'maxShipSpeed'],
+        ['weapon', 'Waffen', 'minShipPercent', 'maxShipPercent'],
+        ['cargo', 'Lager', 'minShipCargo', 'maxShipCargo'],
+        ['cost', 'Preis', null, 'maxShipCost'],
+        ['guns', 'Kanonen', null, 'maxGuns'],
+    ];
+    const NEW_SHIP = { name: 'Neues Schiff', model: 'craft_racer', shield: 100, scanner: 100, speed: 100, weapon: 100,
+        cargo: 300, cost: 10000, guns: 3, forSale: true };
+
+    const shipLimits = () => (state.status && state.status.limits) || {};
+    const sameShips = (a, b) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+
+    // Werte in fester Reihenfolge der Schlüssel (für den Vergleich per JSON)
+    function normShip(s) {
+        return { name: String(s.name), model: String(s.model), shield: Number(s.shield), scanner: Number(s.scanner),
+            speed: Number(s.speed), weapon: Number(s.weapon), cargo: Number(s.cargo), cost: Number(s.cost),
+            guns: Number(s.guns), forSale: !!s.forSale };
+    }
+
+    function shipInput(type, field, value, label) {
+        const input = el('input');
+        input.type = type;
+        input.dataset.field = field;
+        input.setAttribute('aria-label', label);
+        if (type === 'checkbox') input.checked = !!value;
+        else input.value = String(value);
+        return input;
+    }
+
+    function shipRow(s, i) {
+        const lim = shipLimits();
+        const tr = document.createElement('tr');
+        const nr = `Schiff ${i + 1}`;
+        tr.appendChild(el('td', 'num ship-nr', String(i + 1)));
+        const name = shipInput('text', 'name', s.name, `${nr}: Name`);
+        name.autocomplete = 'off';
+        name.spellcheck = false;
+        const nameTd = el('td');
+        nameTd.appendChild(name);
+        tr.appendChild(nameTd);
+
+        const sel = el('select');
+        sel.dataset.field = 'model';
+        sel.setAttribute('aria-label', `${nr}: Modell`);
+        const models = state.shipModels.includes(s.model) ? state.shipModels : state.shipModels.concat([s.model]);
+        models.forEach((m) => sel.appendChild(el('option', '', m)));
+        sel.value = s.model;
+        const selTd = el('td');
+        selTd.appendChild(sel);
+        tr.appendChild(selTd);
+
+        SHIP_NUMBERS.forEach(([field, label, minKey, maxKey]) => {
+            const input = shipInput('number', field, s[field], `${nr}: ${label}`);
+            input.min = String(minKey ? lim[minKey] : field === 'guns' ? 1 : 0);
+            if (lim[maxKey] !== undefined) input.max = String(lim[maxKey]);
+            input.step = '1';
+            input.inputMode = 'numeric';
+            const td = el('td', 'num');
+            td.appendChild(input);
+            tr.appendChild(td);
+        });
+
+        const sale = shipInput('checkbox', 'forSale', s.forSale, `${nr}: im Verkauf`);
+        const saleTd = el('td');
+        saleTd.appendChild(sale);
+        tr.appendChild(saleTd);
+        return tr;
+    }
+
+    function fillShips(list) {
+        const rows = document.createDocumentFragment();
+        list.forEach((s, i) => rows.appendChild(shipRow(s, i)));
+        $('ships-body').replaceChildren(rows);
+    }
+
+    function readShips() {
+        return Array.from($('ships-body').children).map((tr) => {
+            const s = {};
+            tr.querySelectorAll('[data-field]').forEach((input) => {
+                const f = input.dataset.field;
+                if (f === 'forSale') s[f] = input.checked;
+                else if (f === 'name') s[f] = input.value.trim();
+                else if (f === 'model') s[f] = input.value;
+                else s[f] = Number(input.value);
+            });
+            return normShip(s);
+        });
+    }
+
+    const shipsDirty = () => state.shipsBaseline !== null && !sameShips(readShips(), state.shipsBaseline);
+
+    function shipsEditing() {
+        const a = document.activeElement;
+        return !!a && shipsForm().contains(a) && (a.tagName === 'INPUT' || a.tagName === 'SELECT');
+    }
+
+    function updateShipsUi() {
+        const dirty = shipsDirty();
+        const max = Number(shipLimits().maxShipTypes) || 8;
+        $('ships-dirty-note').hidden = !dirty;
+        $('btn-ships-save').disabled = !dirty || state.shipsSaving;
+        $('btn-ships-discard').disabled = !dirty || state.shipsSaving;
+        $('btn-ships-add').disabled = state.shipsSaving || state.shipsBaseline === null || $('ships-body').childElementCount >= max;
+    }
+
+    function loadShips(list) {
+        const ships = list.map(normShip);
+        fillShips(ships);
+        state.shipsBaseline = ships;
+    }
+
+    // Wird nach jeder Statusabfrage aufgerufen (wie syncForm).
+    function syncShips(d) {
+        if (Array.isArray(d.shipModels)) state.shipModels = d.shipModels.slice();
+        if (!Array.isArray(d.ships)) return;
+        const server = d.ships.map(normShip);
+        if (state.shipsPending) {
+            if (sameShips(server, state.shipsPending.ships) || Date.now() > state.shipsPending.until) {
+                state.shipsPending = null;
+            } else {
+                updateShipsUi();
+                return;
+            }
+        }
+        const dirty = shipsDirty();
+        if (state.shipsBaseline === null || (!dirty && !shipsEditing() && !state.shipsSaving)) {
+            if (!sameShips(server, state.shipsBaseline)) loadShips(server);
+            $('ships-stale-note').hidden = true;
+        } else {
+            $('ships-stale-note').hidden = !dirty || sameShips(server, state.shipsBaseline);
+        }
+        updateShipsUi();
+    }
+
+    function showShipsMessage(text, kind) {
+        const box = $('ships-msg');
+        box.textContent = text;
+        box.className = `note ${kind === 'ok' ? 'note-ok' : 'note-error'}`;
+        box.hidden = false;
+    }
+
+    // Prüft die Eingaben vor dem Senden (der Server prüft trotzdem noch einmal).
+    function validateShips() {
+        const maxBytes = Number(shipLimits().maxShipName) || 24;
+        const rows = Array.from($('ships-body').children);
+        for (let i = 0; i < rows.length; i++) {
+            const nr = `Schiff ${i + 1}`;
+            const name = rows[i].querySelector('[data-field="name"]');
+            const n = encoder.encode(name.value.trim()).length;
+            if (n === 0) return fail(name, `${nr}: Bitte einen Namen eingeben.`);
+            if (n > maxBytes) return fail(name, `${nr}: Der Name ist zu lang (${n} von höchstens ${maxBytes} Byte; Umlaute zählen doppelt).`);
+            for (const [field, label] of SHIP_NUMBERS) {
+                const input = rows[i].querySelector(`[data-field="${field}"]`);
+                const v = Number(input.value);
+                const min = Number(input.min), max = Number(input.max);
+                if (input.value.trim() === '' || !Number.isInteger(v) || v < min || v > max) {
+                    return fail(input, `${nr}, ${label}: bitte eine ganze Zahl von ${min} bis ${max} eingeben.`);
+                }
+            }
+        }
+        return true;
+
+        function fail(input, text) {
+            showShipsMessage(text, 'error');
+            input.focus();
+            return false;
+        }
+    }
+
+    async function onShipsSave(ev) {
+        ev.preventDefault();
+        if (state.shipsSaving || !validateShips()) return;
+        const ships = readShips();
+        const body = new URLSearchParams();
+        body.set('count', String(ships.length));
+        ships.forEach((s, i) => {
+            Object.keys(s).forEach((k) => body.set(`${k}${i}`, k === 'forSale' ? (s[k] ? '1' : '0') : String(s[k])));
+        });
+        state.shipsSaving = true;
+        updateShipsUi();
+        try {
+            const res = await fetch('/api/ships', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'X-Requested-With': 'mondschuerfer',   // CSRF-Schutz wie bei den Spielparametern
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    Accept: 'application/json',
+                },
+                body: body.toString(),
+            });
+            let data = null;
+            try { data = await res.json(); } catch (e) { data = null; }
+            if (res.ok && data && data.ok && Array.isArray(data.ships)) {
+                loadShips(data.ships);
+                state.shipsPending = { ships: state.shipsBaseline, until: Date.now() + SAVE_SETTLE_MS };
+                $('ships-stale-note').hidden = true;
+                showShipsMessage(data.message || 'Gespeichert.', 'ok');
+            } else if (res.status === 401) {
+                showShipsMessage('Nicht angemeldet – bitte die Seite neu laden.', 'error');
+            } else {
+                showShipsMessage((data && data.error) || `Speichern fehlgeschlagen (HTTP ${res.status}).`, 'error');
+            }
+        } catch (e) {
+            showShipsMessage('Speichern fehlgeschlagen: keine Verbindung zum Server.', 'error');
+        } finally {
+            state.shipsSaving = false;
+            updateShipsUi();
+        }
+    }
+
+    function onShipsDiscard() {
+        if (!state.status || !Array.isArray(state.status.ships)) return;
+        loadShips(state.status.ships);
+        $('ships-stale-note').hidden = true;
+        $('ships-msg').hidden = true;
+        updateShipsUi();
+    }
+
+    // Neue Zeile mit Beispielwerten; erst "Speichern" legt das Schiff an.
+    function onShipsAdd() {
+        const body = $('ships-body');
+        const max = Number(shipLimits().maxShipTypes) || 8;
+        if (body.childElementCount >= max) return;
+        const s = { ...NEW_SHIP };
+        if (!state.shipModels.includes(s.model) && state.shipModels.length) s.model = state.shipModels[0];
+        const row = shipRow(s, body.childElementCount);
+        body.appendChild(row);
+        row.querySelector('[data-field="name"]').focus();
+        updateShipsUi();
+    }
+
+    // =========================================================================
     // Start: Ereignisse verbinden, erste Abfrage
     // =========================================================================
     function init() {
@@ -706,6 +955,14 @@
         $('btn-discard').addEventListener('click', onDiscard);
         $('btn-reset').addEventListener('click', onReset);
         updateDirtyUi();
+
+        const sf = shipsForm();
+        sf.addEventListener('submit', onShipsSave);
+        sf.addEventListener('input', updateShipsUi);
+        sf.addEventListener('change', updateShipsUi);
+        $('btn-ships-discard').addEventListener('click', onShipsDiscard);
+        $('btn-ships-add').addEventListener('click', onShipsAdd);
+        updateShipsUi();
 
         // Tab wieder sichtbar: sofort aktualisieren statt bis zu 10 s zu warten
         document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });

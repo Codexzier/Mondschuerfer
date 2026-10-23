@@ -1220,7 +1220,7 @@ bool World::Repair(PlayerState& ps) {
 
 int World::UpgradeCost(const PlayerState& ps, int type) const {
     if (type < 0 || type >= cfg::UP_COUNT) return -1;
-    if (ps.upgrades[type] >= cfg::UPGRADE_MAX[type]) return -1;
+    if (ps.upgrades[type] >= ShipUpgradeMax(settings.Ship(ps.shipType), type)) return -1;
     return cfg::UPGRADE_COST[type][ps.upgrades[type]];
 }
 
@@ -1240,10 +1240,12 @@ bool World::BuyUpgrade(PlayerState& ps, int type) {
 }
 
 // Überträgt Schiffstyp und Aufrüstungsstufen auf die Werte und das Modell
-// des Schiffs (Tabellen und ShipSpeed/ShipArmor ... in Config.hpp). refill = true: neues Schiff, Schild voll. Sonst bleibt ein
+// des Schiffs (Tabellen in Config.hpp, ShipSpeed/ShipArmor ... in
+// GameSettings.hpp). refill = true: neues Schiff, Schild voll. Sonst bleibt ein
 // Schaden erhalten; wird die Panzerung verbessert, wächst der aktuelle
 // Schild um denselben Betrag wie das Maximum (der Kauf "repariert" also
-// nicht, aber er schadet auch nicht).
+// nicht, aber er schadet auch nicht). Wird das Maximum kleiner (der Betreiber
+// hat den Schiffstyp geändert), sinkt der Schild höchstens auf das neue Maximum.
 // Auch GameServer::RestoreProgress ruft das nach dem Laden eines Kontos auf.
 void World::ApplyUpgrades(PlayerState& ps, bool refill) {
     Ship* sp = PlayerShip(ps);
@@ -1251,21 +1253,22 @@ void World::ApplyUpgrades(PlayerState& ps, bool refill) {
     Ship& p = *sp;
     float oldMax = p.maxHp;
     // Typ begrenzen: er dient als Index (kommt auch aus Spielstand und Konto)
-    ps.shipType = std::clamp(ps.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
-    const int t = ps.shipType;
-    p.model = mdl.shipTypes[t];
-    p.maxSpeed = cfg::ShipSpeed(t, ps.upgrades[cfg::UP_SPEED]);
-    p.maxHp = cfg::ShipArmor(t, ps.upgrades[cfg::UP_ARMOR]);
-    p.damage = cfg::ShipDamage(t, ps.upgrades[cfg::UP_WEAPON]);
+    ps.shipType = std::clamp(ps.shipType, 0, settings.ShipCount() - 1);
+    const ShipType& t = settings.Ship(ps.shipType);
+    p.model = ModelId(t.model);
+    p.maxSpeed = ShipSpeed(t, ps.upgrades[cfg::UP_SPEED]);
+    p.maxHp = ShipArmor(t, ps.upgrades[cfg::UP_ARMOR]);
+    p.damage = ShipDamage(t, ps.upgrades[cfg::UP_WEAPON]);
     p.fireInterval = cfg::WEAPON_RATE[ps.upgrades[cfg::UP_WEAPON]];
-    p.guns = cfg::GUN_COUNT[ps.upgrades[cfg::UP_GUNS]];
-    p.cargoMax = cfg::ShipCargo(t, ps.upgrades[cfg::UP_CARGO]);
+    p.guns = ShipGuns(t, ps.upgrades[cfg::UP_GUNS]);
+    p.cargoMax = ShipCargo(t, ps.upgrades[cfg::UP_CARGO]);
     if (refill) p.hp = p.maxHp;
     else if (p.maxHp > oldMax) p.hp += p.maxHp - oldMax;
+    p.hp = std::min(p.hp, p.maxHp);
 }
 
 float World::ScannerRadius(const PlayerState& ps) const {
-    return cfg::ShipScanner(std::clamp(ps.shipType, 0, cfg::SHIP_TYPE_COUNT - 1));
+    return ShipScanner(settings.Ship(ps.shipType));
 }
 
 // ===========================================================================
@@ -1281,15 +1284,15 @@ bool World::OwnsShipType(const PlayerState& ps, int type) const {
 // Gutschrift für das geflogene Schiff: TRADE_IN_PERCENT von Kaufpreis und
 // allen bezahlten Aufrüstungen (UPGRADE_COST der erreichten Stufen).
 int World::TradeInValue(const PlayerState& ps) const {
-    long long value = cfg::SHIP_TYPES[std::clamp(ps.shipType, 0, cfg::SHIP_TYPE_COUNT - 1)].cost;
+    long long value = settings.Ship(ps.shipType).cost;
     for (int u = 0; u < cfg::UP_COUNT; ++u)
         for (int l = 0; l < ps.upgrades[u] && l < cfg::UPGRADE_LEVELS; ++l) value += cfg::UPGRADE_COST[u][l];
     return static_cast<int>(value * cfg::TRADE_IN_PERCENT / 100);
 }
 
 int World::ShipPrice(const PlayerState& ps, int type, bool tradeIn) const {
-    if (type < 0 || type >= cfg::SHIP_TYPE_COUNT || OwnsShipType(ps, type)) return -1;
-    return cfg::SHIP_TYPES[type].cost - (tradeIn ? TradeInValue(ps) : 0);
+    if (type < 0 || type >= settings.ShipCount() || !settings.Ship(type).forSale || OwnsShipType(ps, type)) return -1;
+    return settings.Ship(type).cost - (tradeIn ? TradeInValue(ps) : 0);
 }
 
 // Neues Schiff kaufen. tradeIn = altes Schiff in Zahlung geben (es ist dann
@@ -1300,7 +1303,8 @@ bool World::BuyShip(PlayerState& ps, int type, bool tradeIn) {
     Ship* sp = PlayerShip(ps);
     if (!sp) return false;
     const int cost = ShipPrice(ps, type, tradeIn);
-    if (type < 0 || type >= cfg::SHIP_TYPE_COUNT || OwnsShipType(ps, type) || ps.balance < cost) return false;
+    if (type < 0 || type >= settings.ShipCount() || !settings.Ship(type).forSale || OwnsShipType(ps, type) || ps.balance < cost)
+        return false;
     ps.balance -= cost;
     if (!tradeIn) {
         OwnedShip old;
@@ -1314,7 +1318,7 @@ bool World::BuyShip(PlayerState& ps, int type, bool tradeIn) {
     ApplyUpgrades(ps, true);
     sp->cargo = std::min(sp->cargo, sp->cargoMax);
     SoundAt(Sfx::Upgrade, sp->pos, 1.0f, 0.0f, ps.id);
-    if (!simulation) Notify(ps, Fmt("Neues Schiff: %s", cfg::SHIP_TYPES[type].name), Color{150, 255, 90, 255});
+    if (!simulation) Notify(ps, Fmt("Neues Schiff: %s", settings.Ship(type).name.c_str()), Color{150, 255, 90, 255});
     return true;
 }
 
@@ -1334,7 +1338,7 @@ bool World::SwitchShip(PlayerState& ps, int type) {
     if (next.hp > 0.0f) sp->hp = std::min(next.hp, sp->maxHp);
     sp->cargo = std::min(sp->cargo, sp->cargoMax);
     SoundAt(Sfx::Upgrade, sp->pos, 1.0f, 0.0f, ps.id);
-    if (!simulation) Notify(ps, Fmt("Schiff gewechselt: %s", cfg::SHIP_TYPES[next.type].name), Color{150, 255, 90, 255});
+    if (!simulation) Notify(ps, Fmt("Schiff gewechselt: %s", settings.Ship(next.type).name.c_str()), Color{150, 255, 90, 255});
     return true;
 }
 
@@ -1747,14 +1751,27 @@ void World::FireBullet(Ship& s) {
     // mehreren Schiffen wechseln die Seiten daher nicht streng pro Schiff.
     static int toggle = 0;
     toggle ^= 1;
-    // Mehrere Kanonen (Upgrade): alle schießen gleichzeitig. 2 Schüsse aus
-    // beiden Kanonen, 3 Schüsse zusätzlich einer in der Mitte, jeweils im
-    // Fächer (cfg::GUN_SPREAD). Mit einer Kanone wie bisher abwechselnd.
-    const int n = std::max(1, s.guns);
+    // Mehrere Kanonen (Upgrade): alle schießen gleichzeitig. Je Kanone ein
+    // seitlicher Versatz und ein Winkel in Grad (gleiches Vorzeichen = nach
+    // außen): 2 parallel, 3 = Mitte und ±GUN_ANGLE_INNER, 4 = zwei parallel
+    // und ±GUN_ANGLE_INNER, 5 = Mitte, ±GUN_ANGLE_INNER und ±GUN_ANGLE_OUTER.
+    // Mit einer Kanone wie bisher abwechselnd links und rechts.
+    struct Gun {
+        float side, angle;
+    };
+    constexpr float in = cfg::GUN_ANGLE_INNER, out = cfg::GUN_ANGLE_OUTER;
+    static constexpr Gun LAYOUT[cfg::MAX_GUNS][cfg::MAX_GUNS] = {
+        {{0.0f, 0.0f}},
+        {{-0.55f, 0.0f}, {0.55f, 0.0f}},
+        {{0.0f, 0.0f}, {-0.55f, -in}, {0.55f, in}},
+        {{-0.55f, 0.0f}, {0.55f, 0.0f}, {-1.1f, -in}, {1.1f, in}},
+        {{0.0f, 0.0f}, {-0.55f, -in}, {0.55f, in}, {-1.1f, -out}, {1.1f, out}},
+    };
+    const int n = std::clamp(s.guns, 1, cfg::MAX_GUNS);
     for (int i = 0; i < n; ++i) {
-        const float k = n == 1 ? 0.0f : static_cast<float>(i) - 0.5f * static_cast<float>(n - 1);   // -1..1 um die Mitte
-        const float sideOffset = n == 1 ? (toggle ? 0.55f : -0.55f) : k * (n == 2 ? 1.1f : 0.55f);
-        Vector3 dir = ForwardFromYaw(s.yaw + spread + k * cfg::GUN_SPREAD);
+        const Gun& g = LAYOUT[n - 1][i];
+        const float sideOffset = n == 1 ? (toggle ? 0.55f : -0.55f) : g.side;
+        Vector3 dir = ForwardFromYaw(s.yaw + spread + g.angle * DEG2RAD);
         Bullet b;
         b.pos = Vector3Add(s.pos, Vector3Add(Vector3Scale(fwd, 1.5f), Vector3Scale(side, sideOffset)));
         b.pos.y = s.pos.y + 0.25f;

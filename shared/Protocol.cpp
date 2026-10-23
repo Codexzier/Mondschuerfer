@@ -246,6 +246,20 @@ void WriteSettings(Writer& w, const GameSettings& s) {
     w.U8(static_cast<uint8_t>(s.maxPlayers));
     w.U8(static_cast<uint8_t>(s.lives));
     w.U8(static_cast<uint8_t>(s.missions));
+    w.U8(static_cast<uint8_t>(std::min<size_t>(s.ships.size(), 255)));
+    for (size_t i = 0; i < s.ships.size() && i < 255; ++i) {
+        const ShipType& t = s.ships[i];
+        w.Str(t.name);
+        w.Str(t.model);
+        w.U16(static_cast<uint16_t>(t.shield));
+        w.U16(static_cast<uint16_t>(t.scanner));
+        w.U16(static_cast<uint16_t>(t.speed));
+        w.U16(static_cast<uint16_t>(t.weapon));
+        w.U16(static_cast<uint16_t>(t.cargo));
+        w.I32(t.cost);
+        w.U8(static_cast<uint8_t>(t.guns));
+        w.U8(t.forSale ? 1 : 0);
+    }
 }
 
 void ReadSettings(Reader& r, GameSettings& s) {
@@ -258,6 +272,22 @@ void ReadSettings(Reader& r, GameSettings& s) {
     s.maxPlayers = r.U8();
     s.lives = r.U8();
     s.missions = r.U8();
+    const uint8_t ships = r.U8();
+    s.ships.clear();
+    for (uint8_t i = 0; i < ships && r.ok(); ++i) {
+        ShipType t;
+        t.name = r.Str();
+        t.model = r.Str();
+        t.shield = r.U16();
+        t.scanner = r.U16();
+        t.speed = r.U16();
+        t.weapon = r.U16();
+        t.cargo = r.U16();
+        t.cost = r.I32();
+        t.guns = r.U8();
+        t.forSale = r.U8() != 0;
+        s.ships.push_back(t);
+    }
     Sanitize(s);   // ungültige Werte (z. B. von einem fremden Server) auf erlaubte Grenzen bringen
 }
 
@@ -968,6 +998,18 @@ bool Decode(Reader& r, HighscoresMsg& m) {
     return r.ok();
 }
 
+std::vector<uint8_t> Encode(const SettingsMsg& m) {
+    Writer w;
+    Start(MsgType::Settings, w);
+    WriteSettings(w, m.settings);
+    return w.buf;
+}
+
+bool Decode(Reader& r, SettingsMsg& m) {
+    ReadSettings(r, m.settings);
+    return r.ok();
+}
+
 // ===========================================================================
 // Modellvarianten
 // Statt einer Modell-ID (die je Programm anders vergeben sein könnte, siehe
@@ -986,19 +1028,22 @@ ModelIds DefaultModelIds() {
     m.crystalSmall = ModelId("rock_crystals");
     m.crystalA = ModelId("rock_crystalsLargeA");
     m.crystalB = ModelId("rock_crystalsLargeB");
+    m.ships = {m.player, m.pirateA, m.pirateB, m.elite, m.miner, m.cargoA, m.cargoB};
+    for (const std::string& name : ShipModelNames()) {
+        const int id = ModelId(name);
+        if (std::find(m.ships.begin(), m.ships.end(), id) == m.ships.end()) m.ships.push_back(id);
+    }
     return m;
 }
 
 uint8_t ShipVariant(const ModelIds& m, int model) {
-    const int list[7] = {m.player, m.pirateA, m.pirateB, m.elite, m.miner, m.cargoA, m.cargoB};
-    for (int i = 0; i < 7; ++i)
-        if (list[i] == model) return static_cast<uint8_t>(i);
+    for (size_t i = 0; i < m.ships.size(); ++i)
+        if (m.ships[i] == model) return static_cast<uint8_t>(i);
     return 0;
 }
 
 int ShipModel(const ModelIds& m, uint8_t variant) {
-    const int list[7] = {m.player, m.pirateA, m.pirateB, m.elite, m.miner, m.cargoA, m.cargoB};
-    return list[variant < 7 ? variant : 0];
+    return variant < m.ships.size() ? m.ships[variant] : m.player;
 }
 
 uint8_t DepositVariant(const ModelIds& m, int model) {

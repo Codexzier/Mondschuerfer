@@ -123,6 +123,14 @@ löscht `settings.txt`; ab dann gelten wieder die Werte aus `.env`/`docker-compo
 Startmeldung steht, woher die Werte kommen (`Einstellungen : aus settings.txt …` bzw.
 `… aus den Umgebungsvariablen`).
 
+Die **Schiffe des Raumschiffsverkäufers** stellt man im eigenen Bereich **„Schiffe“** der Webseite ein:
+Name, Modell (alle `craft…`-Modelle), Schild (bis 500), Scanner, Antrieb und Waffen in Prozent, Lager,
+Preis, höchstens kaufbare Kanonen (1–5) und „Im Verkauf“. Weitere Schiffe lassen sich hinzufügen (bis
+zu 8 insgesamt), aber nicht entfernen, weil Spieler sie besitzen können. Gespeichert wird in
+`/data/ships.txt`; „Zurücksetzen“ der Spielparameter lässt die Schiffe unverändert. Änderungen gelten
+sofort, auch für Schiffe, die Spieler schon besitzen. Ohne `ships.txt` gelten die Standard-Schiffe aus
+`shared/Config.hpp` (wie im Einzelspieler).
+
 ### Umgebungsvariablen
 
 | Variable | Standard | Bedeutung |
@@ -404,6 +412,7 @@ Alles Wichtige liegt im Docker-Volume **`mondschuerfer-data`** (im Container `/d
 | `highscores.txt` | Bestenliste |
 | `server.txt` | **Server-Salz** (ohne es passt kein gespeicherter Schlüssel mehr – niemand könnte sich anmelden!), Karten-Seed, insgesamt abgelieferte Ressourcen (Ausbaustufe der Stationen) |
 | `settings.txt` | nur vorhanden, wenn auf der Webseite Einstellungen gespeichert wurden |
+| `ships.txt` | nur vorhanden, wenn auf der Webseite Schiffe gespeichert wurden |
 | `*.defekt-…` | Kopien von Dateien, in denen beim Laden kaputte Zeilen übersprungen wurden |
 
 Die Dateien sind einfacher Text. Ansehen ja – **bearbeiten nur bei gestopptem Server**, sonst

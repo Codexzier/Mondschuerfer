@@ -12,9 +12,10 @@
 // diese kleine Klasse mit einem Mutex (Sperre):
 //   - Der Spiel-Thread veröffentlicht einmal pro Sekunde eine KOPIE seines
 //     Zustands (PublishStatus). Die Webseite liest nur diese Kopie.
-//   - Die Webseite legt geänderte Einstellungen hier ab (RequestSettings);
-//     der Spiel-Thread holt sie zu Beginn des nächsten Schritts ab und wendet
-//     sie an (TakeSettingsRequest).
+//   - Die Webseite legt geänderte Einstellungen hier ab (RequestSettings,
+//     Schiffe getrennt mit RequestShips); der Spiel-Thread holt sie zu Beginn
+//     des nächsten Schritts ab und wendet sie an (TakeSettingsRequest,
+//     TakeShipsRequest).
 // So greift der Web-Thread nie direkt auf die Spielwelt zu.
 // ---------------------------------------------------------------------------
 #include "GameSettings.hpp"
@@ -75,6 +76,7 @@ struct ServerStatus {
     std::vector<HighscoreStatus> highscores;
     GameSettings settings;          // aktuell gültig
     GameSettings defaults;          // aus docker-compose.yml / Umgebungsvariablen
+    std::vector<std::string> shipModels;   // wählbare Schiffsmodelle (ShipModelNames, Models.hpp)
 };
 
 class SharedState {
@@ -97,6 +99,15 @@ public:
         return true;
     }
 
+    // Liefert true und füllt out, wenn die Webseite geänderte Schiffe geschickt hat.
+    bool TakeShipsRequest(std::vector<ShipType>& out) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (!pendingShips_) return false;
+        out = pendingShipList_;
+        pendingShips_ = false;
+        return true;
+    }
+
     // --- Web-Thread -------------------------------------------------------------
     bool GetStatus(ServerStatus& out) const {
         std::lock_guard<std::mutex> lock(m_);
@@ -115,6 +126,12 @@ public:
         pendingReset_ = true;
     }
 
+    void RequestShips(const std::vector<ShipType>& ships) {
+        std::lock_guard<std::mutex> lock(m_);
+        pendingShipList_ = ships;
+        pendingShips_ = true;
+    }
+
 private:
     mutable std::mutex m_;
     ServerStatus status_;
@@ -122,4 +139,6 @@ private:
     GameSettings pendingSettings_;
     bool pending_ = false;
     bool pendingReset_ = false;
+    std::vector<ShipType> pendingShipList_;
+    bool pendingShips_ = false;
 };

@@ -32,7 +32,8 @@
 //   4. Im Spiel: Client schickt Input (30/s) und DockAction.
 //      Server schickt Snapshot (15/s, Zuschauer 10/s), Events (bei Bedarf),
 //      Deposits (wenn sich die sichtbaren Lagerstätten ändern),
-//      Players (1/s) und Highscores (bei Änderung).
+//      Players (1/s), Highscores (bei Änderung) und Settings (wenn der
+//      Betreiber Einstellungen ohne Neuaufbau der Welt ändert, z. B. Schiffe).
 // ---------------------------------------------------------------------------
 #include "GameSettings.hpp"
 #include "SoundEvents.hpp"
@@ -52,7 +53,9 @@ namespace net {
 // Version 4: Upgrade Kanonen (5 Stufenwerte), Leben (SnapMe/PlayerEntry::lives, GameSettings::lives).
 // Version 5: Mini-Missionen (SnapMe Mission/Angebote/Markierungen/Funkspruch,
 //            DockAction AcceptMission, GameSettings::missions, ShipKind::Convoy).
-constexpr uint16_t PROTOCOL_VERSION = 5;
+// Version 6: Schiffstypen vom Server (GameSettings::ships, Nachricht Settings),
+//            Kanonen bis 5, Modellvariante craft_racer.
+constexpr uint16_t PROTOCOL_VERSION = 6;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -62,7 +65,7 @@ constexpr int SPECTATOR_SNAPSHOT_EVERY = 3;      // Zuschauer: 10 Snapshots/s
 constexpr float INTERP_DELAY = 0.12f;            // Client zeigt fremde Schiffe 120 ms "in der Vergangenheit"
 
 constexpr float AOI_SHIPS = 110.0f;
-constexpr int MAX_HANGAR = 8;                    // höchstens so viele geparkte Schiffe in SnapMe              // Sichtweite für Schiffe/Wracks im Snapshot
+constexpr int MAX_HANGAR = 8;                    // höchstens so viele geparkte Schiffe in SnapMe (>= limits::MAX_SHIP_TYPES - 1)
 constexpr int MAX_MARKERS = 16;                  // höchstens so viele Missions-Markierungen in SnapMe
 constexpr float AOI_BULLETS = 75.0f;             // Sichtweite für Geschosse
 constexpr float AOI_EVENTS = 120.0f;             // Hörweite/Sichtweite für Ereignisse
@@ -102,6 +105,7 @@ enum class MsgType : uint8_t {
     Events = 106,
     Players = 107,
     Highscores = 108,
+    Settings = 109,
 };
 
 enum class ErrorCode : uint8_t {
@@ -445,6 +449,12 @@ struct HighscoresMsg {
     std::vector<HighscoreEntry> entries;   // sortiert: kürzeste Zeit zuerst
 };
 
+// Geänderte Einstellungen ohne Neuaufbau der Welt (Schiffe, Gegnerzahl,
+// Leben ...). Der Client übernimmt sie in seine Welt (World::settings).
+struct SettingsMsg {
+    GameSettings settings;
+};
+
 // ---------------------------------------------------------------------------
 // Kodieren (inkl. Typ-Byte) und Dekodieren (Typ-Byte bereits gelesen)
 // ---------------------------------------------------------------------------
@@ -463,6 +473,7 @@ std::vector<uint8_t> Encode(const DepositsMsg& m);
 std::vector<uint8_t> Encode(const EventsMsg& m);
 std::vector<uint8_t> Encode(const PlayersMsg& m);
 std::vector<uint8_t> Encode(const HighscoresMsg& m);
+std::vector<uint8_t> Encode(const SettingsMsg& m);
 
 bool Decode(Reader& r, RegisterMsg& m);
 bool Decode(Reader& r, LoginStartMsg& m);
@@ -478,6 +489,7 @@ bool Decode(Reader& r, DepositsMsg& m);
 bool Decode(Reader& r, EventsMsg& m);
 bool Decode(Reader& r, PlayersMsg& m);
 bool Decode(Reader& r, HighscoresMsg& m);
+bool Decode(Reader& r, SettingsMsg& m);
 
 // ---------------------------------------------------------------------------
 // Modellvarianten: über das Netz werden kleine Nummern statt Modell-IDs geschickt
@@ -485,9 +497,12 @@ bool Decode(Reader& r, HighscoresMsg& m);
 struct ModelIds {
     int player, pirateA, pirateB, elite, miner, cargoA, cargoB;
     int crystalSmall, crystalA, crystalB;
+    // Alle Schiffsmodelle in fester Reihenfolge: die sieben oben, danach die
+    // übrigen aus ShipModelNames (Spielerschiffe können jedes davon haben).
+    std::vector<int> ships;
 };
 ModelIds DefaultModelIds();                           // dieselben Modelle wie World::ResolveModels
-uint8_t ShipVariant(const ModelIds& m, int model);    // 0..6
+uint8_t ShipVariant(const ModelIds& m, int model);    // Index in m.ships
 int ShipModel(const ModelIds& m, uint8_t variant);
 uint8_t DepositVariant(const ModelIds& m, int model); // 0..2
 int DepositModel(const ModelIds& m, uint8_t variant);

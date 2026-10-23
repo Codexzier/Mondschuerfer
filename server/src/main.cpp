@@ -309,6 +309,7 @@ int main(int argc, char** argv) {
     // Einstellungen: Standardwerte aus der Umgebung, darüber ggf. die Datei der Webseite
     GameSettings settings = opt.defaults;
     const bool fromFile = accounts.LoadSettings(settings);
+    if (accounts.LoadShips(settings.ships)) Sanitize(settings);   // Schiffe der Webseite (ships.txt)
 
     // --- Spielserver ----------------------------------------------------------------
     SharedState shared;

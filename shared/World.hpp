@@ -108,7 +108,7 @@ struct Ship {
     float turnRate = 2.8f;        // Drehgeschwindigkeit in rad/s bei voll eingeschlagenem Ruder
     float damage = 10.0f;         // Schaden pro Treffer
     float fireInterval = 0.5f;    // Sekunden zwischen zwei Schüssen
-    int guns = 1;                 // gleichzeitige Schüsse (Upgrade Kanonen, cfg::GUN_COUNT)
+    int guns = 1;                 // gleichzeitige Schüsse (Upgrade Kanonen, ShipGuns)
     float fireCd = 0.0f;          // Restzeit bis zum nächsten möglichen Schuss
     int cargo = 0;                // Ladung (Spieler/Händler); bei Piraten: Beute, die im Wrack landet
     int cargoMax = 0;
@@ -268,7 +268,7 @@ struct GoalEvent {
 // Raumschiffsverkäufer gekauft, an der Handelsstation im Tab "Schiff"
 // wählbar). Jedes Schiff behält seine eigenen Aufrüstungen und seinen Schild.
 struct OwnedShip {
-    int type = cfg::SHIP_START;               // cfg::ShipTypeId
+    int type = cfg::SHIP_START;               // Index in World::settings.ships
     int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0};
     float hp = -1.0f;                         // Schild beim Parken, -1 = voll
 };
@@ -335,7 +335,7 @@ struct PlayerState {
     long long delivered = 0;     // selbst abgelieferte Ressourcen (Statistik)
     int lives = cfg::START_LIVES; // verbleibende Leben inkl. des aktuellen Schiffs (Mehrspieler: settings.lives)
     int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};   // Stufe je cfg::Upgrade, 0..cfg::UPGRADE_MAX (des geflogenen Schiffs)
-    int shipType = cfg::SHIP_START;              // Typ des geflogenen Schiffs (cfg::ShipTypeId)
+    int shipType = cfg::SHIP_START;              // Typ des geflogenen Schiffs (Index in World::settings.ships)
     std::vector<OwnedShip> hangar;               // weitere eigene Schiffe (je Typ höchstens eins)
 
     float scanEnergy = cfg::SCANNER_MAX_ENERGY;
@@ -429,8 +429,9 @@ public:
     void ApplyUpgrades(PlayerState& ps, bool refill);
     // Raumschiffsverkäufer: Preis eines Schiffstyps (mit tradeIn abzüglich
     // TradeInValue, kann dann auch negativ sein = Gutschrift), -1 = nicht
-    // kaufbar (schon im Besitz oder ungültig). BuyShip prüft wie BuyUpgrade
-    // nicht, an welcher Station der Spieler angedockt ist.
+    // kaufbar (schon im Besitz, nicht im Verkauf oder ungültig). BuyShip prüft
+    // wie BuyUpgrade nicht, an welcher Station der Spieler angedockt ist.
+    // Die Schiffstypen stehen in settings.ships (Mehrspieler: vom Server).
     bool OwnsShipType(const PlayerState& ps, int type) const;
     int TradeInValue(const PlayerState& ps) const;
     int ShipPrice(const PlayerState& ps, int type, bool tradeIn) const;
@@ -548,7 +549,6 @@ public:
     // Modell-IDs (beim Start aufgelöst)
     struct Models {
         int player, pirateA, pirateB, elite, miner, cargoA, cargoB;
-        int shipTypes[cfg::SHIP_TYPE_COUNT];   // Modelle der Spieler-Schiffstypen (cfg::SHIP_TYPES)
         int terrain;
         int crystalSmall, crystalA, crystalB;
         int astronautA, astronautB;

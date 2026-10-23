@@ -15,6 +15,8 @@
 //   settings.txt    nur vorhanden, wenn die Einstellungen auf der Webseite
 //                   geändert wurden; überschreibt dann die Werte aus
 //                   docker-compose.yml (Umgebungsvariablen)
+//   ships.txt       nur vorhanden, wenn die Schiffe auf der Webseite geändert
+//                   wurden; sonst gelten die Standard-Schiffe (cfg::SHIP_TYPES)
 //
 // Format: einfacher Text, eine Angabe pro Zeile bzw. pro Konto, "name=wert".
 // So kann man die Dateien zur Not mit einem Texteditor ansehen (bei
@@ -166,6 +168,11 @@ public:
     bool LoadSettings(GameSettings& inOut) const;
     void SaveSettings(const GameSettings& s);
     void RemoveSettings();   // "Standardwerte wiederherstellen": Datei löschen
+    // Schiffe (Bereich "Schiffe" der Webseite) stehen getrennt in ships.txt:
+    // "Auf Standard zurücksetzen" der Spielparameter lässt sie unverändert.
+    // LoadShips liefert true und füllt out, wenn die Datei gültige Schiffe enthält.
+    bool LoadShips(std::vector<ShipType>& out) const;
+    void SaveShips(const std::vector<ShipType>& ships);
 
     // Wartet, bis der Schreib-Thread alle Aufträge erledigt hat (beim Start
     // und beim Beenden). false, wenn seit dem letzten Flush etwas nicht

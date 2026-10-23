@@ -115,9 +115,12 @@ constexpr int UPGRADE_LEVELS = 5;
 // Die Zahlenwerte der Aufzählung sind Teil von Netzwerkprotokoll
 // (DockAction-Parameter), Kontodatei und Spielstand: Reihenfolge nicht ändern.
 enum Upgrade { UP_SPEED = 0, UP_ARMOR = 1, UP_WEAPON = 2, UP_CARGO = 3, UP_GUNS = 4, UP_COUNT = 5 };
-// Höchste Stufe je Upgrade (die Kanonen haben nur 2 Stufen, alle anderen UPGRADE_LEVELS).
+// Höchste Stufe je Upgrade (die Kanonen höchstens MAX_GUNS - 1 Stufen, alle anderen UPGRADE_LEVELS).
 // Die Stufe dient trotzdem als Index in Tabellen mit UPGRADE_LEVELS + 1 Einträgen.
-constexpr int UPGRADE_MAX[UP_COUNT] = {UPGRADE_LEVELS, UPGRADE_LEVELS, UPGRADE_LEVELS, UPGRADE_LEVELS, 2};
+// Wie viele Kanonen ein Schiff wirklich bekommt, legt sein Schiffstyp fest
+// (ShipType::guns, ShipUpgradeMax in GameSettings.hpp).
+constexpr int MAX_GUNS = 5;
+constexpr int UPGRADE_MAX[UP_COUNT] = {UPGRADE_LEVELS, UPGRADE_LEVELS, UPGRADE_LEVELS, UPGRADE_LEVELS, MAX_GUNS - 1};
 
 // Höchstgeschwindigkeit (Einheiten/s). Die Beschleunigung ist 1,9 x dieser
 // Wert (World::UpdateShipPhysics): ein schnelleres Schiff zieht also auch
@@ -132,10 +135,14 @@ constexpr float ARMOR_VALUES[UPGRADE_LEVELS + 1]  = {100.0f, 150.0f, 200.0f, 260
 // Pirat (anfangs 40 Schild) braucht am Anfang also 4 Treffer.
 constexpr float WEAPON_DAMAGE[UPGRADE_LEVELS + 1] = {10.0f, 14.0f, 19.0f, 25.0f, 32.0f, 40.0f};
 constexpr float WEAPON_RATE[UPGRADE_LEVELS + 1]   = {0.50f, 0.45f, 0.40f, 0.36f, 0.33f, 0.30f};
-// Anzahl gleichzeitiger Schüsse (Ship::guns) je Kanonen-Stufe. Mehr Schüsse
-// treffen in einem leichten Fächer (GUN_SPREAD, Bogenmaß zwischen zwei Schüssen).
-constexpr int   GUN_COUNT[UPGRADE_LEVELS + 1]     = {1, 2, 3, 3, 3, 3};
-constexpr float GUN_SPREAD = 0.05f;
+// Anzahl gleichzeitiger Schüsse (Ship::guns) je Kanonen-Stufe, höchstens
+// ShipType::guns des Schiffs. Ausrichtung (World::FireBullet): 2 parallel
+// nach vorn; 3 = Mitte und je GUN_ANGLE_INNER Grad links/rechts; 4 = zwei
+// parallel und je GUN_ANGLE_INNER Grad; 5 = Mitte, je GUN_ANGLE_INNER und je
+// GUN_ANGLE_OUTER Grad.
+constexpr int   GUN_COUNT[UPGRADE_LEVELS + 1]     = {1, 2, 3, 4, 5, 5};
+constexpr float GUN_ANGLE_INNER = 3.0f;
+constexpr float GUN_ANGLE_OUTER = 5.0f;
 // Lagerkapazität (Ship::cargoMax) = so viele Punkte bringt eine volle Ladung.
 // Mit Startlager 300 bräuchte man über 330 Fahrten bis zum Ziel, mit dem
 // größten Lager (4000) nur noch 25. Das Lager ist deshalb meist die
@@ -151,49 +158,47 @@ constexpr int UPGRADE_COST[UP_COUNT][UPGRADE_LEVELS] = {
     {1000, 2500, 5000, 8000, 13000},   // Panzerung (zusammen 29.500)
     {1000, 2500, 5000, 8000, 13000},   // Bewaffnung (zusammen 29.500)
     {600, 1600, 3500, 6500, 11000},    // Lager     (zusammen 23.200)
-    {4000, 9000, 0, 0, 0},             // Kanonen   (nur 2 Stufen, zusammen 13.000)
+    {4000, 9000, 15000, 22000, 0},     // Kanonen   (höchstens 4 Stufen, zusammen 50.000)
 };
 
 // Schiffstypen (Raumschiffsverkäufer)
 // Typ 0 ist das Startschiff. Die anderen kauft man beim Raumschiffsverkäufer.
-// Die Werte sind Faktoren auf die Aufrüstungstabellen oben (Stufe 0 des
-// Startschiffs = 1,0): Tempo = SPEED_VALUES[Stufe] * speed, Schaden =
-// WEAPON_DAMAGE[Stufe] * weapon, Scanner = SCANNER_RADIUS * scanner. Schild
-// und Lager sind die Werte auf Stufe 0; Aufrüstungen wachsen im selben
+// Die Prozentwerte beziehen sich auf die Aufrüstungstabellen oben (Stufe 0
+// des Startschiffs = 100 %): Tempo = SPEED_VALUES[Stufe] * speed %, Schaden =
+// WEAPON_DAMAGE[Stufe] * weapon %, Scanner = SCANNER_RADIUS * scanner %.
+// Schild und Lager sind die Werte auf Stufe 0; Aufrüstungen wachsen im selben
 // Verhältnis wie beim Startschiff (ARMOR_VALUES bzw. CARGO_VALUES).
+// guns = so viele Kanonen lassen sich höchstens kaufen (1..MAX_GUNS).
 // Jedes Schiff hat seine eigenen Aufrüstungen (sie lassen sich nicht übertragen).
-// Die Zahlenwerte sind Teil von Netzwerkprotokoll, Kontodatei und Spielstand:
+// Das hier sind die Standardwerte (Einzelspieler und neuer Server). Im
+// Mehrspieler stellt der Betreiber sie auf der Verwaltungsseite ein und kann
+// weitere Schiffe hinzufügen (GameSettings::ships, ShipType in GameSettings.hpp).
+// Die Nummern sind Teil von Netzwerkprotokoll, Kontodatei und Spielstand:
 // Reihenfolge nicht ändern.
 enum ShipTypeId { SHIP_START = 0, SHIP_CARGO = 1, SHIP_HUNTER = 2, SHIP_SPEEDSTER = 3, SHIP_TYPE_COUNT = 4 };
 struct ShipTypeDef {
     const char* name;
     const char* model;   // Modellname aus assets/models
-    float shield;        // Schild auf Stufe 0
-    float scanner;       // Faktor auf SCANNER_RADIUS
-    float speed;         // Faktor auf SPEED_VALUES
-    float weapon;        // Faktor auf WEAPON_DAMAGE
+    int shield;          // Schild auf Stufe 0
+    int scanner;         // Prozent von SCANNER_RADIUS
+    int speed;           // Prozent von SPEED_VALUES
+    int weapon;          // Prozent von WEAPON_DAMAGE
     int cargo;           // Lager auf Stufe 0
     int cost;            // Kaufpreis in Punkten
+    int guns;            // höchstens so viele Kanonen
 };
 // Für Hunter und Speedster ist kein Antrieb vorgegeben: Hunter wie das
 // Startschiff, Speedster etwas schneller.
 constexpr ShipTypeDef SHIP_TYPES[SHIP_TYPE_COUNT] = {
-    {"Startschiff", "craft_speederA", 100.0f, 0.5f, 1.0f, 1.0f, 300, 5000},
-    {"The Cargo", "craft_cargoA", 120.0f, 1.5f, 0.8f, 1.2f, 1200, 20000},
-    {"Hunter", "craft_miner", 80.0f, 0.3f, 1.0f, 1.6f, 300, 15000},
-    {"Speedster", "craft_speederD", 60.0f, 0.6f, 1.3f, 0.8f, 150, 10000},
+    {"Startschiff", "craft_speederA", 100, 50, 100, 100, 300, 5000, 3},
+    {"The Cargo", "craft_cargoA", 120, 150, 80, 120, 1200, 20000, 3},
+    {"Hunter", "craft_miner", 80, 30, 100, 160, 300, 15000, 3},
+    {"Speedster", "craft_speederD", 60, 60, 130, 80, 150, 10000, 3},
 };
 // In Zahlung geben: so viel Prozent von Kaufpreis und bezahlten
 // Aufrüstungen des alten Schiffs werden gutgeschrieben.
 constexpr int TRADE_IN_PERCENT = 50;
 
-// Werte eines Schiffstyps auf einer Aufrüstungsstufe (Server, Client und
-// Vorhersage rechnen damit, siehe World::ApplyUpgrades)
-constexpr float ShipSpeed(int type, int lvl) { return SPEED_VALUES[lvl] * SHIP_TYPES[type].speed; }
-constexpr float ShipArmor(int type, int lvl) { return SHIP_TYPES[type].shield * ARMOR_VALUES[lvl] / ARMOR_VALUES[0]; }
-constexpr float ShipDamage(int type, int lvl) { return WEAPON_DAMAGE[lvl] * SHIP_TYPES[type].weapon; }
-constexpr int ShipCargo(int type, int lvl) { return SHIP_TYPES[type].cargo * CARGO_VALUES[lvl] / CARGO_VALUES[0]; }
-constexpr float ShipScanner(int type) { return SCANNER_RADIUS * SHIP_TYPES[type].scanner; }
 // Leben: So viele Abstürze verträgt ein Spieler. Einzelspieler fest, im
 // Mehrspieler der Standard (GameSettings::lives, einstellbar bis limits::MAX_LIVES).
 constexpr int START_LIVES = 3;

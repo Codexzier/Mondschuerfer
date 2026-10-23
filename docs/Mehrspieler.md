@@ -754,6 +754,7 @@ Die Webseite besteht aus drei statischen Dateien ([server/web/](../server/web/):
 | `GET /api/status` | Auslastung, Spieler, Bestenliste, Einstellungen als JSON (die Kopie aus SharedState) |
 | `POST /api/settings` | Einstellungen ändern (Formularfelder) |
 | `POST /api/settings/reset` | zurück auf die Standardwerte aus `docker-compose.yml` |
+| `POST /api/ships` | Schiffe des Raumschiffsverkäufers ändern oder hinzufügen (gespeichert in `ships.txt`) |
 
 Der Browser lädt die Seite einmal und fragt danach alle 2 Sekunden `/api/status` ab. Der Spiel-Thread
 wird dabei nie berührt (Abschnitt 5).

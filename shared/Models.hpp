@@ -38,6 +38,7 @@
 // ---------------------------------------------------------------------------
 #include "raylib.h"
 #include <string>
+#include <vector>
 
 // Liefert die ID zu einem Modellnamen. Unbekannte Namen werden neu eingetragen.
 // Ein Name ohne Eintrag in ModelBounds.inc bekommt trotzdem eine ID (nur eine
@@ -58,3 +59,9 @@ int ModelCount();
 // Maße im Kit-Raster, ohne Skalierung, Ursprung = Bezugspunkt des Modells
 // (Mitte, auf dem Boden), also passend zu den Positionen in der Spiellogik.
 BoundingBox ModelBounds(int id);
+
+// Alle Modelle, die als Raumschiff wählbar sind: Namen aus ModelBounds.inc,
+// die mit "craft" beginnen (in der Reihenfolge der Tabelle). Verwaltungsseite
+// (Auswahl im Bereich "Schiffe"), Sanitize (GameSettings.cpp) und die
+// Netzwerk-Varianten (net::DefaultModelIds) benutzen dieselbe Liste.
+const std::vector<std::string>& ShipModelNames();

@@ -53,6 +53,7 @@
 #include "NetClient.hpp"
 #include "Config.hpp"
 #include "Crypto.hpp"
+#include "Models.hpp"
 #include "Util.hpp"
 #include <algorithm>
 #include <chrono>
@@ -374,6 +375,7 @@ struct NetClient::Impl {
     void HandleEvents(const net::EventsMsg& m);
     void HandlePlayers(const net::PlayersMsg& m);
     void HandleHighscores(const net::HighscoresMsg& m);
+    void HandleSettings(const net::SettingsMsg& m);
 
     void SyncTime(double serverTime);
     // Serverzeit in Sekunden aus dem Schrittzähler, gezählt ab dem ersten
@@ -707,6 +709,11 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
             if (net::Decode(r, m)) HandleHighscores(m);
             break;
         }
+        case net::MsgType::Settings: {
+            net::SettingsMsg m;
+            if (net::Decode(r, m)) HandleSettings(m);
+            break;
+        }
         default:
             break;   // unbekannt (z. B. neuere Serverversion): ignorieren
     }
@@ -904,11 +911,11 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     for (int u = 0; u < cfg::UP_COUNT; ++u)
         ps.upgrades[u] = std::min<int>(me.upgrades[u], cfg::UPGRADE_LEVELS);   // Schutz für Tabellenzugriffe
     ps.lives = me.lives;
-    ps.shipType = std::min<int>(me.shipType, cfg::SHIP_TYPE_COUNT - 1);
+    ps.shipType = std::min<int>(me.shipType, world.settings.ShipCount() - 1);
     ps.hangar.clear();
     for (const auto& h : me.hangar) {
         OwnedShip o;
-        o.type = std::min<int>(h.type, cfg::SHIP_TYPE_COUNT - 1);
+        o.type = std::min<int>(h.type, world.settings.ShipCount() - 1);
         for (int u = 0; u < cfg::UP_COUNT; ++u) o.upgrades[u] = std::min<int>(h.upgrades[u], cfg::UPGRADE_MAX[u]);
         ps.hangar.push_back(o);
     }
@@ -1023,11 +1030,12 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     // Werte aus Schiffstyp und Aufrüstungen (wie World::ApplyUpgrades).
     // maxSpeed ist für die Vorhersage wichtig: Mit einem anderen Wert als der
     // Server würde das Schiff ständig zurückkorrigiert.
-    pred.model = world.mdl.shipTypes[ps.shipType];
-    pred.maxSpeed = cfg::ShipSpeed(ps.shipType, ps.upgrades[cfg::UP_SPEED]);
-    pred.damage = cfg::ShipDamage(ps.shipType, ps.upgrades[cfg::UP_WEAPON]);
+    const ShipType& type = world.settings.Ship(ps.shipType);
+    pred.model = ModelId(type.model);
+    pred.maxSpeed = ShipSpeed(type, ps.upgrades[cfg::UP_SPEED]);
+    pred.damage = ShipDamage(type, ps.upgrades[cfg::UP_WEAPON]);
     pred.fireInterval = cfg::WEAPON_RATE[ps.upgrades[cfg::UP_WEAPON]];
-    pred.maxHp = me.maxHp > 0.0f ? me.maxHp : cfg::ShipArmor(ps.shipType, ps.upgrades[cfg::UP_ARMOR]);
+    pred.maxHp = me.maxHp > 0.0f ? me.maxHp : ShipArmor(type, ps.upgrades[cfg::UP_ARMOR]);
     pred.hp = me.hp;
     pred.cargo = me.cargo;
     pred.cargoMax = me.cargoMax;
@@ -1231,6 +1239,16 @@ void NetClient::Impl::HandlePlayers(const net::PlayersMsg& m) {
 }
 
 void NetClient::Impl::HandleHighscores(const net::HighscoresMsg& m) { highscores = m.entries; }
+
+// Der Betreiber hat Einstellungen ohne Neuaufbau der Welt geändert (z. B. die
+// Schiffe). Übernehmen; die eigenen Schiffswerte folgen mit dem nächsten
+// Snapshot (ApplyMe rechnet mit world.settings). Einstellungen, für die die
+// Kulisse neu gebaut werden müsste, kommen nur mit einem Welcome.
+void NetClient::Impl::HandleSettings(const net::SettingsMsg& m) {
+    if (!worldReady || NeedsWorldRebuild(world.settings, m.settings)) return;
+    world.settings = m.settings;
+    welcome.settings = m.settings;
+}
 
 // ===========================================================================
 // Eigenes Schiff: Vorhersage

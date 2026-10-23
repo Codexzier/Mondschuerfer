@@ -48,6 +48,7 @@ constexpr const char* ACCOUNTS_FILE = "accounts.txt";
 constexpr const char* HIGHSCORES_FILE = "highscores.txt";
 constexpr const char* SERVER_FILE = "server.txt";
 constexpr const char* SETTINGS_FILE = "settings.txt";
+constexpr const char* SHIPS_FILE = "ships.txt";
 
 // Pfad als Text für Meldungen (UTF-8; in C++17 liefert u8string() einen std::string)
 std::string PathText(const fs::path& p) { return p.u8string(); }
@@ -405,18 +406,18 @@ bool Accounts::Load(std::string& error) {
                 for (int u = 0; u < cfg::UP_COUNT && std::getline(is, part, ','); ++u)
                     ParseInt(part, p.upgrades[u], 0, cfg::UPGRADE_MAX[u]);
             }
-            else if (k == "ship") ParseInt(v, p.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
+            else if (k == "ship") ParseInt(v, p.shipType, 0, limits::MAX_SHIP_TYPES - 1);
             else if (k == "hangar") {
                 // "Typ:u,u,u,u:Schild;Typ:..." -> geparkte Schiffe
                 std::istringstream is(v);
                 std::string entry;
-                while (std::getline(is, entry, ';') && p.hangar.size() < static_cast<size_t>(cfg::SHIP_TYPE_COUNT)) {
+                while (std::getline(is, entry, ';') && p.hangar.size() < static_cast<size_t>(limits::MAX_SHIP_TYPES)) {
                     std::istringstream es(entry);
                     std::string part[3];
                     int n = 0;
                     while (n < 3 && std::getline(es, part[n], ':')) ++n;
                     PlayerProgress::Parked h;
-                    if (n != 3 || !ParseInt(part[0], h.type, 0, cfg::SHIP_TYPE_COUNT - 1)) continue;
+                    if (n != 3 || !ParseInt(part[0], h.type, 0, limits::MAX_SHIP_TYPES - 1)) continue;
                     std::istringstream us(part[1]);
                     std::string u;
                     for (int i = 0; i < cfg::UP_COUNT && std::getline(us, u, ','); ++i) ParseInt(u, h.upgrades[i], 0, cfg::UPGRADE_MAX[i]);
@@ -659,6 +660,66 @@ void Accounts::SaveSettings(const GameSettings& s) {
     out += "lives=" + std::to_string(s.lives) + "\n";
     out += "missions=" + std::to_string(s.missions) + "\n";
     QueueWrite(PathOf(SETTINGS_FILE), std::move(out), false, "Einstellungen");
+}
+
+// ships.txt: eine Zeile je Schiffstyp, in der Reihenfolge der Typen
+//   ship=Modell|Schild|Scanner|Antrieb|Waffen|Lager|Preis|Kanonen|Verkauf|Name
+// Der Name steht am Ende, weil er selbst "|" enthalten darf.
+bool Accounts::LoadShips(std::vector<ShipType>& out) const {
+    if (dir_.empty()) return false;
+    std::vector<std::string> lines;
+    std::string error;
+    const ReadResult rr = ReadLines(PathOf(SHIPS_FILE), lines, error);
+    if (rr == ReadResult::Missing) return false;
+    if (rr == ReadResult::Error) {
+        std::cerr << "Warnung: " << error << " – verwende die Standard-Schiffe\n";
+        return false;
+    }
+    std::vector<ShipType> ships;
+    for (const auto& line : lines) {
+        if (IsCommentOrEmpty(line) || line.rfind("ship=", 0) != 0) continue;
+        std::string part[10];
+        size_t start = 5;
+        int n = 0;
+        while (n < 9) {
+            const size_t bar = line.find('|', start);
+            if (bar == std::string::npos) break;
+            part[n++] = line.substr(start, bar - start);
+            start = bar + 1;
+        }
+        if (n != 9) continue;
+        part[9] = line.substr(start);
+        ShipType t;
+        int forSale = 1;
+        t.model = part[0];
+        if (!ParseInt(part[1], t.shield, limits::MIN_SHIP_SHIELD, limits::MAX_SHIP_SHIELD) ||
+            !ParseInt(part[2], t.scanner, limits::MIN_SHIP_PERCENT, limits::MAX_SHIP_PERCENT) ||
+            !ParseInt(part[3], t.speed, limits::MIN_SHIP_SPEED, limits::MAX_SHIP_SPEED) ||
+            !ParseInt(part[4], t.weapon, limits::MIN_SHIP_PERCENT, limits::MAX_SHIP_PERCENT) ||
+            !ParseInt(part[5], t.cargo, limits::MIN_SHIP_CARGO, limits::MAX_SHIP_CARGO) ||
+            !ParseInt(part[6], t.cost, 0, limits::MAX_SHIP_COST) || !ParseInt(part[7], t.guns, 1, cfg::MAX_GUNS) ||
+            !ParseInt(part[8], forSale, 0, 1))
+            continue;
+        t.forSale = forSale != 0;
+        t.name = part[9];
+        ships.push_back(t);
+    }
+    if (ships.empty()) return false;
+    out = ships;   // Sanitize begrenzt Anzahl, Namen und Modelle
+    return true;
+}
+
+void Accounts::SaveShips(const std::vector<ShipType>& ships) {
+    if (dir_.empty()) return;
+    std::string out = "# Mondschürfer – Schiffe des Raumschiffsverkäufers (Verwaltungsseite, Bereich \"Schiffe\").\n";
+    out += "# Zeile = Schiffstyp, Reihenfolge nicht ändern (Spieler besitzen die Typen über ihre Nummer).\n";
+    out += "# ship=Modell|Schild|Scanner %|Antrieb %|Waffen %|Lager|Preis|Kanonen|im Verkauf (0/1)|Name\n";
+    for (const ShipType& t : ships) {
+        out += "ship=" + t.model + "|" + std::to_string(t.shield) + "|" + std::to_string(t.scanner) + "|" +
+               std::to_string(t.speed) + "|" + std::to_string(t.weapon) + "|" + std::to_string(t.cargo) + "|" +
+               std::to_string(t.cost) + "|" + std::to_string(t.guns) + "|" + (t.forSale ? "1" : "0") + "|" + t.name + "\n";
+    }
+    QueueWrite(PathOf(SHIPS_FILE), std::move(out), false, "Schiffe");
 }
 
 void Accounts::RemoveSettings() {
