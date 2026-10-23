@@ -186,6 +186,8 @@ private:
     void RebuildWorld();
     void ApplySettingsRequest();
     void ApplySettings(const GameSettings& s);
+    void ApplyShipsRequest();
+    void BroadcastSettings();   // geänderte Einstellungen ohne Neuaufbau an alle Clients (net::SettingsMsg)
     void RemoveSurplusPirates();
     int NewPlayerId();
     void RestoreProgress(PlayerState& ps, const PlayerProgress& p);

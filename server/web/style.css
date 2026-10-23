@@ -490,6 +490,14 @@ fieldset { border: 0; padding: 0; }
 .btn-ghost { background: transparent; }
 .reset-note { margin: -6px 0 0; }
 
+/* Bereich "Schiffe": Eingabefelder in der Tabelle */
+.ships-help { margin: 0; }
+.ships-table input[type="text"] { min-width: 150px; }
+.ships-table input[type="number"] { min-width: 86px; text-align: right; }
+.ships-table select { min-width: 150px; }
+.ships-table input[type="checkbox"] { accent-color: var(--accent); width: 18px; height: 18px; margin: 0; }
+.ships-table td.ship-nr { color: var(--muted); font-weight: 600; }
+
 .note {
     margin: 0;
     padding: 10px 14px;

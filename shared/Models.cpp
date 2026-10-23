@@ -114,3 +114,14 @@ BoundingBox ModelBounds(int id) {
     if (id < 0 || id >= static_cast<int>(r.bounds.size())) return BoundingBox{{0, 0, 0}, {0, 0, 0}};
     return r.bounds[static_cast<size_t>(id)];
 }
+
+const std::vector<std::string>& ShipModelNames() {
+    // Einmal beim ersten Aufruf füllen (thread-sicher wie Reg() oben)
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> out;
+        for (const auto& b : kBounds)
+            if (std::string(b.name).rfind("craft", 0) == 0) out.push_back(b.name);
+        return out;
+    }();
+    return names;
+}

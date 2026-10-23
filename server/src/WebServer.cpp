@@ -5,7 +5,8 @@
 //   Der Betreiber des Servers (z. B. im Docker-Container) soll im Browser sehen,
 //   wie stark der Server ausgelastet ist, wer gerade spielt, wie die Bestenliste
 //   aussieht, und er soll die Spielparameter (Schwierigkeitsgrad, Stationen,
-//   Mondfarbe, maximale Spieler) ändern können.
+//   Mondfarbe, maximale Spieler) und die Schiffe des Raumschiffsverkäufers
+//   ändern können.
 //
 // WER BENUTZT DIESE DATEI?
 //   server/src/main.cpp legt ein WebServer-Objekt an, füllt WebConfig aus den
@@ -47,7 +48,7 @@
 //      b) Basic-Auth korrekt?    -> weiter zu 3. (POST ohne Content-Length -> 411)
 //      c) sonst                  -> 401 (Browser zeigt Anmeldedialog),
 //                                   falsche Daten zählen als Fehlversuch.
-//   3. Routing auf genau sieben feste Pfade (drei Dateien, Status, Einstellungen).
+//   3. Routing auf genau acht feste Pfade (drei Dateien, Status, Einstellungen, Schiffe).
 //      Alles andere ergibt 404. Es gibt KEIN allgemeines Ausliefern eines
 //      Ordners, daher kann niemand mit "/../" andere Dateien lesen.
 //   4. Jede Antwort bekommt Sicherheits-Header (set_default_headers).
@@ -323,6 +324,26 @@ void WriteSettings(JsonWriter& w, const GameSettings& g) {
     w.EndObject();
 }
 
+// Schiffstypen als JSON-Liste (Bereich "Schiffe" der Webseite).
+void WriteShips(JsonWriter& w, const std::vector<ShipType>& ships) {
+    w.BeginArray();
+    for (const ShipType& t : ships) {
+        w.BeginObject();
+        w.Key("name").String(t.name);
+        w.Key("model").String(t.model);
+        w.Key("shield").Int(t.shield);
+        w.Key("scanner").Int(t.scanner);
+        w.Key("speed").Int(t.speed);
+        w.Key("weapon").Int(t.weapon);
+        w.Key("cargo").Int(t.cargo);
+        w.Key("cost").Int(t.cost);
+        w.Key("guns").Int(t.guns);
+        w.Key("forSale").Bool(t.forSale);
+        w.EndObject();
+    }
+    w.EndArray();
+}
+
 // Komplette Antwort für GET /api/status (erklärt in docs/Mehrspieler.md, Abschnitt 11).
 // Die Daten stammen aus der Kopie, die der Spiel-Thread einmal pro Sekunde in
 // SharedState ablegt. Hier wird nichts berechnet, nur umgeformt.
@@ -391,6 +412,13 @@ std::string BuildStatusJson(const ServerStatus& s) {
     WriteSettings(w, s.settings);
     w.Key("defaults");
     WriteSettings(w, s.defaults);
+    w.Key("ships");
+    WriteShips(w, s.settings.ships);
+    w.Key("defaultShips");
+    WriteShips(w, DefaultShipTypes());
+    w.Key("shipModels").BeginArray();
+    for (const std::string& m : s.shipModels) w.String(m);
+    w.EndArray();
 
     w.Key("limits").BeginObject();
     w.Key("maxEnemyShips").Int(limits::MAX_ENEMY_SHIPS);
@@ -399,6 +427,18 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("maxPlayersLimit").Int(limits::MAX_PLAYERS_LIMIT);
     w.Key("maxLives").Int(limits::MAX_LIVES);
     w.Key("maxMissions").Int(limits::MAX_MISSIONS);
+    w.Key("maxShipTypes").Int(limits::MAX_SHIP_TYPES);
+    w.Key("maxShipName").Int(limits::MAX_SHIP_NAME);
+    w.Key("minShipShield").Int(limits::MIN_SHIP_SHIELD);
+    w.Key("maxShipShield").Int(limits::MAX_SHIP_SHIELD);
+    w.Key("minShipPercent").Int(limits::MIN_SHIP_PERCENT);
+    w.Key("maxShipPercent").Int(limits::MAX_SHIP_PERCENT);
+    w.Key("minShipSpeed").Int(limits::MIN_SHIP_SPEED);
+    w.Key("maxShipSpeed").Int(limits::MAX_SHIP_SPEED);
+    w.Key("minShipCargo").Int(limits::MIN_SHIP_CARGO);
+    w.Key("maxShipCargo").Int(limits::MAX_SHIP_CARGO);
+    w.Key("maxShipCost").Int(limits::MAX_SHIP_COST);
+    w.Key("maxGuns").Int(cfg::MAX_GUNS);
     w.EndObject();
 
     w.EndObject();
@@ -892,6 +932,125 @@ bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& n
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Formular "Schiffe" auswerten (POST /api/ships)
+//
+// Felder: count=Anzahl, dann je Schiff i (0 = Startschiff) name<i>, model<i>,
+// shield<i>, scanner<i>, speed<i>, weapon<i>, cargo<i>, cost<i>, guns<i> und
+// forSale<i> (0/1). Alle Felder sind Pflicht. Schiffe lassen sich nur
+// hinzufügen, nicht entfernen: Spieler besitzen sie über ihre Nummer.
+// ---------------------------------------------------------------------------
+bool ApplyShipForm(const std::map<std::string, std::string>& fields, const ServerStatus& status,
+                   std::vector<ShipType>& ships, std::string& error) {
+    static const char* const kShipFields[] = {"name", "model", "shield", "scanner", "speed",
+                                              "weapon", "cost", "cargo", "guns", "forSale"};
+    auto field = [&](const std::string& name) -> const std::string* {
+        auto it = fields.find(name);
+        return it == fields.end() ? nullptr : &it->second;
+    };
+    const std::string* countText = field("count");
+    int count = 0;
+    if (!countText || !ParseIntInRange(*countText, 1, limits::MAX_SHIP_TYPES, count)) {
+        error = "Anzahl Schiffe: höchstens " + std::to_string(limits::MAX_SHIP_TYPES) + ".";
+        return false;
+    }
+    if (count < status.settings.ShipCount()) {
+        error = "Schiffe lassen sich nicht entfernen (Spieler können sie besitzen). Stattdessen „Im Verkauf“ ausschalten.";
+        return false;
+    }
+    // Unbekannte Felder ablehnen: erlaubt sind nur "count" und <feld><nummer> mit nummer < count
+    for (const auto& kv : fields) {
+        if (kv.first == "count") continue;
+        bool known = false;
+        for (const char* f : kShipFields) {
+            const size_t len = std::strlen(f);
+            int index = 0;
+            if (kv.first.compare(0, len, f) == 0 && kv.first.size() > len &&
+                ParseIntInRange(kv.first.substr(len), 0, count - 1, index) && kv.first.substr(len) == std::to_string(index)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            error = "Unbekanntes Feld im Formular.";
+            return false;
+        }
+    }
+
+    ships.clear();
+    for (int i = 0; i < count; ++i) {
+        const std::string n = std::to_string(i);
+        const std::string label = "Schiff " + std::to_string(i + 1);
+        const std::string *name = field("name" + n), *model = field("model" + n), *forSale = field("forSale" + n);
+        if (!name || !model || !forSale) {
+            error = label + ": Angaben fehlen.";
+            return false;
+        }
+        ShipType t;
+        t.name = TrimSpaces(*name);
+        if (t.name.empty()) {
+            error = label + ": Der Name darf nicht leer sein.";
+            return false;
+        }
+        if (!IsValidUtf8(t.name) || HasControlChars(t.name)) {
+            error = label + ": Der Name enthält ungültige Zeichen.";
+            return false;
+        }
+        if (t.name.size() > static_cast<size_t>(limits::MAX_SHIP_NAME)) {
+            error = label + ": Der Name ist zu lang (höchstens " + std::to_string(limits::MAX_SHIP_NAME) +
+                    " Byte; Umlaute zählen doppelt).";
+            return false;
+        }
+        if (std::find(status.shipModels.begin(), status.shipModels.end(), *model) == status.shipModels.end()) {
+            error = label + ": Unbekanntes Modell.";
+            return false;
+        }
+        t.model = *model;
+        struct Num {
+            const char* key;
+            const char* text;
+            int lo, hi;
+            int* out;
+        };
+        const Num nums[] = {
+            {"shield", "Schild", limits::MIN_SHIP_SHIELD, limits::MAX_SHIP_SHIELD, &t.shield},
+            {"scanner", "Scanner", limits::MIN_SHIP_PERCENT, limits::MAX_SHIP_PERCENT, &t.scanner},
+            {"speed", "Antrieb", limits::MIN_SHIP_SPEED, limits::MAX_SHIP_SPEED, &t.speed},
+            {"weapon", "Waffen", limits::MIN_SHIP_PERCENT, limits::MAX_SHIP_PERCENT, &t.weapon},
+            {"cargo", "Lager", limits::MIN_SHIP_CARGO, limits::MAX_SHIP_CARGO, &t.cargo},
+            {"cost", "Preis", 0, limits::MAX_SHIP_COST, &t.cost},
+            {"guns", "Kanonen", 1, cfg::MAX_GUNS, &t.guns},
+        };
+        for (const Num& k : nums) {
+            const std::string* v = field(k.key + n);
+            if (!v || !ParseIntInRange(*v, k.lo, k.hi, *k.out)) {
+                error = label + ", " + k.text + ": bitte eine ganze Zahl von " + std::to_string(k.lo) + " bis " +
+                        std::to_string(k.hi) + ".";
+                return false;
+            }
+        }
+        if (*forSale != "0" && *forSale != "1") {
+            error = label + ": „Im Verkauf“ ist ungültig.";
+            return false;
+        }
+        t.forSale = *forSale == "1";
+        ships.push_back(t);
+    }
+    return true;
+}
+
+bool SameShips(const std::vector<ShipType>& a, const std::vector<ShipType>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const ShipType &x = a[i], &y = b[i];
+        if (x.name != y.name || x.model != y.model || x.shield != y.shield || x.scanner != y.scanner ||
+            x.speed != y.speed || x.weapon != y.weapon || x.cargo != y.cargo || x.cost != y.cost || x.guns != y.guns ||
+            x.forSale != y.forSale)
+            return false;
+    }
+    return true;
+}
+
 bool SameSettings(const GameSettings& a, const GameSettings& b) {
     return a.serverName == b.serverName && a.difficulty == b.difficulty && a.enemyShips == b.enemyShips &&
            a.tradeStations == b.tradeStations && a.shipyards == b.shipyards && a.moon == b.moon &&
@@ -1075,6 +1234,42 @@ public:
         const bool rebuild = NeedsWorldRebuild(status.settings, next);
         SendSettingsOk(res, next, rebuild,
                        SettingsMessage(status.settings, next, rebuild, status.playersOnline, "Gespeichert."));
+    }
+
+    // --- POST /api/ships ---------------------------------------------------------
+    // Wie /api/settings, aber nur für die Schiffe. Der Spiel-Thread übernimmt
+    // sie zu Beginn seines nächsten Schritts (TakeShipsRequest) und schickt sie
+    // sofort an alle Spieler; eine neue Welt ist dafür nicht nötig.
+    void HandleShips(const httplib::Request& req, httplib::Response& res) {
+        if (!CheckSameOriginPost(req, res)) return;
+        if (LowerAscii(req.get_header_value("Content-Type")).rfind("application/x-www-form-urlencoded", 0) != 0) {
+            SendJsonError(res, 400, "Formulardaten (application/x-www-form-urlencoded) erwartet.");
+            return;
+        }
+        ServerStatus status;
+        if (!ReadStatus(status, res)) return;
+        std::map<std::string, std::string> fields;
+        std::string error;
+        std::vector<ShipType> ships;
+        if (!ParseFormBody(req.body, fields, error) || !ApplyShipForm(fields, status, ships, error)) {
+            SendJsonError(res, 400, error);
+            return;
+        }
+        GameSettings next = status.settings;
+        next.ships = ships;
+        Sanitize(next);
+        if (!WithShared(res, [&](SharedState& s) { s.RequestShips(next.ships); })) return;
+        JsonWriter w;
+        w.BeginObject();
+        w.Key("ok").Bool(true);
+        w.Key("ships");
+        WriteShips(w, next.ships);
+        w.Key("message").String(SameShips(status.settings.ships, next.ships)
+                                    ? "Gespeichert. Es hat sich nichts geändert."
+                                    : "Gespeichert. Die Änderungen gelten ab sofort, auch für Schiffe, die Spieler schon besitzen.");
+        w.EndObject();
+        res.status = 200;
+        res.set_content(w.Result(), kJsonType);
     }
 
     // --- POST /api/settings/reset -----------------------------------------------
@@ -1291,6 +1486,7 @@ void ConfigureServer(httplib::Server& svr, const std::shared_ptr<WebContext>& ct
              [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleSettings(req, res); });
     svr.Post(R"(/api/settings/reset)",
              [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleReset(req, res); });
+    svr.Post(R"(/api/ships)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleShips(req, res); });
 
     // Fehlerantworten ohne eigenen Text (z. B. 404 von httplib) bekommen
     // einen kurzen deutschen Text. Eigene Texte bleiben unverändert.

@@ -480,7 +480,8 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     }
     // Kanonen (gleichzeitige Schüsse) und verbleibende Leben
     y += 38 * s;
-    Text(TextFormat("KANONEN  %d", cfg::GUN_COUNT[std::clamp(me.upgrades[cfg::UP_GUNS], 0, cfg::UPGRADE_LEVELS)]), x, y, 18 * s, TEXT);
+    Text(TextFormat("KANONEN  %d", ShipGuns(w.settings.Ship(me.shipType), std::clamp(me.upgrades[cfg::UP_GUNS], 0, cfg::UPGRADE_LEVELS))),
+         x, y, 18 * s, TEXT);
     TextRight(TextFormat("LEBEN  %d", me.lives), x + bw, y, 18 * s, me.lives <= 1 ? BAD : TEXT);
 
     Minimap(w);
@@ -620,14 +621,16 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
 // Stationsfenster
 // ===========================================================================
 // Kurzbeschreibung eines Schiffs mit seinen Aufrüstungen (Tab "Schiff",
-// Raumschiffsverkäufer)
-static std::string ShipStats(int type, const int* up) {
-    const int t = std::clamp(type, 0, cfg::SHIP_TYPE_COUNT - 1);
+// Raumschiffsverkäufer). withGuns: zusätzlich die höchste Zahl an Kanonen
+// (nur beim Raumschiffsverkäufer, im schmaleren Tab "Schiff" fehlt der Platz).
+static std::string ShipStats(const ShipType& t, const int* up, bool withGuns) {
     int lvl[cfg::UP_COUNT];
     for (int u = 0; u < cfg::UP_COUNT; ++u) lvl[u] = std::clamp(up[u], 0, cfg::UPGRADE_LEVELS);
-    return TextFormat("Tempo %.0f   Schild %.0f   Schaden %.0f   Lager %d   Scanner %.0f m", cfg::ShipSpeed(t, lvl[cfg::UP_SPEED]),
-                      cfg::ShipArmor(t, lvl[cfg::UP_ARMOR]), cfg::ShipDamage(t, lvl[cfg::UP_WEAPON]),
-                      cfg::ShipCargo(t, lvl[cfg::UP_CARGO]), cfg::ShipScanner(t));
+    std::string text = TextFormat("Tempo %.0f   Schild %.0f   Schaden %.0f   Lager %d   Scanner %.0f m", ShipSpeed(t, lvl[cfg::UP_SPEED]),
+                                  ShipArmor(t, lvl[cfg::UP_ARMOR]), ShipDamage(t, lvl[cfg::UP_WEAPON]),
+                                  ShipCargo(t, lvl[cfg::UP_CARGO]), ShipScanner(t));
+    if (withGuns) text += TextFormat("   Kanonen bis %d", t.guns);
+    return text;
 }
 
 // Wird jedes Frame gezeichnet, solange der Spieler angedockt ist. Es liest nur
@@ -669,7 +672,13 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
     if (station.type == StationType::Trade) {
         // --- Handelsstation: Verkauf (passiert schon beim Andocken),
         //     Kontostand, Stationsausbau, Reparatur, Abdocken ------------------
-        Rectangle r{W * 0.5f - 330 * s, H * 0.5f - 300 * s, 660 * s, 600 * s};
+        // Mehr als drei geparkte Schiffe (Tab "Schiff"): Zeilen etwas enger
+        // und das Fenster höher, damit alle hineinpassen (höchstens
+        // limits::MAX_SHIP_TYPES - 1 = 7 geparkte).
+        const int parked = std::min(static_cast<int>(me.hangar.size()), w.settings.ShipCount() - 1);
+        const float rowPitch = parked <= 3 ? 80.0f : 72.0f;
+        const float panelH = std::max(600.0f, 360.0f + parked * rowPitch);
+        Rectangle r{W * 0.5f - 330 * s, H * 0.5f - panelH * 0.5f * s, 660 * s, panelH * s};
         Panel(r);
         float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
         std::string title = station.name;
@@ -759,8 +768,8 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
             Rectangle cur{x, y, bw, 70 * s};
             DrawRectangleRec(cur, Color{36, 42, 54, 220});
             DrawRectangleLinesEx(cur, 1.0f, ACCENT_DIM);
-            Text(cfg::SHIP_TYPES[std::clamp(me.shipType, 0, cfg::SHIP_TYPE_COUNT - 1)].name, cur.x + 16 * s, cur.y + 8 * s, 26 * s, TEXT);
-            Text(ShipStats(me.shipType, me.upgrades), cur.x + 16 * s, cur.y + 42 * s, 18 * s, MUTED);
+            Text(w.settings.Ship(me.shipType).name, cur.x + 16 * s, cur.y + 8 * s, 26 * s, TEXT);
+            Text(ShipStats(w.settings.Ship(me.shipType), me.upgrades, false), cur.x + 16 * s, cur.y + 42 * s, 18 * s, MUTED);
             y += 84 * s;
             Text("Geparkte Schiffe", x, y, 20 * s, MUTED);
             y += 26 * s;
@@ -768,19 +777,21 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
                 Text("Keine. Weitere Schiffe gibt es beim Raumschiffsverkäufer.", x, y, 18 * s, TEXT);
                 y += 76 * s;
             }
-            for (int i = 0; i < static_cast<int>(me.hangar.size()) && i < cfg::SHIP_TYPE_COUNT - 1; ++i) {
+            const bool compact = rowPitch < 80.0f;
+            for (int i = 0; i < parked; ++i) {
                 const OwnedShip& o = me.hangar[i];
-                const int type = std::clamp(o.type, 0, cfg::SHIP_TYPE_COUNT - 1);
-                Rectangle row{x, y, bw, 70 * s};
+                const int type = std::clamp(o.type, 0, w.settings.ShipCount() - 1);
+                Rectangle row{x, y, bw, (rowPitch - 10.0f) * s};
                 DrawRectangleRec(row, Color{36, 42, 54, 220});
-                Text(cfg::SHIP_TYPES[type].name, row.x + 16 * s, row.y + 8 * s, 26 * s, TEXT);
-                Text(ShipStats(type, o.upgrades), row.x + 16 * s, row.y + 42 * s, 18 * s, MUTED);
+                Text(w.settings.Ship(type).name, row.x + 16 * s, row.y + (compact ? 6 : 8) * s, (compact ? 24 : 26) * s, TEXT);
+                Text(ShipStats(w.settings.Ship(type), o.upgrades, false), row.x + 16 * s, row.y + (compact ? 36 : 42) * s,
+                     (compact ? 17 : 18) * s, MUTED);
                 std::string bl = keyboard ? TextFormat("[%d]  Wechseln", i + 1) : std::string("Wechseln");
-                Rectangle b{row.x + row.width - 190 * s, row.y + 12 * s, 174 * s, 46 * s};
+                Rectangle b{row.x + row.width - 190 * s, row.y + (compact ? 8 : 12) * s, 174 * s, (compact ? 40 : 46) * s};
                 if ((Button(b, bl, 22 * s, false, interactive) ||
                      (interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + i)))))
                     req.switchShip = type;
-                y += 80 * s;
+                y += rowPitch * s;
             }
         } else {
             // --- Tab "Missionen": laufende Mission und offene Angebote
@@ -842,7 +853,16 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         // --- Raumschiffsverkäufer: alle Schiffstypen, die man noch nicht
         //     besitzt, kaufen (altes Schiff parken) oder mit Inzahlunggabe
         //     des geflogenen Schiffs (World::BuyShip) -------------------------
-        Rectangle r{W * 0.5f - 420 * s, H * 0.5f - 290 * s, 840 * s, 580 * s};
+        // Nur Schiffe im Verkauf und eigene. Ab fünf Zeilen etwas enger und
+        // das Fenster höher (höchstens limits::MAX_SHIP_TYPES = 8 Zeilen).
+        std::vector<int> listed;
+        for (int t = 0; t < w.settings.ShipCount(); ++t)
+            if (w.settings.Ship(t).forSale || w.OwnsShipType(me, t)) listed.push_back(t);
+        const int rows = static_cast<int>(listed.size());
+        const float rowPitch = rows <= 4 ? 98.0f : 84.0f;
+        const float statsY = rows <= 4 ? 50.0f : 40.0f, buttonH = rows <= 4 ? 36.0f : 30.0f;
+        const float panelH = std::max(580.0f, 188.0f + rows * rowPitch);
+        Rectangle r{W * 0.5f - 420 * s, H * 0.5f - panelH * 0.5f * s, 840 * s, panelH * s};
         Panel(r);
         float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
         std::string title = station.name;
@@ -855,12 +875,13 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
              x, y, 18 * s, MUTED);
         y += 34 * s;
         const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
-        for (int t = 0; t < cfg::SHIP_TYPE_COUNT; ++t) {
-            Rectangle row{x, y, bw, 88 * s};
+        for (int k = 0; k < rows; ++k) {
+            const int t = listed[k];
+            Rectangle row{x, y, bw, (rowPitch - 10.0f) * s};
             DrawRectangleRec(row, Color{36, 42, 54, 220});
             const int zero[cfg::UP_COUNT] = {0, 0, 0, 0};
-            Text(cfg::SHIP_TYPES[t].name, row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
-            Text(ShipStats(t, zero), row.x + 16 * s, row.y + 50 * s, 18 * s, MUTED);
+            Text(w.settings.Ship(t).name, row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
+            Text(ShipStats(w.settings.Ship(t), zero, true), row.x + 16 * s, row.y + statsY * s, 18 * s, MUTED);
             const bool owned = w.OwnsShipType(me, t);
             if (owned) {
                 TextRight(t == me.shipType ? "Wird geflogen" : "Im Besitz", row.x + row.width - 20 * s, row.y + 12 * s, 22 * s, GOOD);
@@ -871,13 +892,13 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
                 const int tradePrice = w.ShipPrice(me, t, true);
                 const bool canBuy = me.balance >= price;
                 const bool canTrade = me.balance >= tradePrice;
-                const bool keyHit = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t));
-                std::string bl = (keyboard ? TextFormat("[%d] ", t + 1) : std::string()) + "Kaufen " + Num(price);
-                std::string tl = (keyboard ? TextFormat("[Umschalt+%d] ", t + 1) : std::string()) + "In Zahlung " +
+                const bool keyHit = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + k));
+                std::string bl = (keyboard ? TextFormat("[%d] ", k + 1) : std::string()) + "Kaufen " + Num(price);
+                std::string tl = (keyboard ? TextFormat("[Umschalt+%d] ", k + 1) : std::string()) + "In Zahlung " +
                                  Num(std::max(0, tradePrice));
                 // Knöpfe rechts in der oberen Zeile, die Werte stehen darunter
-                Rectangle b1{row.x + row.width - 486 * s, row.y + 8 * s, 200 * s, 36 * s};
-                Rectangle b2{row.x + row.width - 276 * s, row.y + 8 * s, 260 * s, 36 * s};
+                Rectangle b1{row.x + row.width - 486 * s, row.y + 8 * s, 200 * s, buttonH * s};
+                Rectangle b2{row.x + row.width - 276 * s, row.y + 8 * s, 260 * s, buttonH * s};
                 bool hover1 = false, hover2 = false;
                 bool click1 = Button(b1, bl, 18 * s, false, canBuy && interactive, &hover1);
                 bool click2 = Button(b2, tl, 18 * s, false, canTrade && interactive, &hover2);
@@ -890,7 +911,7 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
                     g_audio.Play(Sfx::Denied);
                 }
             }
-            y += 98 * s;
+            y += rowPitch * s;
         }
         Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
         if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
@@ -912,42 +933,44 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         // Bewaffnung, Lager, Kanonen). Die Werte-Tabellen in Config.hpp haben je
         // UPGRADE_LEVELS + 1 Einträge (Index 0 = Startwert), daher ist
         // [lvl + 1] gültig, solange die Stufe nicht maximal ist.
-        // Die Werte hängen vom Schiffstyp ab (cfg::ShipSpeed ...).
+        // Die Werte hängen vom Schiffstyp ab (ShipSpeed ... in GameSettings.hpp),
+        // die höchste Kanonen-Stufe auch (ShipUpgradeMax).
         const char* names[cfg::UP_COUNT] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager", "Kanonen"};
-        const int st = std::clamp(me.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
+        const ShipType& st = w.settings.Ship(me.shipType);
         for (int t = 0; t < cfg::UP_COUNT; ++t) {
             int lvl = me.upgrades[t];
-            bool maxed = lvl >= cfg::UPGRADE_MAX[t];
+            const int maxLvl = ShipUpgradeMax(st, t);
+            bool maxed = lvl >= maxLvl;
             std::string desc;
             switch (t) {
                 case cfg::UP_SPEED:
-                    desc = maxed ? TextFormat("Tempo %.0f", cfg::ShipSpeed(st, lvl))
-                                 : TextFormat("Tempo %.0f  ->  %.0f", cfg::ShipSpeed(st, lvl), cfg::ShipSpeed(st, lvl + 1));
+                    desc = maxed ? TextFormat("Tempo %.0f", ShipSpeed(st, lvl))
+                                 : TextFormat("Tempo %.0f  ->  %.0f", ShipSpeed(st, lvl), ShipSpeed(st, lvl + 1));
                     break;
                 case cfg::UP_ARMOR:
-                    desc = maxed ? TextFormat("Schild %.0f", cfg::ShipArmor(st, lvl))
-                                 : TextFormat("Schild %.0f  ->  %.0f", cfg::ShipArmor(st, lvl), cfg::ShipArmor(st, lvl + 1));
+                    desc = maxed ? TextFormat("Schild %.0f", ShipArmor(st, lvl))
+                                 : TextFormat("Schild %.0f  ->  %.0f", ShipArmor(st, lvl), ShipArmor(st, lvl + 1));
                     break;
                 case cfg::UP_WEAPON:
                     // WEAPON_RATE ist die Pause zwischen zwei Schüssen in
                     // Sekunden; 1 / Pause = Schüsse pro Sekunde.
-                    desc = maxed ? TextFormat("Schaden %.0f, %.1f Schuss/s", cfg::ShipDamage(st, lvl), 1.0f / cfg::WEAPON_RATE[lvl])
-                                 : TextFormat("Schaden %.0f -> %.0f,  %.1f -> %.1f Schuss/s", cfg::ShipDamage(st, lvl),
-                                              cfg::ShipDamage(st, lvl + 1), 1.0f / cfg::WEAPON_RATE[lvl], 1.0f / cfg::WEAPON_RATE[lvl + 1]);
+                    desc = maxed ? TextFormat("Schaden %.0f, %.1f Schuss/s", ShipDamage(st, lvl), 1.0f / cfg::WEAPON_RATE[lvl])
+                                 : TextFormat("Schaden %.0f -> %.0f,  %.1f -> %.1f Schuss/s", ShipDamage(st, lvl),
+                                              ShipDamage(st, lvl + 1), 1.0f / cfg::WEAPON_RATE[lvl], 1.0f / cfg::WEAPON_RATE[lvl + 1]);
                     break;
                 case cfg::UP_GUNS:
-                    desc = maxed ? TextFormat("%d Schüsse gleichzeitig", cfg::GUN_COUNT[lvl])
-                                 : TextFormat("%d  ->  %d Schüsse gleichzeitig", cfg::GUN_COUNT[lvl], cfg::GUN_COUNT[lvl + 1]);
+                    desc = maxed ? TextFormat("%d Schüsse gleichzeitig", ShipGuns(st, lvl))
+                                 : TextFormat("%d  ->  %d Schüsse gleichzeitig", ShipGuns(st, lvl), ShipGuns(st, lvl + 1));
                     break;
                 default:
-                    desc = maxed ? TextFormat("Kapazität %d", cfg::ShipCargo(st, lvl))
-                                 : TextFormat("Kapazität %d  ->  %d", cfg::ShipCargo(st, lvl), cfg::ShipCargo(st, lvl + 1));
+                    desc = maxed ? TextFormat("Kapazität %d", ShipCargo(st, lvl))
+                                 : TextFormat("Kapazität %d  ->  %d", ShipCargo(st, lvl), ShipCargo(st, lvl + 1));
                     break;
             }
             Rectangle row{x, y, bw, 74 * s};
             DrawRectangleRec(row, Color{36, 42, 54, 220});
             Text(names[t], row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
-            for (int k = 0; k < cfg::UPGRADE_MAX[t]; ++k) {
+            for (int k = 0; k < maxLvl; ++k) {
                 Color c = k < lvl ? ACCENT : Color{70, 76, 90, 255};
                 DrawRectangle(static_cast<int>(row.x + 16 * s + k * 22 * s), static_cast<int>(row.y + 46 * s),
                               static_cast<int>(18 * s), static_cast<int>(10 * s), c);

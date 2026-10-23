@@ -10,11 +10,14 @@
 //     Netzwerk kommen.
 //   - NeedsWorldRebuild: Entscheidung "Welt neu aufbauen oder nur anpassen".
 //   - Text <-> Wert für Anzeige, Dateien und Webseite.
+//   - DefaultShipTypes: Standard-Schiffe aus cfg::SHIP_TYPES.
 //
 // Wird von Server, Client und Lasttest benutzt (Teil von shared/).
-// Abhängigkeiten: Util.hpp (ToLowerAscii), <algorithm> (std::clamp).
+// Abhängigkeiten: Util.hpp (ToLowerAscii), Models.hpp (ShipModelNames),
+// <algorithm> (std::clamp).
 // ---------------------------------------------------------------------------
 #include "GameSettings.hpp"
+#include "Models.hpp"
 #include "Util.hpp"
 #include <algorithm>
 
@@ -33,6 +36,62 @@ int EnemiesForDifficulty(Difficulty d, int customCount) {
     // Zahl aus dem Netzwerk). Ohne diese Zeile warnt der Compiler außerdem,
     // dass die Funktion ohne Rückgabewert enden könnte.
     return 3;
+}
+
+namespace {
+
+// Text für Servername und Schiffsnamen: nur druckbare Zeichen, höchstens
+// maxBytes lang (wird auf der Webseite und im Spiel angezeigt). Steuerzeichen
+// werden entfernt. Ergebnis kann leer sein.
+std::string CleanText(const std::string& text, int maxBytes) {
+    // Bytes < 32 sind Steuerzeichen (Zeilenumbruch, Tabulator ...), 127 ist
+    // "DEL". Bytes ab 128 bleiben erhalten: Das sind die Teile von
+    // UTF-8-Zeichen wie "ü", die erlaubt sein sollen.
+    std::string clean;
+    for (unsigned char c : text)
+        if (c >= 32 && c != 127) clean.push_back(static_cast<char>(c));
+    if (clean.size() > static_cast<size_t>(maxBytes)) {
+        clean.resize(maxBytes);
+        // Beim Kürzen kein halbes UTF-8-Zeichen (z. B. halbes "ü") am Ende stehen lassen:
+        // Anfang der letzten Bytefolge suchen und prüfen, ob sie vollständig ist.
+        // Kurz zu UTF-8: Ein Zeichen besteht aus 1 bis 4 Bytes. Das erste
+        // ("Startbyte") verrät die Länge: 0xxxxxxx = 1 Byte (ASCII),
+        // 110xxxxx (ab 0xC0) = 2, 1110xxxx (ab 0xE0) = 3, 11110xxx (ab 0xF0)
+        // = 4 Bytes. Alle Folgebytes haben die Form 10xxxxxx; das prüft
+        // "(byte & 0xC0) == 0x80".
+        // Schritt 1: von hinten über die Folgebytes zurückgehen. Danach ist
+        // clean[k - 1] das Startbyte des letzten Zeichens.
+        size_t k = clean.size();
+        while (k > 0 && (static_cast<unsigned char>(clean[k - 1]) & 0xC0) == 0x80) --k;
+        if (k > 0) {
+            // Schritt 2: Wie viele Bytes bräuchte dieses Zeichen, und wie
+            // viele sind noch da? Fehlen welche, das ganze Zeichen weglassen.
+            const unsigned char lead = static_cast<unsigned char>(clean[k - 1]);
+            const size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+            if (clean.size() - (k - 1) < need) clean.resize(k - 1);
+        }
+    }
+    return clean;
+}
+
+} // namespace
+
+std::vector<ShipType> DefaultShipTypes() {
+    std::vector<ShipType> out;
+    for (const cfg::ShipTypeDef& d : cfg::SHIP_TYPES) {
+        ShipType t;
+        t.name = d.name;
+        t.model = d.model;
+        t.shield = d.shield;
+        t.scanner = d.scanner;
+        t.speed = d.speed;
+        t.weapon = d.weapon;
+        t.cargo = d.cargo;
+        t.cost = d.cost;
+        t.guns = d.guns;
+        out.push_back(t);
+    }
+    return out;
 }
 
 void Sanitize(GameSettings& s) {
@@ -55,37 +114,27 @@ void Sanitize(GameSettings& s) {
     s.lives = std::clamp(s.lives, 1, limits::MAX_LIVES);
     s.missions = std::clamp(s.missions, 0, limits::MAX_MISSIONS);
 
-    // Servername: nur druckbare Zeichen, nicht zu lang (wird auf der Webseite
-    // und im Spiel angezeigt). Steuerzeichen werden entfernt.
-    // Bytes < 32 sind Steuerzeichen (Zeilenumbruch, Tabulator ...), 127 ist
-    // "DEL". Bytes ab 128 bleiben erhalten: Das sind die Teile von
-    // UTF-8-Zeichen wie "ü", die erlaubt sein sollen.
-    std::string clean;
-    for (unsigned char c : s.serverName)
-        if (c >= 32 && c != 127) clean.push_back(static_cast<char>(c));
-    if (clean.size() > static_cast<size_t>(limits::MAX_SERVER_NAME)) {
-        clean.resize(limits::MAX_SERVER_NAME);
-        // Beim Kürzen kein halbes UTF-8-Zeichen (z. B. halbes "ü") am Ende stehen lassen:
-        // Anfang der letzten Bytefolge suchen und prüfen, ob sie vollständig ist.
-        // Kurz zu UTF-8: Ein Zeichen besteht aus 1 bis 4 Bytes. Das erste
-        // ("Startbyte") verrät die Länge: 0xxxxxxx = 1 Byte (ASCII),
-        // 110xxxxx (ab 0xC0) = 2, 1110xxxx (ab 0xE0) = 3, 11110xxx (ab 0xF0)
-        // = 4 Bytes. Alle Folgebytes haben die Form 10xxxxxx; das prüft
-        // "(byte & 0xC0) == 0x80".
-        // Schritt 1: von hinten über die Folgebytes zurückgehen. Danach ist
-        // clean[k - 1] das Startbyte des letzten Zeichens.
-        size_t k = clean.size();
-        while (k > 0 && (static_cast<unsigned char>(clean[k - 1]) & 0xC0) == 0x80) --k;
-        if (k > 0) {
-            // Schritt 2: Wie viele Bytes bräuchte dieses Zeichen, und wie
-            // viele sind noch da? Fehlen welche, das ganze Zeichen weglassen.
-            const unsigned char lead = static_cast<unsigned char>(clean[k - 1]);
-            const size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
-            if (clean.size() - (k - 1) < need) clean.resize(k - 1);
-        }
+    s.serverName = CleanText(s.serverName, limits::MAX_SERVER_NAME);
+    if (s.serverName.empty()) s.serverName = "Mondschürfer-Server";
+
+    // Schiffe: mindestens das Startschiff, höchstens MAX_SHIP_TYPES, alle
+    // Werte in ihren Grenzen und nur Modelle, die es gibt ("craft...").
+    if (s.ships.empty()) s.ships = DefaultShipTypes();
+    if (s.ships.size() > static_cast<size_t>(limits::MAX_SHIP_TYPES)) s.ships.resize(limits::MAX_SHIP_TYPES);
+    const std::vector<std::string>& models = ShipModelNames();
+    for (size_t i = 0; i < s.ships.size(); ++i) {
+        ShipType& t = s.ships[i];
+        t.name = CleanText(t.name, limits::MAX_SHIP_NAME);
+        if (t.name.empty()) t.name = "Schiff " + std::to_string(i + 1);
+        if (std::find(models.begin(), models.end(), t.model) == models.end()) t.model = cfg::SHIP_TYPES[0].model;
+        t.shield = std::clamp(t.shield, limits::MIN_SHIP_SHIELD, limits::MAX_SHIP_SHIELD);
+        t.scanner = std::clamp(t.scanner, limits::MIN_SHIP_PERCENT, limits::MAX_SHIP_PERCENT);
+        t.speed = std::clamp(t.speed, limits::MIN_SHIP_SPEED, limits::MAX_SHIP_SPEED);
+        t.weapon = std::clamp(t.weapon, limits::MIN_SHIP_PERCENT, limits::MAX_SHIP_PERCENT);
+        t.cargo = std::clamp(t.cargo, limits::MIN_SHIP_CARGO, limits::MAX_SHIP_CARGO);
+        t.cost = std::clamp(t.cost, 0, limits::MAX_SHIP_COST);
+        t.guns = std::clamp(t.guns, 1, cfg::MAX_GUNS);
     }
-    if (clean.empty()) clean = "Mondschürfer-Server";
-    s.serverName = clean;
 }
 
 bool NeedsWorldRebuild(const GameSettings& a, const GameSettings& b) {

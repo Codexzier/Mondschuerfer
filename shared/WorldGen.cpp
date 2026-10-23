@@ -71,7 +71,6 @@ void World::ResolveModels() {
     mdl.miner = ModelId("craft_miner");      // die drei Händler-Modelle (ShipKind::Miner)
     mdl.cargoA = ModelId("craft_cargoA");
     mdl.cargoB = ModelId("craft_cargoB");
-    for (int t = 0; t < cfg::SHIP_TYPE_COUNT; ++t) mdl.shipTypes[t] = ModelId(cfg::SHIP_TYPES[t].model);
     mdl.terrain = ModelId("terrain");
     mdl.crystalSmall = ModelId("rock_crystals");          // Lagerstätten bis 1000
     mdl.crystalA = ModelId("rock_crystalsLargeA");        // große Lagerstätten (> 1000)

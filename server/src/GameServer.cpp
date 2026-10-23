@@ -22,6 +22,7 @@
 // ---------------------------------------------------------------------------
 #include "GameServer.hpp"
 #include "Crypto.hpp"
+#include "Models.hpp"
 #include "Util.hpp"
 #include <algorithm>
 #include <chrono>
@@ -467,6 +468,7 @@ void GameServer::Step() {
     // Einstellungen von der Webseite immer zu Beginn eines Schritts anwenden
     // (docs/Mehrspieler.md Abschnitt 12), nie mitten in der Simulation.
     ApplySettingsRequest();
+    ApplyShipsRequest();
 
     for (auto& up : clients_)
         if (up->isBot) BotThink(*up);
@@ -1498,18 +1500,18 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         } else {
             // Kein Schiff (wartet auf ein neues): sinnvolle Werte statt 0/0,
             // damit der Client nicht durch 0 teilt.
-            const int t = std::clamp(ps->shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
-            e.maxHp = cfg::ShipArmor(t, std::clamp(ps->upgrades[cfg::UP_ARMOR], 0, cfg::UPGRADE_LEVELS));
-            e.cargoMax = cfg::ShipCargo(t, std::clamp(ps->upgrades[cfg::UP_CARGO], 0, cfg::UPGRADE_LEVELS));
+            const ShipType& t = settings_.Ship(ps->shipType);
+            e.maxHp = ShipArmor(t, std::clamp(ps->upgrades[cfg::UP_ARMOR], 0, cfg::UPGRADE_LEVELS));
+            e.cargoMax = ShipCargo(t, std::clamp(ps->upgrades[cfg::UP_CARGO], 0, cfg::UPGRADE_LEVELS));
         }
         e.balance = ps->balance;
         for (int u = 0; u < cfg::UP_COUNT; ++u)
             e.upgrades[u] = static_cast<uint8_t>(std::clamp(ps->upgrades[u], 0, cfg::UPGRADE_LEVELS));
-        e.shipType = static_cast<uint8_t>(std::clamp(ps->shipType, 0, cfg::SHIP_TYPE_COUNT - 1));
+        e.shipType = static_cast<uint8_t>(std::clamp(ps->shipType, 0, settings_.ShipCount() - 1));
         e.hangar.clear();
         for (const OwnedShip& o : ps->hangar) {
             net::SnapMe::Parked h;
-            h.type = static_cast<uint8_t>(std::clamp(o.type, 0, cfg::SHIP_TYPE_COUNT - 1));
+            h.type = static_cast<uint8_t>(std::clamp(o.type, 0, settings_.ShipCount() - 1));
             for (int u = 0; u < cfg::UP_COUNT; ++u) h.upgrades[u] = static_cast<uint8_t>(std::clamp(o.upgrades[u], 0, cfg::UPGRADE_MAX[u]));
             e.hangar.push_back(h);
         }
@@ -1816,10 +1818,10 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = std::clamp(p.upgrades[u], 0, cfg::UPGRADE_MAX[u]);
     ps.lives = p.lives > 0 ? std::clamp(p.lives, 1, limits::MAX_LIVES) : settings_.lives;
     // Schiffstyp und geparkte Schiffe; je Typ höchstens ein Schiff
-    ps.shipType = std::clamp(p.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
+    ps.shipType = std::clamp(p.shipType, 0, settings_.ShipCount() - 1);
     ps.hangar.clear();
     for (const auto& h : p.hangar) {
-        const int t = std::clamp(h.type, 0, cfg::SHIP_TYPE_COUNT - 1);
+        const int t = std::clamp(h.type, 0, settings_.ShipCount() - 1);
         if (world_.OwnsShipType(ps, t)) continue;
         OwnedShip o;
         o.type = t;
@@ -1896,6 +1898,9 @@ void GameServer::ApplySettingsRequest() {
         s = config_.defaults;
         accounts_.RemoveSettings();
     }
+    // Die Schiffe ändert nur der eigene Bereich der Webseite (ApplyShipsRequest);
+    // auch "Auf Standard zurücksetzen" lässt sie stehen.
+    s.ships = settings_.ships;
     Sanitize(s);   // nie ungeprüft übernehmen, auch wenn WebServer schon geprüft hat
     if (!reset) accounts_.SaveSettings(s);
     ApplySettings(s);
@@ -1915,6 +1920,36 @@ void GameServer::ApplySettings(const GameSettings& s) {
         // (Piraten nachschieben). Bei weniger Gegnern sofort aufräumen.
         world_.settings = s;
         RemoveSurplusPirates();
+        BroadcastSettings();
+    }
+}
+
+// Schiffe von der Webseite (Bereich "Schiffe"): sofort übernehmen, auch für
+// die Schiffe, die gerade fliegen. Die Welt muss dafür nicht neu aufgebaut werden.
+void GameServer::ApplyShipsRequest() {
+    if (!shared_) return;
+    GameSettings s = settings_;
+    if (!shared_->TakeShipsRequest(s.ships)) return;
+    Sanitize(s);
+    accounts_.SaveShips(s.ships);
+    settings_.ships = s.ships;
+    world_.settings.ships = s.ships;
+    for (PlayerState& ps : world_.players) {
+        world_.ApplyUpgrades(ps, false);
+        if (Ship* sp = world_.PlayerShip(ps)) sp->cargo = std::min(sp->cargo, sp->cargoMax);
+    }
+    Log(Fmt("Schiffe geändert: %d Schiffstyp(en)", settings_.ShipCount()));
+    BroadcastSettings();
+}
+
+void GameServer::BroadcastSettings() {
+    net::SettingsMsg m;
+    m.settings = settings_;
+    const std::vector<uint8_t> bytes = net::Encode(m);
+    for (auto& up : clients_) {
+        Client& c = *up;
+        if (c.closing || c.role == Role::Lobby) continue;
+        Send(c, bytes, true);
     }
 }
 
@@ -2127,6 +2162,7 @@ void GameServer::PublishStatus() {
     }
     st.settings = settings_;
     st.defaults = config_.defaults;
+    st.shipModels = ShipModelNames();   // Auswahl im Bereich "Schiffe" (der Web-Thread kennt Models.hpp nicht)
     shared_->PublishStatus(st);
 }
 

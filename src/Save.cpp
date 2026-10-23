@@ -265,7 +265,7 @@ bool LoadGame(World& w) {
             if (v.size() == 6 || v.size() == 7) {
                 OwnedShip o;
                 const int n = static_cast<int>(v.size()) - 2;
-                o.type = std::clamp(static_cast<int>(v[0]), 0, cfg::SHIP_TYPE_COUNT - 1);
+                o.type = std::clamp(static_cast<int>(v[0]), 0, w.settings.ShipCount() - 1);
                 for (int u = 0; u < n; ++u) o.upgrades[u] = std::clamp(static_cast<int>(v[1 + u]), 0, cfg::UPGRADE_MAX[u]);
                 o.hp = v.back();
                 if (!w.OwnsShipType(me, o.type)) me.hangar.push_back(o);

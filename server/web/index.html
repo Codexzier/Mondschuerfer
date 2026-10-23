@@ -155,7 +155,7 @@
                     <th scope="col">Name</th>
                     <th scope="col" class="col-progress">Fortschritt</th>
                     <th scope="col">Runde</th>
-                    <th scope="col" title="A = Antrieb, P = Panzerung, W = Waffen, L = Lager (je Stufe 0–5), K = Kanonen (Stufe 0–2)">Aufrüstungen</th>
+                    <th scope="col" title="A = Antrieb, P = Panzerung, W = Waffen, L = Lager (je Stufe 0–5), K = Kanonen (Stufe 0–4, je nach Schiff)">Aufrüstungen</th>
                     <th scope="col" class="num" title="Verbleibende Leben">Leben</th>
                     <th scope="col" class="num" title="Zeit mit dem aktuellen Raumschiff">Schiffszeit</th>
                     <th scope="col" class="num wrap" title="Dauer der aktuellen Sitzung">Angemeldet seit</th>
@@ -318,6 +318,51 @@
             </form>
         </section>
     </div>
+
+    <!-- ============================== Schiffe ============================== -->
+    <section class="panel" aria-labelledby="ships-title">
+        <div class="panel-head">
+            <h2 id="ships-title">Schiffe (Raumschiffsverkäufer)</h2>
+            <span id="ships-dirty-note" class="badge badge-accent" hidden>Ungespeicherte Änderungen</span>
+        </div>
+        <form id="ships-form" class="settings" novalidate>
+            <p class="muted small ships-help">
+                Schiff 1 ist das Startschiff, mit dem jeder Spieler beginnt. Scanner, Antrieb und Waffen in Prozent des
+                Grundwerts (Scanner 34 m, Tempo 16, Schaden 10), Schild und Lager ohne Aufrüstung. „Kanonen“: so viele
+                lassen sich in der Werft höchstens kaufen. Schiffe lassen sich nicht entfernen, weil Spieler sie besitzen
+                können; dafür „Im Verkauf“ ausschalten. Änderungen gelten sofort, auch für Schiffe, die Spieler schon besitzen.
+            </p>
+            <div class="table-wrap">
+                <table class="data-table ships-table">
+                    <thead>
+                    <tr>
+                        <th scope="col" class="num">Nr.</th>
+                        <th scope="col">Name</th>
+                        <th scope="col">Modell</th>
+                        <th scope="col" class="num">Schild</th>
+                        <th scope="col" class="num">Scanner %</th>
+                        <th scope="col" class="num">Antrieb %</th>
+                        <th scope="col" class="num">Waffen %</th>
+                        <th scope="col" class="num">Lager</th>
+                        <th scope="col" class="num">Preis</th>
+                        <th scope="col" class="num">Kanonen</th>
+                        <th scope="col">Im Verkauf</th>
+                    </tr>
+                    </thead>
+                    <tbody id="ships-body"></tbody>
+                </table>
+            </div>
+            <div class="actions">
+                <button type="submit" id="btn-ships-save" class="btn btn-primary">Speichern</button>
+                <button type="button" id="btn-ships-discard" class="btn">Änderungen verwerfen</button>
+                <button type="button" id="btn-ships-add" class="btn btn-ghost">Schiff hinzufügen</button>
+            </div>
+            <p id="ships-stale-note" class="note note-warn" hidden>
+                Die Schiffe wurden inzwischen auf dem Server geändert. „Änderungen verwerfen“ lädt den aktuellen Stand.
+            </p>
+            <div id="ships-msg" class="note" role="status" aria-live="polite" hidden></div>
+        </form>
+    </section>
 </main>
 
 <footer class="footer muted small">
