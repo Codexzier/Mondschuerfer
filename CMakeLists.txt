@@ -69,6 +69,12 @@ if (NOT raylib_FOUND)
     FetchContent_MakeAvailable(raylib)
 endif ()
 
+# pl_mpeg (Videoclips der Missionen: MPEG-1 mit MP2-Ton) liegt im Projekt unter
+# third_party/pl_mpeg (MIT-Lizenz). Eigene Bibliothek, damit die Warnungen des
+# Spiels nicht für den fremden Code gelten.
+add_library(pl_mpeg STATIC third_party/pl_mpeg/pl_mpeg.c)
+target_include_directories(pl_mpeg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pl_mpeg)
+
 # ---------------------------------------------------------------------------
 # Spiel
 # ---------------------------------------------------------------------------
@@ -76,6 +82,7 @@ add_executable(Mondschuerfer
         src/main.cpp
         src/Assets.cpp
         src/Audio.cpp
+        src/ClipPlayer.cpp
         src/Render.cpp
         src/Hud.cpp
         src/Ui.cpp
@@ -90,7 +97,7 @@ add_executable(Mondschuerfer
 )
 
 target_include_directories(Mondschuerfer PRIVATE src shared ${MONDSCHUERFER_ENET_INCLUDE})
-target_link_libraries(Mondschuerfer PRIVATE raylib enet)
+target_link_libraries(Mondschuerfer PRIVATE raylib enet pl_mpeg)
 
 if (MSVC)
     target_compile_options(Mondschuerfer PRIVATE /W3 /utf-8)
@@ -146,7 +153,7 @@ if (APPLE)
     target_link_libraries(Mondschuerfer PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
 endif ()
 
-# Assets (Kenney Space Kit, Sci-Fi Sounds, Interface Sounds, Musik) neben die ausfuehrbare Datei kopieren
+# Assets (Kenney Space Kit, Sci-Fi Sounds, Interface Sounds, Musik, Clips) neben die ausfuehrbare Datei kopieren
 add_custom_command(TARGET Mondschuerfer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/assets

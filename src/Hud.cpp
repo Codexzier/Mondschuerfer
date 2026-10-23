@@ -41,13 +41,15 @@
 //   2. Stationsnamen bzw. Randpfeile
 //   3. Statusfenster oben links
 //   4. Minikarte oben rechts
-//   5. Meldungen in der Bildmitte oben
+//   5. Mission oben in der Mitte, Meldungen darunter
 //   6. Kontext-Hinweis unten ("[F] Andocken ...", Abbau-Fortschritt)
-//   7. Tastenhilfe unten links
+//   7. Funkspruch der Mission unten rechts
+//   8. Tastenhilfe unten links
 // ---------------------------------------------------------------------------
 #include "Hud.hpp"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "ClipPlayer.hpp"
 #include "Controls.hpp"
 #include "Ui.hpp"
 #include <algorithm>
@@ -195,7 +197,8 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
 // Minikarte ("Radar") oben rechts: die ganze Karte (-WORLD_HALF..+WORLD_HALF
 // in x und z, also 300 x 300 Einheiten) verkleinert auf 230 x 230 Pixel.
 // Gezeigt werden: Stationen und Wracks immer, entdeckte Lagerstätten immer,
-// andere Schiffe nur im Radarkreis von 90 Einheiten um das eigene Schiff.
+// andere Schiffe nur im Radarkreis von 90 Einheiten um das eigene Schiff,
+// Ziele der eigenen Mission überall (pulsierend).
 void Minimap(const World& w) {
     const float s = Scale();
     const float size = 230 * s;
@@ -255,6 +258,17 @@ void Minimap(const World& w) {
                                                 : Color{140, 200, 255, 255};
         DrawCircleV(m, 2.6f * s, c);
     }
+    // Ziele der eigenen Mission, auch außerhalb des Radarkreises (Markierungen
+    // aus World::UpdateMissions, im Mehrspieler vom Server): Personen gelb,
+    // Piraten rot, Konvoi-Frachter grün. Sie pulsieren (Größe und Deckkraft),
+    // damit man sie auf der großen Karte schnell findet.
+    const float pulse = 0.5f + 0.5f * sinf(w.time * 5.0f);
+    for (const MissionMarker& mk : w.Me().markers) {
+        const Vector2 m = map(mk.pos);
+        const Color c = mk.kind == 0 ? Color{255, 225, 60, 255} : (mk.kind == 1 ? BAD : Color{150, 255, 120, 255});
+        DrawCircleV(m, (5.0f + 3.0f * pulse) * s, Fade(c, 0.25f + 0.25f * pulse));
+        DrawCircleV(m, 3.0f * s, c);
+    }
     // Eigenes Schiff als Pfeil in Flugrichtung. fd = Vorwärtsrichtung auf der
     // Karte (Welt-x/z), sd = fd um 90° gedreht (seitlich). Spitze 8 px nach
     // vorn, die beiden hinteren Ecken 5 px zurück und 5 px zur Seite.
@@ -299,6 +313,43 @@ std::string WithDeviceKeys(std::string t) {
             t.replace(at, strlen(key), hint);
     }
     return t;
+}
+
+// Fortschritt einer Mission als kurzer Text (HUD oben, Stationsfenster)
+std::string MissionProgress(const Mission& m) {
+    switch (m.type) {
+        case MissionType::Persons:
+            return m.progress >= m.goal ? std::string("Alle an Bord: zur Handelsstation!")
+                                        : TextFormat("Personen %d / %d", m.progress, m.goal);
+        case MissionType::Pirates: return TextFormat("Abschüsse %d / %d", m.progress, m.goal);
+        case MissionType::Convoy: return TextFormat("Frachter unterwegs %d, angekommen %d", m.alive, m.progress);
+    }
+    return std::string();
+}
+
+// Text in Zeilen zerlegen, die höchstens maxW Pixel breit sind (an
+// Leerzeichen; ein einzelnes zu langes Wort bekommt seine eigene Zeile).
+std::vector<std::string> WrapLines(const std::string& text, float maxW, float size) {
+    std::vector<std::string> lines;
+    std::string line, word;
+    auto flush = [&]() {
+        if (word.empty()) return;
+        const std::string tryLine = line.empty() ? word : line + " " + word;
+        if (!line.empty() && Width(tryLine, size) > maxW) {
+            lines.push_back(line);
+            line = word;
+        } else {
+            line = tryLine;
+        }
+        word.clear();
+    };
+    for (char c : text) {
+        if (c == ' ') flush();
+        else word += c;
+    }
+    flush();
+    if (!line.empty()) lines.push_back(line);
+    return lines;
 }
 
 } // namespace
@@ -431,6 +482,17 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
 
     Minimap(w);
 
+    // --- Laufende Mission oben in der Mitte -------------------------------------------
+    // Name und Fortschritt ("Personen 2 / 3", "Abschüsse 1 / 3" ...) in einem
+    // schmalen Panel über den Meldungen.
+    if (const Mission* mi = w.FindMission(me.mission)) {
+        const std::string t = std::string("MISSION  ") + cfg::MISSIONS[static_cast<int>(mi->type)].name + "    " + MissionProgress(*mi);
+        const float tw = Width(t, 22 * s) + 40 * s;
+        const Rectangle mr{W * 0.5f - tw * 0.5f, 16 * s, tw, 42 * s};
+        Panel(mr);
+        TextCentered(t, W * 0.5f, mr.y + 10 * s, 22 * s, Color{255, 230, 120, 255});
+    }
+
     // --- Meldungen ---------------------------------------------------------------------
     // me.notices füllt World::Notify (im Mehrspieler kommen sie vom Server).
     // Jede Meldung lebt 4 s (Notice::time zählt in der Welt herunter), höchstens
@@ -478,6 +540,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
                                               : key + " Andocken: Handelsstation";
             else if (kind == 4) hint = key + " Andocken: Werft (Upgrades)";
             else if (kind == 5) hint = key + " Andocken: Raumschiffsverkäufer";
+            else if (kind == 6) { hint = key + " Person einsammeln"; hc = Color{255, 230, 120, 255}; }
             else if (kind == 1 || kind == 2) {
                 // InteractTarget liefert nur die ID; die Restmenge suchen wir
                 // in der passenden Liste (Lagerstätten bzw. Wracks).
@@ -498,6 +561,35 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
                 TextCentered(hint, W * 0.5f, r.y + 13 * s, 26 * s, hc);
             }
         }
+    }
+
+    // --- Funkspruch der Mission unten rechts --------------------------------------------
+    // Avatar-Clip (links, abgespielt von ClipPlayer) mit Untertitel (Start,
+    // Ende, Fehlschlag; Dateien und Texte in cfg::MISSIONS). Fehlt der Clip,
+    // steht nur der Untertitel da. Die Restzeit läuft nur außerhalb der
+    // Station (World::UpdateMissions), angedockt wird er nicht gezeigt. Die
+    // letzten 0,6 s blendet er aus.
+    if (me.cue >= 0 && me.cue < cfg::MISSION_TYPE_COUNT * 3 && me.cueT > 0.0f && me.dockedAt < 0) {
+        const cfg::MissionDef& def = cfg::MISSIONS[me.cue / 3];
+        const float a = std::clamp(me.cueT / 0.6f, 0.0f, 1.0f);
+        const Texture2D* clip = g_clip.Frame(me.cue);
+        const float vs = clip ? 160 * s : 0.0f;              // Kantenlänge des Clipbilds
+        const float tx = clip ? vs + 32 * s : 16 * s;       // Textspalte, vom linken Rand
+        const float bw2 = 430 * s + tx - 16 * s;
+        const std::vector<std::string> lines = WrapLines(def.subtitle[me.cue % 3], 430 * s - 32 * s, 20 * s);
+        const float bh = std::max(52 * s + static_cast<float>(lines.size()) * 26 * s, clip ? vs + 32 * s : 0.0f);
+        const Rectangle cr{W - bw2 - 16 * s, H - bh - 16 * s, bw2, bh};
+        DrawRectangleRec(cr, Color{15, 18, 26, static_cast<unsigned char>(210 * a)});
+        DrawRectangleLinesEx(cr, 1.0f, Fade(Color{255, 230, 120, 255}, 0.6f * a));
+        if (clip) {
+            const Rectangle vr{cr.x + 16 * s, cr.y + 16 * s, vs, vs};
+            DrawTexturePro(*clip, Rectangle{0, 0, static_cast<float>(clip->width), static_cast<float>(clip->height)}, vr,
+                           Vector2{0, 0}, 0.0f, Fade(WHITE, a));
+            DrawRectangleLinesEx(vr, 1.0f, Fade(Color{255, 230, 120, 255}, 0.4f * a));
+        }
+        Text(std::string("FUNKSPRUCH  ") + def.name, cr.x + tx, cr.y + 12 * s, 16 * s, Fade(Color{255, 230, 120, 255}, a));
+        for (size_t i = 0; i < lines.size(); ++i)
+            Text(lines[i], cr.x + tx, cr.y + 40 * s + static_cast<float>(i) * 26 * s, 20 * s, Fade(TEXT, a));
     }
 
     // Tastenhilfe: in den ersten 90 s mit einem Schiff ganz, danach nur ein
@@ -538,8 +630,8 @@ static std::string ShipStats(int type, const int* up) {
 // World::Repair/BuyUpgrade – im Mehrspieler auf dem Server, der dafür den
 // eigenen, echten Kontostand benutzt.
 // Bedienung: Maus auf die Knöpfe oder Tasten R (Reparieren), 1-4 (Aufrüsten,
-// Schiff kaufen, mit Umschalt in Zahlung geben), 1-3 (Schiff wechseln), Tab
-// (Karteireiter der Handelsstation), F oder ESC (Abdocken). Controller: Zeiger mit dem linken Stick, A klickt;
+// Schiff kaufen, mit Umschalt in Zahlung geben), 1-3 (Schiff wechseln bzw.
+// Mission annehmen), Tab (Karteireiter der Handelsstation), F oder ESC (Abdocken). Controller: Zeiger mit dem linken Stick, A klickt;
 // Y (wie F) oder B (wie ESC) docken ab. Die Tasten R und 1-4 stehen nur bei
 // Tastaturbenutzung auf den Knöpfen.
 DockRequest DrawDockPanel(const World& w, bool interactive) {
@@ -559,9 +651,9 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
     if (me.dockedAt < 0 || me.dockedAt >= static_cast<int>(w.stations.size())) return req;
     const Station& station = w.stations[me.dockedAt];
 
-    // Karteireiter der Handelsstation: 0 = "Station", 1 = "Schiff". Wurde das
-    // Fenster im letzten Frame nicht gezeichnet (neu angedockt), beginnt es
-    // wieder mit "Station".
+    // Karteireiter der Handelsstation: 0 = "Station", 1 = "Schiff",
+    // 2 = "Missionen". Wurde das Fenster im letzten Frame nicht gezeichnet
+    // (neu angedockt), beginnt es wieder mit "Station".
     static int dockTab = 0;
     static unsigned lastFrame = 0;
     if (FrameIndex() > lastFrame + 1) dockTab = 0;
@@ -579,12 +671,12 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         y += 50 * s;
 
         // Karteireiter (wie im Optionsfenster): gewählter orange, sonst dunkel.
-        // Tab-Taste oder LB/RB am Controller wechseln.
-        if (interactive && (IsKeyPressed(KEY_TAB) || PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1) ||
-                            PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)))
-            dockTab = 1 - dockTab;
-        const char* tabNames[2] = {"Station", "Schiff"};
-        for (int t = 0; t < 2; ++t) {
+        // Tab-Taste oder RB am Controller: nächster, LB: voriger.
+        constexpr int TABS = 3;
+        if (interactive && (IsKeyPressed(KEY_TAB) || PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1))) dockTab = (dockTab + 1) % TABS;
+        if (interactive && PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)) dockTab = (dockTab + TABS - 1) % TABS;
+        const char* tabNames[TABS] = {"Station", "Schiff", "Missionen"};
+        for (int t = 0; t < TABS; ++t) {
             const Rectangle tr{x + t * 190 * s, y, 180 * s, 40 * s};
             const bool hover = CheckCollisionPointRec(PointerPos(), tr);
             if (interactive && hover && PointerPressed()) dockTab = t;
@@ -652,7 +744,7 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
                 req.repair = true;
             else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && PointerPressed())))
                 g_audio.Play(Sfx::Denied);
-        } else {
+        } else if (dockTab == 1) {
             // --- Tab "Schiff": geflogenes Schiff und die geparkten (hangar),
             //     zu denen man wechseln kann (World::SwitchShip) ----------------
             Text("Aktuelles Schiff", x, y, 20 * s, MUTED);
@@ -682,6 +774,57 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
                      (interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + i)))))
                     req.switchShip = type;
                 y += 80 * s;
+            }
+        } else {
+            // --- Tab "Missionen": laufende Mission und offene Angebote
+            //     (World::AcceptMission). Angebote derselben Art stehen in
+            //     einer Zeile; angenommen wird über die Art. ---------------------
+            const Mission* cur = w.FindMission(me.mission);
+            if (cur) {
+                const cfg::MissionDef& def = cfg::MISSIONS[static_cast<int>(cur->type)];
+                Text("Laufende Mission", x, y, 20 * s, MUTED);
+                y += 26 * s;
+                Rectangle box{x, y, bw, 70 * s};
+                DrawRectangleRec(box, Color{36, 42, 54, 220});
+                DrawRectangleLinesEx(box, 1.0f, ACCENT_DIM);
+                Text(def.name, box.x + 16 * s, box.y + 8 * s, 26 * s, Color{255, 230, 120, 255});
+                Text(MissionProgress(*cur), box.x + 16 * s, box.y + 42 * s, 18 * s, TEXT);
+                y += 84 * s;
+            }
+            Text("Angebote", x, y, 20 * s, MUTED);
+            y += 26 * s;
+            int count[cfg::MISSION_TYPE_COUNT] = {};
+            int offers = 0;
+            for (const Mission& m : w.missions)
+                if (m.owner < 0) { ++count[static_cast<int>(m.type)]; ++offers; }
+            if (offers == 0) {
+                Text(w.settings.missions > 0 ? "Gerade keine Angebote. Neue kommen bald." : "Auf diesem Server gibt es keine Missionen.",
+                     x, y, 18 * s, TEXT);
+            }
+            int row = 0;
+            for (int t = 0; t < cfg::MISSION_TYPE_COUNT; ++t) {
+                if (count[t] == 0) continue;
+                const cfg::MissionDef& def = cfg::MISSIONS[t];
+                Rectangle rr{x, y, bw, 78 * s};
+                DrawRectangleRec(rr, Color{36, 42, 54, 220});
+                std::string name = def.name;
+                if (count[t] > 1) name += TextFormat("  (%dx)", count[t]);
+                Text(name, rr.x + 16 * s, rr.y + 8 * s, 24 * s, TEXT);
+                const std::vector<std::string> lines = WrapLines(def.text, bw - 240 * s, 15 * s);
+                for (size_t i = 0; i < lines.size() && i < 2; ++i)
+                    Text(lines[i], rr.x + 16 * s, rr.y + 38 * s + static_cast<float>(i) * 19 * s, 15 * s, MUTED);
+                // Rechts: Belohnung und Knopf. Nur ohne laufende Mission annehmbar.
+                TextRight("+" + Num(def.reward) + " Pkt.", rr.x + rr.width - 16 * s, rr.y + 8 * s, 20 * s, GOOD);
+                const bool can = cur == nullptr;
+                std::string bl = keyboard ? TextFormat("[%d]  Annehmen", row + 1) : std::string("Annehmen");
+                Rectangle b{rr.x + rr.width - 196 * s, rr.y + 36 * s, 180 * s, 38 * s};
+                bool hover = false;
+                const bool click = Button(b, bl, 20 * s, false, can && interactive, &hover);
+                const bool key = interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + row));
+                if (interactive && can && (click || key)) req.acceptMission = t;
+                else if (interactive && !can && (key || (hover && PointerPressed()))) g_audio.Play(Sfx::Denied);
+                y += 86 * s;
+                ++row;
             }
         }
         // "Abdocken" steht immer unten im Fenster und ist per Tastatur

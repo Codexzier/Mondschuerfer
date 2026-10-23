@@ -225,6 +225,17 @@ Ship World::MakeShip(ShipKind kind, Vector3 pos) {
             s.ai = AiState::GoMine;
             break;
         }
+        case ShipKind::Convoy:
+            // Frachter der Mission "Konvoi verteidigen": langsam, ohne Waffen.
+            // Faction::Player: Spielergeschosse treffen sie nicht, die
+            // Geschütztürme schießen nicht auf sie, Piraten greifen sie an.
+            s.faction = Faction::Player;
+            s.model = RandInt(0, 1) == 0 ? mdl.cargoA : mdl.cargoB;
+            s.maxHp = s.hp = cfg::CONVOY_HP;
+            s.maxSpeed = cfg::CONVOY_SPEED;
+            s.turnRate = 1.8f;
+            s.cargo = s.cargoMax = 400;   // die Ware: landet bei einem Abschuss im Wrack
+            break;
     }
     return s;
 }
@@ -329,6 +340,7 @@ PlayerState& World::AddPlayer(int playerId, const std::string& name) {
 void World::RemovePlayer(int playerId) {
     PlayerState* ps = FindPlayer(playerId);
     if (!ps) return;
+    FailMission(*ps, false);   // laufende Mission: das Angebot kommt zurück
     const int shipId = ps->shipId;
     // Schiff sofort entfernen; Geschosse und KI-Ziele verweisen nur über die ID darauf.
     // remove_if + erase ist das übliche C++-Muster zum Löschen aus einem
@@ -595,12 +607,13 @@ void World::Update(float dt) {
     // Piraten nachschieben. Einzelspieler: mehr, je weiter das Spiel fortgeschritten ist
     // (4 + 1 je 12.000 abgelieferte Punkte, höchstens 11; Config.hpp).
     // Mehrspieler: feste Anzahl aus den Server-Einstellungen (Schwierigkeitsgrad).
-    // Elite-Piraten zählen mit (gleiche Fraktion). Händler werden einzeln
-    // nachgeliefert, alle 25–40 s, bis wieder cfg::MINERS_COUNT unterwegs sind.
+    // Elite-Piraten zählen mit (gleiche Fraktion), Missionspiraten nicht.
+    // Händler werden einzeln nachgeliefert, alle 25–40 s, bis wieder
+    // cfg::MINERS_COUNT unterwegs sind.
     int pirates = 0, miners = 0;
     for (const auto& s : ships) {
         if (s.dead) continue;
-        if (s.faction == Faction::Pirate) ++pirates;
+        if (s.faction == Faction::Pirate && s.mission < 0) ++pirates;
         if (s.kind == ShipKind::Miner) ++miners;
     }
     int wantPirates = isServer ? settings.enemyShips
@@ -617,6 +630,8 @@ void World::Update(float dt) {
         SpawnMiner(true);
         minerSpawnT = Rand(25.0f, 40.0f);
     }
+
+    UpdateMissions(dt);
 
     // Tote Schiffe entfernen. Einzelspieler: das Spielerschiff bleibt immer an Index 0.
     // Erst hier am Ende, damit während des Schritts kein Schiff aus der Liste
@@ -828,8 +843,9 @@ void World::UpdatePlayer(PlayerState& ps, float dt) {
 
     // --- Interaktion (F) ----------------------------------------------------
     // Eine Taste für alles: Läuft ein Abbau, bricht F ihn ab. Sonst entscheidet
-    // InteractTarget, was in der Nähe ist: Station -> andocken, Wrack oder
-    // entdeckte Lagerstätte -> Abbau starten (wenn das Lager nicht voll ist).
+    // InteractTarget, was in der Nähe ist: Station -> andocken, Person
+    // (Mission) -> sofort einsammeln, Wrack oder entdeckte Lagerstätte ->
+    // Abbau starten (wenn das Lager nicht voll ist).
     if (in.interact) {
         if (ps.mining) {
             ps.mining = false;
@@ -838,9 +854,11 @@ void World::UpdatePlayer(PlayerState& ps, float dt) {
         } else {
             int kind = 0, id = -1;
             InteractTarget(ps, &kind, &id);
-            if (kind >= 3) {
+            if (kind >= 3 && kind <= 5) {
                 Dock(ps, id);
                 return;   // angedockt: Rest dieses Schritts entfällt
+            } else if (kind == 6) {
+                CollectPerson(ps, id);
             } else if (kind == 1 || kind == 2) {
                 if (p.cargo >= p.cargoMax) {
                     SoundAt(Sfx::CargoFull, p.pos, 1.0f, 0.0f, ps.id);
@@ -1001,8 +1019,10 @@ int World::CountStations(StationType type) const {
 
 // Was ist für Taste F gerade in Reichweite? Ergebnis über die Zeiger kind/id
 // (zusätzlich als Rückgabewert kind). Vorrang: Station (DOCK_RANGE) vor
-// Wrack vor Lagerstätte (je die nächste in MINING_RANGE). Lagerstätten nur,
-// wenn dieser Spieler sie schon entdeckt hat; Wracks sieht man immer.
+// eigener Person (Mission) vor Wrack vor Lagerstätte (je die nächste in
+// MINING_RANGE). Eine Person neben einem Kristall wird also zuerst
+// eingesammelt. Lagerstätten nur, wenn dieser Spieler sie schon entdeckt
+// hat; Wracks sieht man immer.
 // Das HUD zeigt mit derselben Funktion den passenden Hinweis ("[F] Andocken").
 int World::InteractTarget(const PlayerState& ps, int* kind, int* id) const {
     *kind = 0;
@@ -1018,6 +1038,12 @@ int World::InteractTarget(const PlayerState& ps, int* kind, int* id) const {
         }
     }
     float best = cfg::MINING_RANGE;
+    for (const auto& pe : persons) {
+        float d = Dist2D(pe.pos, p.pos);
+        if (pe.owner == ps.id && d <= best) { best = d; *kind = 6; *id = pe.id; }
+    }
+    if (*kind == 6) return 6;
+    best = cfg::MINING_RANGE;
     for (const auto& w : wrecks) {
         float d = Dist2D(w.pos, p.pos);
         if (d <= best && w.amount > 0) { best = d; *kind = 2; *id = w.id; }
@@ -1109,6 +1135,10 @@ void World::Dock(PlayerState& ps, int station) {
         ps.delivered += sale;
         totalDelivered += sale;
         ps.lastSale = sale;
+        // Mission "Personen einsammeln": Sind alle an Bord, werden sie hier
+        // abgeliefert. Die Belohnung zählt schon für das Spielziel unten.
+        if (Mission* m = FindMission(ps.mission))
+            if (m->type == MissionType::Persons && m->progress >= m->goal) EndMission(*m, true);
         // Die Töne sind zeitlich gestaffelt (delay): erst Andocken, 0,35 s
         // später Verkauf, 0,8 s Stationsausbau, 1,3 s Siegesfanfare.
         if (sale > 0) SoundAt(Sfx::Sale, p.pos, 1.0f, 0.35f, ps.id);
@@ -1343,6 +1373,364 @@ void World::PlayerShipLost(Ship& s) {
 }
 
 // ===========================================================================
+// Missionen
+//
+// Mini-Missionen gibt es im Einzelspieler und auf dem Server. Der Client
+// bekommt Angebote, die eigene Mission, Markierungen und den Funkspruch mit
+// jedem Snapshot (SnapMe) und baut daraus missions/persons nach.
+// Neue Angebote entstehen ohne Zufall (immer die Art, die gerade am
+// seltensten auf der Karte ist). Ohne angenommene Mission bleibt die
+// Zufallsfolge des Einzelspielers dadurch unverändert (siehe Dateikopf);
+// gewürfelt wird erst beim Annehmen (Orte, Ziel des Konvois).
+// ===========================================================================
+namespace {
+// Liegt p in der Schutzzone einer Station (wie InsideSafeZone in Ai.cpp)?
+bool NearAnyStation(const std::vector<Station>& stations, Vector3 p, float r) {
+    for (const auto& st : stations)
+        if (Dist2D(p, st.pos) < r) return true;
+    return false;
+}
+
+// Punkt auf der Karte halten (mit Abstand zum Rand)
+Vector3 ClampToMap(Vector3 p, float margin) {
+    const float lim = cfg::WORLD_HALF - margin;
+    return {Clamp(p.x, -lim, lim), 0.0f, Clamp(p.z, -lim, lim)};
+}
+} // namespace
+
+int World::MissionSlots() const {
+    if (simulation) return 0;   // Autopilot und Menü-Hintergrund spielen keine Missionen
+    return settings.missions;   // Einzelspieler: Standardwert cfg::MISSION_SLOTS
+}
+
+Mission* World::FindMission(int id) {
+    for (auto& m : missions) if (m.id == id) return &m;
+    return nullptr;
+}
+const Mission* World::FindMission(int id) const {
+    for (const auto& m : missions) if (m.id == id) return &m;
+    return nullptr;
+}
+
+// Funkspruch unten rechts (Hud.cpp). Phasen ohne Untertitel zeigen nichts.
+void World::Cue(PlayerState& ps, MissionType t, int phase) {
+    const int k = static_cast<int>(t);
+    if (cfg::MISSIONS[k].subtitle[phase][0] == '\0') return;
+    ps.cue = k * 3 + phase;
+    ps.cueT = cfg::CUE_TIME;
+}
+
+// Angebot annehmen. Je nach Art entstehen sofort die Personen, die drei
+// Missionspiraten oder der Konvoi (drei Frachter an der Station, an der
+// angenommen wurde).
+bool World::AcceptMission(PlayerState& ps, int type) {
+    const Ship* sp = PlayerShip(ps);
+    if (!sp || ps.mission >= 0 || type < 0 || type >= cfg::MISSION_TYPE_COUNT) return false;
+    // Position merken: push_back in ships (unten) kann sp ungültig machen.
+    const Vector3 shipPos = sp->pos;
+    auto it = std::find_if(missions.begin(), missions.end(),
+                           [&](const Mission& m) { return m.owner < 0 && static_cast<int>(m.type) == type; });
+    if (it == missions.end()) return false;
+    Mission& m = *it;
+    m.owner = ps.id;
+    m.progress = 0;
+    m.goal = cfg::MISSION_GOAL;
+    ps.mission = m.id;
+    switch (m.type) {
+        case MissionType::Persons: {
+            // Die Personen stehen beieinander (bis 40 Einheiten um einen
+            // Treffpunkt), weit weg von Stationen und vom Spieler.
+            const Vector3 c = RandomFreePos(cfg::STATION_SAFE_RADIUS + 40.0f, 60.0f);
+            for (int i = 0; i < m.goal; ++i) {
+                Person pe;
+                pe.id = nextMissionId++;
+                pe.mission = m.id;
+                pe.owner = ps.id;
+                pe.pos = ClampToMap({c.x + Rand(-40, 40), 0.0f, c.z + Rand(-40, 40)}, 10.0f);
+                pe.yaw = Rand(0, 2 * PI);
+                pe.model = i % 2 == 0 ? mdl.astronautA : mdl.astronautB;
+                persons.push_back(pe);
+            }
+            break;
+        }
+        case MissionType::Pirates: {
+            // Drei eigene Piraten (auch wenn der Server keine Gegner hat) in
+            // einem Gebiet bis 30 Einheiten um einen Ort weit weg vom Spieler.
+            const Vector3 c = RandomFreePos(cfg::STATION_SAFE_RADIUS + 40.0f, 80.0f);
+            for (int i = 0; i < m.goal; ++i) {
+                Ship s = MakeShip(ShipKind::Pirate, ClampToMap({c.x + Rand(-30, 30), 0.0f, c.z + Rand(-30, 30)}, 10.0f));
+                s.ai = AiState::Wander;
+                s.waypoint = s.pos;
+                s.mission = m.id;
+                ships.push_back(s);
+            }
+            break;
+        }
+        case MissionType::Convoy: {
+            // Start: die Handelsstation, an der angenommen wurde; Ziel: eine
+            // zufällige andere Station.
+            const int from = ps.dockedAt >= 0 ? ps.dockedAt : std::max(0, NearestStation(shipPos, StationType::Trade));
+            std::vector<int> others;
+            for (int i = 0; i < static_cast<int>(stations.size()); ++i)
+                if (i != from) others.push_back(i);
+            const int to = others.empty() ? from : others[RandInt(0, static_cast<int>(others.size()) - 1)];
+            const Vector3 a = stations[from].pos, b = stations[to].pos;
+            // Umweg: beide Stationen um CONVOY_DETOUR zur Seite versetzt
+            // (a -> a' -> b' -> b). Gewählt wird die Seite, die auf der Karte
+            // bleibt und weniger Schutzzonen berührt, sonst zufällig.
+            Vector3 dir = Vector3Subtract(b, a);
+            dir = Vector3Length(dir) > 0.1f ? Vector3Normalize(dir) : Vector3{1, 0, 0};
+            const Vector3 n{-dir.z, 0.0f, dir.x};
+            auto badness = [&](float sgn) {
+                int bad = 0;
+                for (Vector3 q : {a, b}) {
+                    const Vector3 p = Vector3Add(q, Vector3Scale(n, sgn * cfg::CONVOY_DETOUR));
+                    if (fabsf(p.x) > cfg::WORLD_HALF - 20.0f || fabsf(p.z) > cfg::WORLD_HALF - 20.0f) bad += 10;
+                    if (NearAnyStation(stations, p, cfg::STATION_SAFE_RADIUS + 10.0f)) ++bad;
+                }
+                return bad;
+            };
+            const int left = badness(1.0f), right = badness(-1.0f);
+            const float sgn = left < right ? 1.0f : (right < left ? -1.0f : (Rand(0, 1) < 0.5f ? 1.0f : -1.0f));
+            const Vector3 off = Vector3Scale(n, sgn * cfg::CONVOY_DETOUR);
+            m.route = {ClampToMap(Vector3Add(a, off), 20.0f), ClampToMap(Vector3Add(b, off), 20.0f), b};
+            m.alive = m.goal;
+            m.leg = 0;
+            m.t = 0.0f;
+            m.waves = 0;
+            // Die Frachter stehen nebeneinander 18 Einheiten vor der Station,
+            // mit der Nase zum ersten Wegpunkt.
+            const Vector3 out = Vector3Normalize(Vector3Subtract(m.route[0], a));
+            const Vector3 side{-out.z, 0.0f, out.x};
+            for (int i = 0; i < m.goal; ++i) {
+                const Vector3 p = Vector3Add(Vector3Add(a, Vector3Scale(out, 18.0f)), Vector3Scale(side, (i - 1) * 5.0f));
+                Ship s = MakeShip(ShipKind::Convoy, p);
+                s.yaw = YawTowards(a, m.route[0]);
+                s.mission = m.id;
+                ships.push_back(s);
+            }
+            break;
+        }
+    }
+    Notify(ps, Fmt("Mission angenommen: %s", cfg::MISSIONS[type].name), Color{255, 230, 120, 255});
+    Cue(ps, m.type, 0);
+    SoundAt(Sfx::Upgrade, shipPos, 1.0f, 0.0f, ps.id);
+    return true;
+}
+
+void World::FailMission(PlayerState& ps, bool notify) {
+    Mission* m = FindMission(ps.mission);
+    if (m && m->owner == ps.id) EndMission(*m, false, notify);
+    ps.mission = -1;
+    ps.markers.clear();
+}
+
+// Mission beendet. Erfüllt: Belohnung sofort aufs Konto, die Mission
+// verschwindet und nach cfg::MISSION_RESPAWN kommt ein neues Angebot.
+// Gescheitert: Sie wird wieder zum Angebot. Übrige Missionsschiffe (Piraten,
+// Frachter) ziehen ab, d. h. sie verschwinden ohne Wrack, Personen ebenso. So
+// bleiben auch auf einem Server ohne Gegner keine Piraten zurück.
+// Achtung: m ist danach ungültig (missions wird verändert).
+void World::EndMission(Mission& m, bool success, bool notify) {
+    const int id = m.id;
+    const MissionType type = m.type;
+    const cfg::MissionDef& def = cfg::MISSIONS[static_cast<int>(type)];
+    for (auto& s : ships) {
+        if (s.mission != id) continue;
+        s.mission = -1;
+        if (!s.crashing) {
+            s.dead = true;
+            s.hidden = true;
+        }
+    }
+    persons.erase(std::remove_if(persons.begin(), persons.end(), [&](const Person& pe) { return pe.mission == id; }),
+                  persons.end());
+    if (PlayerState* ps = FindPlayer(m.owner)) {
+        ps->mission = -1;
+        ps->markers.clear();
+        if (success) {
+            ps->balance += def.reward;
+            Notify(*ps, Fmt("MISSION ERFÜLLT: %s  +%d Punkte", def.name, def.reward), Color{110, 240, 170, 255});
+            Cue(*ps, type, 1);
+            if (const Ship* p = PlayerShip(*ps)) SoundAt(Sfx::Sale, p->pos, 1.0f, 0.2f, ps->id);
+        } else if (notify) {
+            Notify(*ps, Fmt("MISSION GESCHEITERT: %s", def.name), Color{255, 110, 90, 255});
+            Cue(*ps, type, 2);
+            if (const Ship* p = PlayerShip(*ps)) SoundAt(Sfx::Denied, p->pos, 1.0f, 0.0f, ps->id);
+        }
+    }
+    if (success) {
+        missions.erase(std::remove_if(missions.begin(), missions.end(), [&](const Mission& x) { return x.id == id; }),
+                       missions.end());
+        missionSpawnT = cfg::MISSION_RESPAWN;
+    } else {
+        m = Mission{};
+        m.id = id;
+        m.type = type;
+    }
+}
+
+// Person einsammeln (Taste F, InteractTarget kind 6): sofort, ohne Abbauzeit,
+// sie belegt kein Lager.
+void World::CollectPerson(PlayerState& ps, int personId) {
+    auto it = std::find_if(persons.begin(), persons.end(), [&](const Person& pe) { return pe.id == personId && pe.owner == ps.id; });
+    if (it == persons.end()) return;
+    const Vector3 pos = it->pos;
+    Mission* m = FindMission(it->mission);
+    persons.erase(it);
+    SoundAt(Sfx::Discover, pos, 1.0f, 0.0f, ps.id);
+    SpawnSparks({pos.x, 1.0f, pos.z}, Color{255, 230, 90, 255}, 14);
+    if (!m) return;
+    ++m->progress;
+    if (m->progress >= m->goal) Notify(ps, "Alle Personen an Bord! Bring sie zu einer Handelsstation.", Color{255, 230, 120, 255});
+    else Notify(ps, Fmt("Person eingesammelt (%d/%d)", m->progress, m->goal), Color{255, 230, 120, 255});
+}
+
+// Ein Missionsschiff wurde abgeschossen (Schild 0, DamageShip). Piraten der
+// Mission "Piraten abschießen" zählen, egal wer sie erwischt hat.
+void World::MissionShipDown(const Ship& s) {
+    Mission* m = FindMission(s.mission);
+    if (!m) return;
+    PlayerState* ps = FindPlayer(m->owner);
+    if (m->type == MissionType::Pirates && s.faction == Faction::Pirate) {
+        ++m->progress;
+        if (ps && m->progress < m->goal)
+            Notify(*ps, Fmt("Missionspirat abgeschossen (%d/%d)", m->progress, m->goal), Color{255, 210, 130, 255});
+    } else if (s.kind == ShipKind::Convoy && ps) {
+        Notify(*ps, "Ein Frachter des Konvois wurde zerstört!", Color{255, 140, 110, 255});
+    }
+}
+
+// Piratenwelle gegen den Konvoi: zwei Piraten 55 Einheiten vor dem Konvoi
+// (Richtung nächster Wegpunkt), etwas zur Seite versetzt. Liegt der Ort in
+// einer Schutzzone, kommen sie von hinten. Sie greifen sofort einen Frachter an.
+void World::SpawnConvoyWave(Mission& m) {
+    Vector3 c{};
+    int n = 0, target = -1;
+    for (const auto& s : ships) {
+        if (s.mission != m.id || s.kind != ShipKind::Convoy || s.dead || s.crashing) continue;
+        c = Vector3Add(c, s.pos);
+        ++n;
+        target = s.id;
+    }
+    ++m.waves;
+    if (n == 0) return;
+    c = Vector3Scale(c, 1.0f / static_cast<float>(n));
+    Vector3 dir = Vector3Subtract(m.route[std::min<int>(m.leg, static_cast<int>(m.route.size()) - 1)], c);
+    dir.y = 0.0f;
+    dir = Vector3Length(dir) > 0.1f ? Vector3Normalize(dir) : Vector3{0, 0, -1};
+    const Vector3 side{-dir.z, 0.0f, dir.x};
+    for (int i = 0; i < 2; ++i) {
+        const Vector3 jitter = Vector3Scale(side, Rand(-25, 25));
+        Vector3 p = ClampToMap(Vector3Add(Vector3Add(c, Vector3Scale(dir, 55.0f)), jitter), 10.0f);
+        if (NearAnyStation(stations, p, cfg::STATION_SAFE_RADIUS + 6.0f))
+            p = ClampToMap(Vector3Add(Vector3Subtract(c, Vector3Scale(dir, 55.0f)), jitter), 10.0f);
+        Ship s = MakeShip(ShipKind::Pirate, p);
+        s.mission = m.id;
+        s.ai = AiState::Attack;
+        s.targetShip = target;
+        s.aggroT = 30.0f;
+        s.yaw = YawTowards(p, c);
+        ships.push_back(s);
+    }
+    if (PlayerState* ps = FindPlayer(m.owner)) Notify(*ps, "Piraten greifen den Konvoi an!", Color{255, 140, 110, 255});
+}
+
+// Ein Schritt für alle Missionen (aus Update): Angebote auffüllen, laufende
+// Missionen prüfen (erfüllt? gescheitert?), Markierungen für die Minikarte
+// sammeln, Konvoi weiterleiten und Piratenwellen starten, Funksprüche ablaufen lassen.
+void World::UpdateMissions(float dt) {
+    // Angebote: zu viele (Einstellung verkleinert) -> überzählige Angebote
+    // streichen; zu wenige -> neue, sobald die Wartezeit um ist.
+    const int slots = MissionSlots();
+    for (int i = static_cast<int>(missions.size()) - 1; i >= 0 && static_cast<int>(missions.size()) > slots; --i)
+        if (missions[i].owner < 0) missions.erase(missions.begin() + i);
+    missionSpawnT = std::max(-1.0f, missionSpawnT - dt);
+    while (static_cast<int>(missions.size()) < slots && missionSpawnT <= 0.0f) {
+        int count[cfg::MISSION_TYPE_COUNT] = {};
+        for (const auto& m : missions) ++count[static_cast<int>(m.type)];
+        int type = 0;
+        for (int t = 1; t < cfg::MISSION_TYPE_COUNT; ++t)
+            if (count[t] < count[type]) type = t;
+        Mission m;
+        m.id = nextMissionId++;
+        m.type = static_cast<MissionType>(type);
+        missions.push_back(m);
+    }
+
+    // Laufende Missionen. Beendet wird erst nach der Schleife (EndMission
+    // verändert missions).
+    std::vector<std::pair<int, bool>> ended;   // (Mission-ID, erfüllt?)
+    for (auto& m : missions) {
+        if (m.owner < 0) continue;
+        PlayerState* ps = FindPlayer(m.owner);
+        if (!ps) { ended.push_back({m.id, false}); continue; }   // Absicherung; RemovePlayer gibt sie schon frei
+        ps->markers.clear();
+        switch (m.type) {
+            case MissionType::Persons:
+                for (const auto& pe : persons)
+                    if (pe.mission == m.id) ps->markers.push_back({0, pe.pos});
+                break;
+            case MissionType::Pirates: {
+                int alive = 0;
+                for (const auto& s : ships) {
+                    if (s.mission != m.id || s.dead || s.crashing) continue;
+                    ++alive;
+                    ps->markers.push_back({1, s.pos});
+                }
+                if (m.progress >= m.goal) ended.push_back({m.id, true});
+                else if (alive + m.progress < m.goal) {
+                    // Absicherung: fehlt ein Missionspirat (z. B. vom Server
+                    // entfernt), kommt ein neuer irgendwo draußen.
+                    Ship s = MakeShip(ShipKind::Pirate, RandomFreePos(cfg::STATION_SAFE_RADIUS + 25.0f, 70.0f));
+                    s.ai = AiState::Wander;
+                    s.waypoint = s.pos;
+                    s.mission = m.id;
+                    ships.push_back(s);
+                }
+                break;
+            }
+            case MissionType::Convoy: {
+                // Der Konvoi wartet, solange sein Auftraggeber angedockt ist
+                // oder kein Schiff hat (Mehrspieler: läuft die Welt weiter).
+                const bool go = ps->dockedAt < 0 && PlayerAlive(*ps);
+                m.hold = !go;
+                Vector3 c{};
+                int alive = 0;
+                for (const auto& s : ships) {
+                    if (s.mission != m.id || s.dead || s.crashing) continue;
+                    ps->markers.push_back({s.kind == ShipKind::Convoy ? 2 : 1, s.pos});
+                    if (s.kind != ShipKind::Convoy) continue;
+                    c = Vector3Add(c, s.pos);
+                    ++alive;
+                }
+                m.alive = alive;
+                if (alive == 0) {
+                    // Alle angekommen oder zerstört: erfüllt, wenn wenigstens einer durchkam
+                    ended.push_back({m.id, m.progress > 0});
+                    break;
+                }
+                // Nächster Wegpunkt, sobald die Mitte des Konvois nah genug ist
+                c = Vector3Scale(c, 1.0f / static_cast<float>(alive));
+                if (m.leg < static_cast<int>(m.route.size()) - 1 && Dist2D(c, m.route[m.leg]) < 8.0f) ++m.leg;
+                if (go) {
+                    m.t += dt;
+                    if (m.waves < 2 && m.t >= cfg::CONVOY_WAVES[m.waves]) SpawnConvoyWave(m);
+                }
+                break;
+            }
+        }
+    }
+    for (const auto& [id, success] : ended)
+        if (Mission* m = FindMission(id)) EndMission(*m, success);
+
+    // Funksprüche laufen nur außerhalb der Station ab (der Startfunkspruch
+    // kommt beim Annehmen, also angedockt: er soll nach dem Abdocken zu sehen sein).
+    for (auto& ps : players)
+        if (ps.cueT > 0.0f && ps.dockedAt < 0) ps.cueT = std::max(0.0f, ps.cueT - dt);
+}
+
+// ===========================================================================
 // Kampf
 // ===========================================================================
 // Ein Schuss nach vorn. Spieler schießen genau geradeaus, KI-Schiffe streuen
@@ -1522,11 +1910,13 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
         s.mining = false;
         Explosion(s.pos, 0.7f);
         SoundAt(Sfx::ShipExplode, s.pos);
+        if (s.mission >= 0) MissionShipDown(s);
         if (s.kind == ShipKind::Player) {
             if (PlayerState* ps = FindPlayer(s.playerId)) {
                 ps->mining = false;
                 ps->scanOn = false;
                 Notify(*ps, "Schild zerstört! Dein Schiff stürzt ab!", Color{255, 110, 90, 255});
+                FailMission(*ps, true);   // Absturz: laufende Mission scheitert
             }
         } else if (attacker == Faction::Player && attackerId >= 0 && attackerPlayer) {
             ++attackerPlayer->kills;

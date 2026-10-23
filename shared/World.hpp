@@ -68,7 +68,9 @@
 enum class Faction { Player, Pirate, Neutral };
 // ShipKind wird im Netzwerk (Snapshots) und im Spielstand als Zahl
 // übertragen bzw. gespeichert: Zahlenwerte nicht ändern.
-enum class ShipKind { Player = 0, Pirate = 1, Elite = 2, Miner = 3 };
+// Convoy = Frachter der Mission "Konvoi verteidigen" (Faction::Player: Spieler
+// treffen sie nicht, Piraten greifen sie an).
+enum class ShipKind { Player = 0, Pirate = 1, Elite = 2, Miner = 3, Convoy = 4 };
 // Zustände der KI (Ai.cpp). Wander/Attack: Piraten (und wütende Händler).
 // GoMine -> Mining -> GoSell -> Docked -> GoMine: der Kreislauf der Händler.
 // Flee: Händler flieht vor einem Piraten.
@@ -142,6 +144,9 @@ struct Ship {
     // Schiff im Einzelspieler nach dem Absturz, der Platzhalter im Client
     // (BuildMirror, z. B. bei Zuschauern).
     bool hidden = false;
+    // Gehört zu einer Mini-Mission (Mission::id): Missionspirat oder
+    // Konvoi-Frachter. -1 = normales Schiff.
+    int mission = -1;
 };
 
 // Eine Kristall-Lagerstätte, die abgebaut werden kann.
@@ -268,6 +273,48 @@ struct OwnedShip {
     float hp = -1.0f;                         // Schild beim Parken, -1 = voll
 };
 
+// ---------------------------------------------------------------------------
+// Mini-Missionen (World.cpp, Abschnitt "Missionen"). An der Handelsstation
+// (Tab "Missionen") nimmt ein Spieler ein Angebot an; die Mission gehört dann
+// ihm allein. Jeder Spieler hat höchstens eine laufende Mission.
+// Zahlenwerte: Index in cfg::MISSIONS und Teil des Netzwerkprotokolls.
+// ---------------------------------------------------------------------------
+enum class MissionType { Persons = 0, Pirates = 1, Convoy = 2 };
+
+struct Mission {
+    int id = 0;                   // eindeutig (World::nextMissionId)
+    MissionType type = MissionType::Persons;
+    int owner = -1;               // Spieler-ID; -1 = Angebot (noch nicht angenommen)
+    int progress = 0;             // eingesammelte Personen, abgeschossene Piraten bzw. angekommene Frachter
+    int goal = cfg::MISSION_GOAL;
+    int alive = 0;                // Konvoi: Frachter noch unterwegs (World::UpdateMissions)
+    // Konvoi: Wegpunkte von der Start- zur Zielstation, aktueller Wegpunkt,
+    // Zeit seit dem Abflug und schon gestartete Piratenwellen.
+    std::vector<Vector3> route;
+    int leg = 0;
+    float t = 0.0f;
+    int waves = 0;
+    bool hold = false;            // Konvoi wartet (Auftraggeber angedockt oder ohne Schiff)
+};
+
+// Eine verirrte Person (Mission "Personen einsammeln"). Nur der Spieler, dem
+// die Mission gehört, sieht und sammelt sie.
+struct Person {
+    int id = 0;
+    int mission = -1;             // Mission::id
+    int owner = -1;               // Spieler-ID
+    Vector3 pos{};
+    float yaw = 0.0f;
+    int model = -1;
+};
+
+// Markierung auf der Minikarte für die laufende Mission des Spielers.
+// kind: 0 = Person, 1 = Ziel (Pirat), 2 = Konvoi-Frachter.
+struct MissionMarker {
+    int kind = 0;
+    Vector3 pos{};
+};
+
 // Ausgang einer Einzelspieler-Partie (der Mehrspieler kennt kein Spielende).
 enum class Outcome { None, Dead, Won };
 
@@ -314,6 +361,14 @@ struct PlayerState {
 
     std::vector<Notice> notices; // Meldungen für diesen Spieler
     std::vector<Notice> outbox;  // Server: neue Meldungen, die noch verschickt werden müssen
+
+    int mission = -1;            // Mission::id der laufenden Mini-Mission, -1 = keine
+    std::vector<MissionMarker> markers;   // Ziele dieser Mission für die Minikarte (World::UpdateMissions)
+    // Funkspruch unten rechts (Clip und Untertitel): Missionstyp * 3 +
+    // Phase (0 Start, 1 Ende, 2 Fehlschlag), -1 = keiner. cueT = Restzeit;
+    // sie läuft nur, solange der Spieler nicht angedockt ist.
+    int cue = -1;
+    float cueT = 0.0f;
 };
 
 class World {
@@ -383,6 +438,17 @@ public:
     bool SwitchShip(PlayerState& ps, int type);
     float ScannerRadius(const PlayerState& ps) const;
 
+    // --- Mini-Missionen (Abschnitt "Missionen" in World.cpp) -----------------
+    int MissionSlots() const;   // so viele Missionen gleichzeitig (Angebote + laufende)
+    Mission* FindMission(int id);
+    const Mission* FindMission(int id) const;
+    // Handelsstation, Tab "Missionen": ein Angebot dieser Art annehmen.
+    // false = schon eine Mission, kein Schiff oder kein solches Angebot.
+    // Prüft wie BuyUpgrade nicht, an welcher Station der Spieler angedockt ist.
+    bool AcceptMission(PlayerState& ps, int type);
+    // Laufende Mission abbrechen (Absturz, Abmelden): Das Angebot kommt zurück.
+    void FailMission(PlayerState& ps, bool notify);
+
     // Kurzformen für den Einzelspieler (wirken auf den eigenen Spieler)
     void Dock(int station) { Dock(Me(), station); }
     void Undock() { Undock(Me()); }
@@ -392,6 +458,7 @@ public:
     bool BuyUpgrade(int type) { return BuyUpgrade(Me(), type); }
     bool BuyShip(int type, bool tradeIn) { return BuyShip(Me(), type, tradeIn); }
     bool SwitchShip(int type) { return SwitchShip(Me(), type); }
+    bool AcceptMission(int type) { return AcceptMission(Me(), type); }
 
     // --- Abfragen (HUD, KI, Server) ----------------------------------------
     int StationStage() const;          // Ausbaustufe der Handelsstationen 0..7 (aus totalDelivered)
@@ -402,8 +469,9 @@ public:
     int CountStations(StationType type) const;
     // Was würde Taste F jetzt bewirken? Reihenfolge: Station (andocken) vor
     // Wrack vor entdeckter Lagerstätte (abbauen).
-    // 0 nichts, 1 Lagerstätte, 2 Wrack, 3 Handelsstation, 4 Werft, 5 Raumschiffsverkäufer
-    // (id = Lagerstätte/Wrack/Stationsindex)
+    // 0 nichts, 1 Lagerstätte, 2 Wrack, 3 Handelsstation, 4 Werft, 5 Raumschiffsverkäufer,
+    // 6 Person (Mission) (id = Lagerstätte/Wrack/Stationsindex/Person)
+    // Personen haben Vorrang vor Wracks und Lagerstätten.
     int InteractTarget(const PlayerState& ps, int* kind, int* id) const;
     int InteractTarget(int* kind, int* id) const { return InteractTarget(Me(), kind, id); }
     bool PlayerAlive(const PlayerState& ps) const;
@@ -443,6 +511,8 @@ public:
     std::vector<Particle> particles;
     std::vector<Deco> decos;
     std::vector<Station> stations;   // erst alle Bauplätze in fester Reihenfolge (siehe WorldGen.cpp)
+    std::vector<Mission> missions;   // Angebote und laufende Mini-Missionen
+    std::vector<Person> persons;     // verirrte Personen (Mission "Personen einsammeln")
 
     long long totalDelivered = 0;   // insgesamt abgeliefert (alle Spieler) -> Ausbaustufe der Handelsstationen
     int lastStage = 0;              // zuletzt erreichte Ausbaustufe (erkennt "Station ist gewachsen")
@@ -457,6 +527,11 @@ public:
     float minerSpawnT = 20.0f;
     float depositSpawnT = 0.0f;
     int depositRevision = 0;   // zählt hoch, wenn sich Lagerstätten ändern (Server: neu verschicken)
+    // Eigener Zähler für Missionen und Personen: nextId bleibt so im
+    // Einzelspieler unverändert (die Schiffs-IDs steuern das Auf und Ab der
+    // Schiffe und damit Treffer, siehe UpdateShipPhysics).
+    int nextMissionId = 1;
+    float missionSpawnT = 0.0f;   // Sekunden bis zum nächsten neuen Missionsangebot
 
     Outcome outcome = Outcome::None;   // nur Einzelspieler
     float outcomeT = 0.0f;             // Sekunden seit Sieg/Absturz (Endbildschirm)
@@ -475,6 +550,7 @@ public:
         int shipTypes[cfg::SHIP_TYPE_COUNT];   // Modelle der Spieler-Schiffstypen (cfg::SHIP_TYPES)
         int terrain;
         int crystalSmall, crystalA, crystalB;
+        int astronautA, astronautB;
     } mdl{};
 
     // --- interne Helfer ------------------------------------------------------
@@ -511,6 +587,14 @@ public:
     void SpawnSparks(Vector3 pos, Color c, int n);     // Partikel, auf dem Server ein FxEvent
     void StartMining(PlayerState& ps, int kind, int id);
     void FinishMining(PlayerState& ps);
+    // Missionen (World.cpp)
+    void UpdateMissions(float dt);
+    void UpdateConvoy(Ship& s, float dt);   // Ai.cpp: Frachter folgen der Route ihrer Mission
+    void SpawnConvoyWave(Mission& m);
+    void CollectPerson(PlayerState& ps, int personId);
+    void MissionShipDown(const Ship& s);    // Missionsschiff abgeschossen (DamageShip)
+    void EndMission(Mission& m, bool success, bool notify = true);
+    void Cue(PlayerState& ps, MissionType t, int phase);
 };
 
 // Autopilot für den Simulationsmodus (Ai.cpp), steuert den eigenen Spieler (players[0]).

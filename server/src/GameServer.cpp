@@ -1235,6 +1235,11 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             // Schiff wechseln an der Handelsstation (Tab "Schiff")
             if (st.type == StationType::Trade) world_.SwitchShip(*ps, m.param);
             break;
+        case net::DockActionType::AcceptMission:
+            // Mini-Mission annehmen an der Handelsstation (Tab "Missionen");
+            // Art und freies Angebot prüft AcceptMission.
+            if (st.type == StationType::Trade) world_.AcceptMission(*ps, m.param);
+            break;
     }
 }
 
@@ -1520,6 +1525,22 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         e.kills = ClampU16(ps->kills);
         e.respawnT = ps->respawnT;
         e.lives = static_cast<uint8_t>(std::clamp(ps->lives, 0, limits::MAX_LIVES));
+        // Mini-Missionen: eigene Mission, offene Angebote, Markierungen, Funkspruch
+        if (const Mission* mi = world_.FindMission(ps->mission)) {
+            e.missionType = static_cast<int8_t>(mi->type);
+            e.missionProgress = static_cast<uint8_t>(std::clamp(mi->progress, 0, 255));
+            e.missionGoal = static_cast<uint8_t>(std::clamp(mi->goal, 0, 255));
+            e.missionAlive = static_cast<uint8_t>(std::clamp(mi->alive, 0, 255));
+        }
+        for (const Mission& mi : world_.missions)
+            if (mi.owner < 0 && e.offers.size() < static_cast<size_t>(limits::MAX_MISSIONS))
+                e.offers.push_back(static_cast<uint8_t>(mi.type));
+        for (const MissionMarker& mk : ps->markers) {
+            if (e.markers.size() >= static_cast<size_t>(net::MAX_MARKERS)) break;
+            e.markers.push_back({static_cast<uint8_t>(mk.kind), mk.pos.x, mk.pos.z});
+        }
+        e.cue = static_cast<int8_t>(ps->cueT > 0.0f ? ps->cue : -1);
+        e.cueT = ps->cueT;
     }
 
     // --- andere Schiffe ---
@@ -1881,9 +1902,9 @@ void GameServer::ApplySettings(const GameSettings& s) {
     const GameSettings old = settings_;
     settings_ = s;
     const bool rebuild = NeedsWorldRebuild(old, s);
-    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben%s",
+    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben, %d Missionen%s",
             s.serverName.c_str(), DifficultyName(s.difficulty), s.enemyShips, s.tradeStations, s.shipyards,
-            MoonColorName(s.moon), s.maxPlayers, s.lives, rebuild ? " – Karte wird neu aufgebaut" : ""));
+            MoonColorName(s.moon), s.maxPlayers, s.lives, s.missions, rebuild ? " – Karte wird neu aufgebaut" : ""));
     if (rebuild) {
         RebuildWorld();
     } else {
@@ -1896,12 +1917,13 @@ void GameServer::ApplySettings(const GameSettings& s) {
 
 // Weniger Gegner eingestellt: überzählige Piraten entfernen, die am weitesten
 // von allen Spielern entfernten zuerst (die verschwinden, ohne dass es jemand sieht).
+// Missionspiraten zählen nicht mit und bleiben (World::Update zählt sie auch nicht).
 void GameServer::RemoveSurplusPirates() {
     std::vector<Candidate> pirates;   // dist = Abstand zum nächsten Spieler
     int alive = 0;
     for (size_t i = 0; i < world_.ships.size(); ++i) {
         const Ship& s = world_.ships[i];
-        if (s.dead || s.faction != Faction::Pirate) continue;
+        if (s.dead || s.faction != Faction::Pirate || s.mission >= 0) continue;
         ++alive;
         if (s.crashing) continue;   // stürzt sowieso gleich ab
         float nearest = 1e9f;

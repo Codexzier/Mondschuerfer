@@ -167,6 +167,10 @@ void World::UpdateAi(Ship& s, float dt) {
     s.thinkT -= dt;
     s.aiTimer -= dt;
 
+    if (s.kind == ShipKind::Convoy) {
+        UpdateConvoy(s, dt);
+        return;
+    }
     if (s.faction == Faction::Pirate) {
         // ---------------- Pirat -------------------------------------------
         // Zielwahl nur alle 0,35 s ("Nachdenken"): Das wirkt wie eine
@@ -188,6 +192,10 @@ void World::UpdateAi(Ship& s, float dt) {
                 float range = cfg::PIRATE_AGGRO;
                 if (o.kind == ShipKind::Miner) range = 24.0f;
                 if (s.aggroT > 0.0f && o.id == s.targetShip) range = 70.0f;
+                // Piraten einer Konvoi-Welle jagen "ihre" Frachter (gleiche
+                // Mission) bis 90 weit und ziehen sie allen anderen Zielen vor.
+                const bool prey = s.mission >= 0 && o.mission == s.mission;
+                if (prey) range = 90.0f;
                 if (d > range) continue;
                 // Wer in der Schutzzone einer Station ist, ist sicher.
                 if (InsideSafeZone(*this, o.pos)) continue;
@@ -195,6 +203,7 @@ void World::UpdateAi(Ship& s, float dt) {
                 // näher. Im Mehrspieler kommen die Schiffe ALLER Spieler in
                 // Frage; der Pirat nimmt den mit der kleinsten Wertung.
                 float score = o.kind == ShipKind::Player ? d * 0.8f : d;
+                if (prey) score = d * 0.5f;
                 if (score < bestScore) { bestScore = score; best = &o; }
             }
             if (best) {
@@ -403,6 +412,44 @@ void World::UpdateAi(Ship& s, float dt) {
     if (fire && s.fireCd <= 0.0f) {
         FireBullet(s);
         s.fireCd = s.fireInterval;
+    }
+    UpdateShipPhysics(s, dt, in);
+}
+
+// ===========================================================================
+// Konvoi (Mission "Konvoi verteidigen")
+//
+// Die drei Frachter folgen nebeneinander (5 Einheiten Abstand quer zur
+// Fahrtrichtung) den Wegpunkten ihrer Mission; World::UpdateMissions schaltet
+// den Wegpunkt weiter und hält den Konvoi an, solange der Auftraggeber
+// angedockt ist. Angriffe ignorieren sie (keine Waffen, keine Flucht). Am
+// letzten Wegpunkt (Zielstation) docken sie an: Sie verschwinden und zählen
+// als angekommen.
+// ===========================================================================
+void World::UpdateConvoy(Ship& s, float dt) {
+    ShipInput in;
+    Mission* m = FindMission(s.mission);
+    if (m && !m->route.empty()) {
+        const int last = static_cast<int>(m->route.size()) - 1;
+        const int leg = std::clamp(m->leg, 0, last);
+        Vector3 target = m->route[leg];
+        if (leg < last) {
+            // Platz in der Formation aus der ID: -1, 0 oder +1 (die drei
+            // Frachter haben aufeinanderfolgende IDs)
+            const Vector3 from = leg > 0 ? m->route[leg - 1] : s.pos;
+            Vector3 dir = Vector3Subtract(target, from);
+            dir.y = 0.0f;
+            dir = Vector3Length(dir) > 0.1f ? Vector3Normalize(dir) : Vector3{0, 0, -1};
+            const float slot = static_cast<float>(s.id % 3) - 1.0f;
+            target = Vector3Add(target, Vector3Scale(Vector3{-dir.z, 0.0f, dir.x}, slot * 5.0f));
+        }
+        if (!m->hold) in = SteerTo(s, target, 2.0f, 1.0f);
+        if (leg == last && Dist2D(s.pos, m->route[last]) < 12.0f) {
+            s.dead = true;
+            s.hidden = true;
+            ++m->progress;
+            return;
+        }
     }
     UpdateShipPhysics(s, dt, in);
 }

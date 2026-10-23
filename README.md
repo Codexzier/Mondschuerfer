@@ -104,11 +104,11 @@ den **Optionen**.
 | A / D oder ← / → | Drehen |
 | Leertaste | Schießen (2 Schuss pro Sekunde) |
 | E | Scanner an / aus |
-| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) |
+| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person einsammeln (Mission) |
 | R | Schild reparieren (an der Handelsstation) |
 | 1 – 4 | Upgrade kaufen (in der Werft) / Schiff kaufen (beim Raumschiffsverkäufer, mit Umschalt: in Zahlung geben) |
-| 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) |
-| Tab | Karteireiter der Handelsstation wechseln (Station / Schiff) |
+| 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) / Mission annehmen (Tab „Missionen“) |
+| Tab | Karteireiter der Handelsstation wechseln (Station / Schiff / Missionen) |
 | ESC / P | Pause |
 | H | Steuerung einblenden |
 | M | Ton an / aus |
@@ -189,6 +189,15 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
   | Speedster | 60 | 60 % | 130 % | 80 % | 150 | 10.000 |
 
   Die Prozente beziehen sich auf die Grundwerte (Scanner 34 m, Tempo 16, Schaden 10).
+- **Mini-Missionen:** An der Handelsstation im Tab „Missionen“ nimmst du eine Mission an (immer
+  nur eine gleichzeitig). Die Belohnung kommt sofort aufs Konto. Ziele stehen pulsierend auf
+  dem Radar, der Fortschritt oben in der Mitte, der Funkspruch (Videoclip mit Untertitel) unten rechts.
+  - *Personen einsammeln* (2.000 Punkte): drei Personen (gelb) mit F abholen und an einer
+    Handelsstation abliefern.
+  - *Piraten abschießen* (2.500 Punkte): drei Missionspiraten (rot) abschießen.
+  - *Konvoi verteidigen* (3.500 Punkte): drei Frachter (grün) fliegen zu einer anderen Station,
+    unterwegs greifen zwei Piratenwellen an. Kommt keiner an, ist die Mission gescheitert.
+  Stürzt du ab, scheitert die Mission, und das Angebot steht wieder an der Station.
 - **Kampf:** Leertaste feuert 2 Schuss pro Sekunde mit je 10 Schaden. Dein Schild hat zu Beginn
   100 Punkte: nach 10 Treffern stürzt das Schiff ab, und das Spiel ist zu Ende.
   - *Piraten* (rötlich) greifen an, sobald du in ihre Nähe kommst.
@@ -298,10 +307,12 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
 
 **Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*) mit drei Karteireitern:
 
-*Musik*
+*Ton*
 - **Musik: An / Aus** – Umschalter (Mausklick, oder Zeile wählen und Enter).
-- **Lautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
+- **Musiklautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
   Die Änderung ist sofort zu hören.
+- **Clip-Lautstärke** – Lautstärke der Funkspruch-Clips der Missionen, ebenfalls in 5-%-Schritten
+  (Standard 100 %; der Ton jedes Clips wird beim Laden auf volle Lautstärke gebracht).
 
 *Grafik* (wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf)
 - **Tilt-Shift** – Kameraeffekt, der die Welt wie ein Miniaturmodell wirken lässt: Die Bildmitte
@@ -325,7 +336,7 @@ Bedienung:
 - Controller: **LB / RB** (PlayStation: L1 / R1) wechselt die Seite, Zeiger mit dem linken Stick,
   A klickt (Regler: A halten und ziehen), Steuerkreuz wie die Pfeiltasten, B zurück.
 
-Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte und Musik); die
+Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte, Musik und Clips); die
 Einstellungen in den Optionen bleiben dabei erhalten.
 
 Die Einstellungen stehen zusammen mit Serveradresse und Spielername in
@@ -336,14 +347,15 @@ server localhost:7777
 name Anna
 music 1
 music_volume 0.50
+clip_volume 1.00
 tilt_shift 0.50
 msaa 4
 fxaa 0.00
 ```
 
-`music` ist `1` (an) oder `0` (aus), `music_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
+`music` ist `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
 (Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`. Fehlt die Datei
-oder eine Zeile, gelten die Standardwerte (Musik an, Lautstärke 50 %, Tilt-Shift 50 %,
+oder eine Zeile, gelten die Standardwerte (Musik an, Musiklautstärke 50 %, Clip-Lautstärke 100 %, Tilt-Shift 50 %,
 Kantenglättung 4x, FXAA aus).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
@@ -382,12 +394,13 @@ Mondschuerfer/
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
-│   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Musik, Grafik, Steuerung)
+│   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Ton, Grafik, Steuerung)
 │   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA (Werte aus den Optionen)
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
 │   ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Musik, Zuordnung Ereignis -> Datei
+│   ├── ClipPlayer.cpp/.hpp Funkspruch-Clips der Missionen (assets/clips, MPEG-1)
 │   ├── MusicMix.hpp      Überblenden der Musik (reine Rechnung, ohne raylib)
 │   ├── Save.cpp/.hpp     Spielstand
 │   ├── NetClient.*       Mehrspieler: Verbindung, Anmeldung, Vorhersage, Interpolation
@@ -401,6 +414,7 @@ Mondschuerfer/
 ├── third_party/          Fremde Bibliotheken im Projekt (siehe third_party/README.md)
 │   ├── enet/             ENet 1.3.18 (Netzwerk über UDP)
 │   ├── httplib/          cpp-httplib 0.22.0 (Webserver der Verwaltungsseite)
+│   ├── pl_mpeg/          pl_mpeg (Videoclips abspielen, nur das Spiel)
 │   └── raylib/           nur raylib.h und raymath.h 5.5 (für den Server)
 └── docs/
     ├── Mehrspieler.md    Wie der Mehrspieler funktioniert (zum Lernen aus dem Code)
@@ -487,5 +501,6 @@ Phase, Spieler, Kontostand …).
 - Im Projekt mitgeliefert unter `third_party/` (Einzelheiten in `third_party/README.md`):
   - **ENet** 1.3.18 von Lee Salzman, MIT-Lizenz (`third_party/enet/LICENSE`) – Netzwerk für Spiel und Server
   - **cpp-httplib** 0.22.0 von yhirose, MIT-Lizenz (`third_party/httplib/LICENSE`) – Webserver der Verwaltungsseite
+  - **pl_mpeg** von Dominic Szablewski, MIT-Lizenz (im Kopf von `third_party/pl_mpeg/pl_mpeg.h`) – Videoclips der Missionen
   - **raylib**-Header `raylib.h` und `raymath.h` (5.5), zlib-Lizenz (`third_party/raylib/LICENSE`) – Datentypen
     und Vektor-Mathe für den Server

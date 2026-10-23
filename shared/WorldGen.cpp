@@ -76,6 +76,8 @@ void World::ResolveModels() {
     mdl.crystalSmall = ModelId("rock_crystals");          // Lagerstätten bis 1000
     mdl.crystalA = ModelId("rock_crystalsLargeA");        // große Lagerstätten (> 1000)
     mdl.crystalB = ModelId("rock_crystalsLargeB");
+    mdl.astronautA = ModelId("astronautA");               // verirrte Personen (Mission)
+    mdl.astronautB = ModelId("astronautB");
 }
 
 // Zufälliger Ort auf dem Boden (y = 0), der mindestens minDistStations von

@@ -79,6 +79,7 @@
 #include "Assets.hpp"
 #include "Audio.hpp"
 #include "ClientConfig.hpp"
+#include "ClipPlayer.hpp"
 #include "Controls.hpp"
 #include "Hud.hpp"
 #include "Multiplayer.hpp"
@@ -603,6 +604,17 @@ private:
         world_.sounds.clear();
         g_audio.SetMusicTrack(MenuBackground() ? MusicTrack::Menu : MusicTrack::Game);
         g_audio.Update(dt, loops);
+        // Funkspruch-Clip der Mission (Bild zeichnet Hud.cpp): läuft nur im
+        // Flug, hält in der Pause und angedockt an.
+        int cue = -1;
+        bool showClip = false;
+        if (screen_ == Screen::Playing || screen_ == Screen::Paused ||
+            (screen_ == Screen::Options && optionsReturn_ == Screen::Paused)) {
+            const PlayerState& me = world_.Me();
+            if (me.cueT > 0.0f) cue = me.cue;
+            showClip = screen_ == Screen::Playing && me.dockedAt < 0;
+        }
+        g_clip.Update(dt, cue, showClip);
     }
 
     // ========================================================================
@@ -794,6 +806,7 @@ private:
             if (req.buy >= 0) world_.BuyUpgrade(req.buy);
             if (req.buyShip >= 0) world_.BuyShip(req.buyShip, req.tradeIn);
             if (req.switchShip >= 0) world_.SwitchShip(req.switchShip);
+            if (req.acceptMission >= 0) world_.AcceptMission(req.acceptMission);
             if (req.undock) {
                 world_.Undock();
                 if (world_.outcome == Outcome::None) SaveGame(world_);
@@ -1175,6 +1188,8 @@ int main(int argc, char** argv) {
     // Musik). Fehlt sie: Standardwerte (Musik an, Lautstärke 50 %).
     g_clientConfig.Load();
     g_audio.Init(g_assets.AssetDir()); // ohne Audiogerät läuft das Spiel stumm weiter
+    g_clip.Init(g_assets.AssetDir());  // Funkspruch-Clips der Missionen (assets/clips)
+    g_clip.SetVolume(g_clientConfig.clipVolume);
     // Musik-Einstellungen aus der Datei übernehmen. Auch ohne Audiogerät,
     // damit die Optionen die richtigen Werte anzeigen.
     g_audio.SetMusicEnabled(g_clientConfig.musicEnabled);
@@ -1205,6 +1220,7 @@ int main(int argc, char** argv) {
     // (Texturen/Shader können nur freigegeben werden, solange es den
     // OpenGL-Kontext noch gibt).
     app.OnExit();
+    g_clip.Shutdown();
     g_audio.Shutdown();
     tiltshift::Shutdown();
     g_assets.Shutdown();

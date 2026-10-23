@@ -407,7 +407,7 @@
     // Formular "Spielparameter"
     // =========================================================================
     const form = () => $('settings-form');
-    const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers', 'lives'];
+    const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers', 'lives', 'missions'];
 
     // Aktuelle Eingaben als Objekt (gleicher Aufbau wie "settings" im JSON)
     function readForm() {
@@ -421,6 +421,7 @@
             moon: moon ? moon.value : '',
             maxPlayers: Number($('f-maxPlayers').value),
             lives: Number($('f-lives').value),
+            missions: Number($('f-missions').value),
         };
     }
 
@@ -438,6 +439,7 @@
         form().querySelectorAll('input[name="moon"]').forEach((r) => { r.checked = r.value === s.moon; });
         $('f-maxPlayers').value = s.maxPlayers;
         $('f-lives').value = s.lives;
+        $('f-missions').value = s.missions;
         updateEnemyField();
         updateNameCounter();
     }
@@ -476,6 +478,8 @@
         setText('f-maxPlayers-help', `1 bis ${limits.maxPlayersLimit}`);
         $('f-lives').max = limits.maxLives;
         setText('f-lives-help', `1 bis ${limits.maxLives}`);
+        $('f-missions').max = limits.maxMissions;
+        setText('f-missions-help', `0 bis ${limits.maxMissions}, 0 = keine Missionen`);
     }
 
     function showDefaults(def) {
@@ -487,6 +491,7 @@
         setText('d-moon', MOON_NAMES[def.moon] || def.moon);
         setText('d-maxPlayers', String(def.maxPlayers));
         setText('d-lives', String(def.lives));
+        setText('d-missions', String(def.missions));
     }
 
     const isDirty = () => state.baseline !== null && !sameSettings(readForm(), state.baseline);
@@ -559,6 +564,7 @@
             ['f-shipyards', 'Werften'],
             ['f-maxPlayers', 'Maximale Spieler'],
             ['f-lives', 'Leben pro Spieler'],
+            ['f-missions', 'Mini-Missionen gleichzeitig'],
         ];
         for (const [id, label] of numbers) {
             const input = $(id);
@@ -652,6 +658,7 @@
         body.set('moon', s.moon);
         body.set('maxPlayers', String(s.maxPlayers));
         body.set('lives', String(s.lives));
+        body.set('missions', String(s.missions));
         await postSettings('/api/settings', body);
     }
 
@@ -663,7 +670,7 @@
             'Alle Spielparameter auf die Standardwerte aus docker-compose.yml zurücksetzen?',
             `Standard: ${DIFFICULTY_NAMES[def.difficulty] || '–'} (${def.enemyShips} feindliche Schiffe), ` +
                 `${def.tradeStations} Handelsstation(en), ${def.shipyards} Werft(en), Mond ${MOON_NAMES[def.moon] || '–'}, ` +
-                `max. ${def.maxPlayers} Spieler, ${def.lives} Leben.`,
+                `max. ${def.maxPlayers} Spieler, ${def.lives} Leben, ${def.missions} Mini-Missionen.`,
         ];
         if (def.tradeStations !== cur.tradeStations || def.shipyards !== cur.shipyards || def.moon !== cur.moon) {
             text.push(REBUILD_TEXT);
