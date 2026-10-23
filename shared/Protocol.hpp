@@ -48,7 +48,8 @@ namespace net {
 // Konstanten
 // ---------------------------------------------------------------------------
 // Version 2: Welcome enthält den Simulationsschritt (tick), siehe WelcomeMsg.
-constexpr uint16_t PROTOCOL_VERSION = 2;
+// Version 3: Schiffstypen (SnapMe::shipType/hangar, DockAction BuyShip/SwitchShip).
+constexpr uint16_t PROTOCOL_VERSION = 3;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -57,7 +58,8 @@ constexpr int SNAPSHOT_EVERY = 2;                // Spieler: jeder 2. Schritt ->
 constexpr int SPECTATOR_SNAPSHOT_EVERY = 3;      // Zuschauer: 10 Snapshots/s
 constexpr float INTERP_DELAY = 0.12f;            // Client zeigt fremde Schiffe 120 ms "in der Vergangenheit"
 
-constexpr float AOI_SHIPS = 110.0f;              // Sichtweite für Schiffe/Wracks im Snapshot
+constexpr float AOI_SHIPS = 110.0f;
+constexpr int MAX_HANGAR = 8;                    // höchstens so viele geparkte Schiffe in SnapMe              // Sichtweite für Schiffe/Wracks im Snapshot
 constexpr float AOI_BULLETS = 75.0f;             // Sichtweite für Geschosse
 constexpr float AOI_EVENTS = 120.0f;             // Hörweite/Sichtweite für Ereignisse
 
@@ -211,11 +213,13 @@ struct InputMsg {
     std::vector<InputRecord> records;   // älteste zuerst, höchstens MAX_INPUTS_PER_MSG
 };
 
-enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2 };
+enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4 };
 
 struct DockActionMsg {
     DockActionType action = DockActionType::Undock;
-    uint8_t param = 0;            // BuyUpgrade: Upgrade-Typ (cfg::Upgrade)
+    // BuyUpgrade: Upgrade-Typ (cfg::Upgrade). BuyShip: Schiffstyp (Bit 0-6,
+    // cfg::ShipTypeId), Bit 7 = altes Schiff in Zahlung geben. SwitchShip: Schiffstyp.
+    uint8_t param = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -274,6 +278,12 @@ struct SnapMe {
     int32_t cargo = 0, cargoMax = 0;
     int64_t balance = 0;
     uint8_t upgrades[4] = {0, 0, 0, 0};
+    uint8_t shipType = 0;         // Typ des geflogenen Schiffs (cfg::ShipTypeId)
+    struct Parked {
+        uint8_t type = 0;
+        uint8_t upgrades[4] = {0, 0, 0, 0};
+    };
+    std::vector<Parked> hangar;   // geparkte eigene Schiffe (Tab "Schiff"), höchstens MAX_HANGAR
     float scanEnergy = 0;
     bool scanOn = false;
     float scanPhase = 0;          // Fortschritt des aktuellen Scannerrings in Sekunden (0..PULSE_TIME)

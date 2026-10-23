@@ -105,6 +105,14 @@ Vector2 ArrowDirection(const Camera3D& cam, Vector3 point, Vector2 projected, Ve
     return {Vector2DotProduct(delta, right), -Vector2DotProduct(delta, fwd)};
 }
 
+// Farbe einer Stationsart (Namen, Randpfeile, Minikarte):
+// Handel = Orange (ACCENT), Werft = Hellblau, Raumschiffsverkäufer = Lime-Grün
+constexpr Color YARD_COLOR{120, 210, 255, 255};
+constexpr Color DEALER_COLOR{150, 255, 90, 255};
+Color StationColor(StationType t) {
+    return t == StationType::Trade ? ACCENT : (t == StationType::Shipyard ? YARD_COLOR : DEALER_COLOR);
+}
+
 void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) {
     const float s = Scale();
     const Station& st = w.stations[idx];
@@ -114,8 +122,8 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
     Vector3 top = Vector3Add(st.pos, {0, 10.0f, 0});
     Vector2 p = GetWorldToScreen(top, cam);
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
-    // Farben wie auf der Minikarte: Handel = Orange (ACCENT), Werft = Hellblau
-    Color col = trade ? ACCENT : Color{120, 210, 255, 255};
+    // Farben wie auf der Minikarte
+    Color col = StationColor(st.type);
     // In Großbuchstaben. toupper wirkt nur auf einzelne Bytes, d. h. nur auf
     // ASCII; Umlaute (UTF-8, zwei Bytes) bleiben klein. Das unsigned-char-
     // Umwandeln ist nötig, weil toupper mit negativen char-Werten (Bytes über
@@ -178,7 +186,7 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
         // Der Text steht 34 px vom Pfeil Richtung Bildmitte, damit er nicht
         // über den Bildrand hinausragt.
         int dist = static_cast<int>(Dist2D(w.Player().pos, st.pos));
-        std::string t = TextFormat("%s %d m", trade ? "Handel" : "Werft", dist);
+        std::string t = TextFormat("%s %d m", trade ? "Handel" : (st.type == StationType::Shipyard ? "Werft" : "Schiffe"), dist);
         Vector2 tp = Vector2Subtract(e, Vector2Scale(Vector2Normalize(d), 34 * s));
         TextCentered(t, tp.x, tp.y - 8 * s, 18 * s, col);
     }
@@ -229,7 +237,7 @@ void Minimap(const World& w) {
     // Stationen: gefülltes Quadrat mit Rahmen, damit sie größer als alles andere wirken
     for (const Station& st : w.stations) {
         Vector2 m = map(st.pos);
-        Color c = st.type == StationType::Trade ? ACCENT : Color{120, 210, 255, 255};
+        Color c = StationColor(st.type);
         DrawRectangleV({m.x - 5 * s, m.y - 5 * s}, {10 * s, 10 * s}, c);
         DrawRectangleLinesEx({m.x - 7 * s, m.y - 7 * s, 14 * s, 14 * s}, 1, c);
     }
@@ -356,11 +364,13 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     }
 
     // Namen aller Stationen; Randpfeile nur für die jeweils nächste Handels-
-    // station und die nächste Werft (sonst wäre der Rand voller Pfeile).
+    // station, die nächste Werft und den Raumschiffsverkäufer (sonst wäre der
+    // Rand voller Pfeile).
     const int nearTrade = w.NearestStation(p.pos, StationType::Trade);
     const int nearYard = w.NearestStation(p.pos, StationType::Shipyard);
+    const int nearDealer = w.NearestStation(p.pos, StationType::Dealer);
     for (int i = 0; i < static_cast<int>(w.stations.size()); ++i)
-        StationLabel(w, cam, i, i == nearTrade || i == nearYard);
+        StationLabel(w, cam, i, i == nearTrade || i == nearYard || i == nearDealer);
 
     // --- Statuspanel oben links ------------------------------------------------
     // 360 x 300 bei (16, 16). StationLabel (oben) und Multiplayer.cpp
@@ -442,7 +452,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // key = "[F]", "[Y]" oder "[Dreieck]"). Welches Ziel in Reichweite ist,
     // entscheidet dieselbe Funktion, die auch die Spiellogik benutzt
     // (World::InteractTarget) – Anzeige und Wirkung passen so immer zusammen.
-    // kind: 0 nichts, 1 Lagerstätte, 2 Wrack, 3 Handelsstation, 4 Werft.
+    // kind: 0 nichts, 1 Lagerstätte, 2 Wrack, 3 Handelsstation, 4 Werft, 5 Raumschiffsverkäufer.
     if (p.crashing) {
         TextCentered("SCHIFF STÜRZT AB!", W * 0.5f, H * 0.42f, 50 * s, BAD);
     } else if (!p.dead && !p.hidden && me.dockedAt < 0) {
@@ -463,6 +473,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
             if (kind == 3) hint = p.cargo > 0 ? key + TextFormat(" Andocken: Handelsstation  (%s verkaufen)", Num(p.cargo).c_str())
                                               : key + " Andocken: Handelsstation";
             else if (kind == 4) hint = key + " Andocken: Werft (Upgrades)";
+            else if (kind == 5) hint = key + " Andocken: Raumschiffsverkäufer";
             else if (kind == 1 || kind == 2) {
                 // InteractTarget liefert nur die ID; die Restmenge suchen wir
                 // in der passenden Liste (Lagerstätten bzw. Wracks).
@@ -505,14 +516,26 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
 // ===========================================================================
 // Stationsfenster
 // ===========================================================================
+// Kurzbeschreibung eines Schiffs mit seinen Aufrüstungen (Tab "Schiff",
+// Raumschiffsverkäufer)
+static std::string ShipStats(int type, const int* up) {
+    const int t = std::clamp(type, 0, cfg::SHIP_TYPE_COUNT - 1);
+    int lvl[cfg::UP_COUNT];
+    for (int u = 0; u < cfg::UP_COUNT; ++u) lvl[u] = std::clamp(up[u], 0, cfg::UPGRADE_LEVELS);
+    return TextFormat("Tempo %.0f   Schild %.0f   Schaden %.0f   Lager %d   Scanner %.0f m", cfg::ShipSpeed(t, lvl[cfg::UP_SPEED]),
+                      cfg::ShipArmor(t, lvl[cfg::UP_ARMOR]), cfg::ShipDamage(t, lvl[cfg::UP_WEAPON]),
+                      cfg::ShipCargo(t, lvl[cfg::UP_CARGO]), cfg::ShipScanner(t));
+}
+
 // Wird jedes Frame gezeichnet, solange der Spieler angedockt ist. Es liest nur
 // die World und gibt zurück, was der Spieler angeklickt bzw. gedrückt hat
 // (DockRequest). Ob eine Aktion möglich ist (genug Punkte?), prüft es nur für
 // die Anzeige (Knopf grau, Ton "Abgelehnt"); die verbindliche Prüfung macht
 // World::Repair/BuyUpgrade – im Mehrspieler auf dem Server, der dafür den
 // eigenen, echten Kontostand benutzt.
-// Bedienung: Maus auf die Knöpfe oder Tasten R (Reparieren), 1-4 (Aufrüsten),
-// F oder ESC (Abdocken). Controller: Zeiger mit dem linken Stick, A klickt;
+// Bedienung: Maus auf die Knöpfe oder Tasten R (Reparieren), 1-4 (Aufrüsten,
+// Schiff kaufen, mit Umschalt in Zahlung geben), 1-3 (Schiff wechseln), Tab
+// (Karteireiter der Handelsstation), F oder ESC (Abdocken). Controller: Zeiger mit dem linken Stick, A klickt;
 // Y (wie F) oder B (wie ESC) docken ab. Die Tasten R und 1-4 stehen nur bei
 // Tastaturbenutzung auf den Knöpfen.
 DockRequest DrawDockPanel(const World& w, bool interactive) {
@@ -532,74 +555,190 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
     if (me.dockedAt < 0 || me.dockedAt >= static_cast<int>(w.stations.size())) return req;
     const Station& station = w.stations[me.dockedAt];
 
+    // Karteireiter der Handelsstation: 0 = "Station", 1 = "Schiff". Wurde das
+    // Fenster im letzten Frame nicht gezeichnet (neu angedockt), beginnt es
+    // wieder mit "Station".
+    static int dockTab = 0;
+    static unsigned lastFrame = 0;
+    if (FrameIndex() > lastFrame + 1) dockTab = 0;
+    lastFrame = FrameIndex();
+
     if (station.type == StationType::Trade) {
         // --- Handelsstation: Verkauf (passiert schon beim Andocken),
         //     Kontostand, Stationsausbau, Reparatur, Abdocken ------------------
-        Rectangle r{W * 0.5f - 330 * s, H * 0.5f - 265 * s, 660 * s, 530 * s};
+        Rectangle r{W * 0.5f - 330 * s, H * 0.5f - 300 * s, 660 * s, 600 * s};
         Panel(r);
         float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
         std::string title = station.name;
         for (char& c : title) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
         Text(title, x, y, 40 * s, ACCENT);
-        y += 46 * s;
-        // Stufen 0..7, also "von 7" (STATION_STAGES = 8)
-        Text(TextFormat("Ausbaustufe %d von %d", w.StationStage(), cfg::STATION_STAGES - 1), x, y, 20 * s, MUTED);
-        y += 34 * s;
-        // lastSale: Erlös des Verkaufs bei diesem Andocken (World::Dock)
-        Text("Ladung verkauft", x, y, 24 * s, MUTED);
-        TextRight("+" + Num(me.lastSale), x + bw, y, 24 * s, me.lastSale > 0 ? GOOD : TEXT);
-        y += 38 * s;
-        Text("Kontostand", x, y, 24 * s, MUTED);
-        TextRight(Num(me.balance) + " / " + Num(cfg::GOAL_POINTS), x + bw, y, 24 * s, TEXT);
-        y += 32 * s;
-        Bar({x, y, bw, 12 * s}, static_cast<float>(me.balance) / cfg::GOAL_POINTS, ACCENT);
-        y += 34 * s;
+        y += 50 * s;
 
-        // Stationsausbau: Fortschritt innerhalb der aktuellen Stufe, also von
-        // der Schwelle der aktuellen Stufe (cur) bis zur nächsten (next), z. B.
-        // Stufe 2: 5.000 -> 12.000 (cfg::STATION_THRESHOLDS). next = -1 heißt
-        // "letzte Stufe erreicht".
-        int stage = w.StationStage();
-        int next = w.NextStageThreshold();
-        Text("Stationsausbau (abgelieferte Ressourcen)", x, y, 20 * s, MUTED);
-        y += 26 * s;
-        if (next > 0) {
-            int cur = cfg::STATION_THRESHOLDS[stage];
-            float f = static_cast<float>(w.totalDelivered - cur) / static_cast<float>(next - cur);
-            Bar({x, y, bw, 12 * s}, f, Color{255, 210, 120, 255});
-            y += 18 * s;
-            Text(TextFormat("%s / %s bis Stufe %d", Num(w.totalDelivered).c_str(), Num(next).c_str(), stage + 1), x, y, 18 * s, TEXT);
-        } else {
-            Bar({x, y, bw, 12 * s}, 1.0f, Color{255, 210, 120, 255});
-            y += 18 * s;
-            Text("Die Station ist vollständig ausgebaut!", x, y, 18 * s, GOOD);
+        // Karteireiter (wie im Optionsfenster): gewählter orange, sonst dunkel.
+        // Tab-Taste oder LB/RB am Controller wechseln.
+        if (interactive && (IsKeyPressed(KEY_TAB) || PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1) ||
+                            PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)))
+            dockTab = 1 - dockTab;
+        const char* tabNames[2] = {"Station", "Schiff"};
+        for (int t = 0; t < 2; ++t) {
+            const Rectangle tr{x + t * 190 * s, y, 180 * s, 40 * s};
+            const bool hover = CheckCollisionPointRec(PointerPos(), tr);
+            if (interactive && hover && PointerPressed()) dockTab = t;
+            const bool current = t == dockTab;
+            DrawRectangleRec(tr, current ? ACCENT : (hover ? PANEL_LIGHT : Color{15, 18, 24, 200}));
+            if (!current) DrawRectangleLinesEx(tr, 1.0f, ACCENT_DIM);
+            TextCentered(tabNames[t], tr.x + tr.width * 0.5f, tr.y + 9 * s, 22 * s, current ? Color{26, 31, 41, 255} : TEXT, !current);
         }
-        y += 40 * s;
+        DrawRectangleRec({x, y + 40 * s, bw, std::max(2.0f, 3.0f * s)}, ACCENT);
+        y += 58 * s;
 
-        Text("Schild", x, y, 24 * s, MUTED);
-        TextRight(TextFormat("%d / %d", static_cast<int>(ceilf(p.hp)), static_cast<int>(p.maxHp)), x + bw, y, 24 * s, TEXT);
-        y += 30 * s;
-        Bar({x, y, bw, 12 * s}, p.hp / p.maxHp, SHIELD);
-        y += 32 * s;
+        if (dockTab == 0) {
+            // Stufen 0..7, also "von 7" (STATION_STAGES = 8)
+            Text(TextFormat("Ausbaustufe %d von %d", w.StationStage(), cfg::STATION_STAGES - 1), x, y, 20 * s, MUTED);
+            y += 34 * s;
+            // lastSale: Erlös des Verkaufs bei diesem Andocken (World::Dock)
+            Text("Ladung verkauft", x, y, 24 * s, MUTED);
+            TextRight("+" + Num(me.lastSale), x + bw, y, 24 * s, me.lastSale > 0 ? GOOD : TEXT);
+            y += 38 * s;
+            Text("Kontostand", x, y, 24 * s, MUTED);
+            TextRight(Num(me.balance) + " / " + Num(cfg::GOAL_POINTS), x + bw, y, 24 * s, TEXT);
+            y += 32 * s;
+            Bar({x, y, bw, 12 * s}, static_cast<float>(me.balance) / cfg::GOAL_POINTS, ACCENT);
+            y += 34 * s;
 
-        // Reparatur kostet REPAIR_COST_PER_POINT (2) Punkte je fehlendem
-        // Schildpunkt. Reicht das Geld nicht für alles, repariert
-        // World::Repair so viel, wie bezahlbar ist. Darum genügt als
-        // Bedingung "Geld für mindestens einen Schildpunkt".
-        int cost = w.RepairCost(me);
-        std::string rl = cost > 0 ? TextFormat("Schild reparieren  (%s Pkt.)%s", Num(cost).c_str(), keyboard ? "  [R]" : "") : "Schild ist voll";
-        bool canRepair = cost > 0 && me.balance >= cfg::REPAIR_COST_PER_POINT;
-        Rectangle rb{x, y, bw, 50 * s};
-        // Klick auf einen gesperrten Knopf liefert bei Button() kein true;
-        // repairHover sagt uns trotzdem, ob die Maus darauf war -> "Abgelehnt"-Ton.
-        bool repairHover = false;
-        if (Button(rb, rl, 22 * s, false, canRepair && interactive, &repairHover) || (interactive && canRepair && IsKeyPressed(KEY_R)))
-            req.repair = true;
-        else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && PointerPressed())))
-            g_audio.Play(Sfx::Denied);
-        y += 64 * s;
-        // "Abdocken" ist per Tastatur vorausgewählt (focused = true), daher hervorgehoben
-        Rectangle ub{x, y, bw, 50 * s};
+            // Stationsausbau: Fortschritt innerhalb der aktuellen Stufe, also von
+            // der Schwelle der aktuellen Stufe (cur) bis zur nächsten (next), z. B.
+            // Stufe 2: 5.000 -> 12.000 (cfg::STATION_THRESHOLDS). next = -1 heißt
+            // "letzte Stufe erreicht".
+            int stage = w.StationStage();
+            int next = w.NextStageThreshold();
+            Text("Stationsausbau (abgelieferte Ressourcen)", x, y, 20 * s, MUTED);
+            y += 26 * s;
+            if (next > 0) {
+                int cur = cfg::STATION_THRESHOLDS[stage];
+                float f = static_cast<float>(w.totalDelivered - cur) / static_cast<float>(next - cur);
+                Bar({x, y, bw, 12 * s}, f, Color{255, 210, 120, 255});
+                y += 18 * s;
+                Text(TextFormat("%s / %s bis Stufe %d", Num(w.totalDelivered).c_str(), Num(next).c_str(), stage + 1), x, y, 18 * s, TEXT);
+            } else {
+                Bar({x, y, bw, 12 * s}, 1.0f, Color{255, 210, 120, 255});
+                y += 18 * s;
+                Text("Die Station ist vollständig ausgebaut!", x, y, 18 * s, GOOD);
+            }
+            y += 40 * s;
+
+            Text("Schild", x, y, 24 * s, MUTED);
+            TextRight(TextFormat("%d / %d", static_cast<int>(ceilf(p.hp)), static_cast<int>(p.maxHp)), x + bw, y, 24 * s, TEXT);
+            y += 30 * s;
+            Bar({x, y, bw, 12 * s}, p.hp / p.maxHp, SHIELD);
+            y += 32 * s;
+
+            // Reparatur kostet REPAIR_COST_PER_POINT (2) Punkte je fehlendem
+            // Schildpunkt. Reicht das Geld nicht für alles, repariert
+            // World::Repair so viel, wie bezahlbar ist. Darum genügt als
+            // Bedingung "Geld für mindestens einen Schildpunkt".
+            int cost = w.RepairCost(me);
+            std::string rl = cost > 0 ? TextFormat("Schild reparieren  (%s Pkt.)%s", Num(cost).c_str(), keyboard ? "  [R]" : "") : "Schild ist voll";
+            bool canRepair = cost > 0 && me.balance >= cfg::REPAIR_COST_PER_POINT;
+            Rectangle rb{x, y, bw, 50 * s};
+            // Klick auf einen gesperrten Knopf liefert bei Button() kein true;
+            // repairHover sagt uns trotzdem, ob die Maus darauf war -> "Abgelehnt"-Ton.
+            bool repairHover = false;
+            if (Button(rb, rl, 22 * s, false, canRepair && interactive, &repairHover) || (interactive && canRepair && IsKeyPressed(KEY_R)))
+                req.repair = true;
+            else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && PointerPressed())))
+                g_audio.Play(Sfx::Denied);
+        } else {
+            // --- Tab "Schiff": geflogenes Schiff und die geparkten (hangar),
+            //     zu denen man wechseln kann (World::SwitchShip) ----------------
+            Text("Aktuelles Schiff", x, y, 20 * s, MUTED);
+            y += 26 * s;
+            Rectangle cur{x, y, bw, 70 * s};
+            DrawRectangleRec(cur, Color{36, 42, 54, 220});
+            DrawRectangleLinesEx(cur, 1.0f, ACCENT_DIM);
+            Text(cfg::SHIP_TYPES[std::clamp(me.shipType, 0, cfg::SHIP_TYPE_COUNT - 1)].name, cur.x + 16 * s, cur.y + 8 * s, 26 * s, TEXT);
+            Text(ShipStats(me.shipType, me.upgrades), cur.x + 16 * s, cur.y + 42 * s, 18 * s, MUTED);
+            y += 84 * s;
+            Text("Geparkte Schiffe", x, y, 20 * s, MUTED);
+            y += 26 * s;
+            if (me.hangar.empty()) {
+                Text("Keine. Weitere Schiffe gibt es beim Raumschiffsverkäufer.", x, y, 18 * s, TEXT);
+                y += 76 * s;
+            }
+            for (int i = 0; i < static_cast<int>(me.hangar.size()) && i < cfg::SHIP_TYPE_COUNT - 1; ++i) {
+                const OwnedShip& o = me.hangar[i];
+                const int type = std::clamp(o.type, 0, cfg::SHIP_TYPE_COUNT - 1);
+                Rectangle row{x, y, bw, 70 * s};
+                DrawRectangleRec(row, Color{36, 42, 54, 220});
+                Text(cfg::SHIP_TYPES[type].name, row.x + 16 * s, row.y + 8 * s, 26 * s, TEXT);
+                Text(ShipStats(type, o.upgrades), row.x + 16 * s, row.y + 42 * s, 18 * s, MUTED);
+                std::string bl = keyboard ? TextFormat("[%d]  Wechseln", i + 1) : std::string("Wechseln");
+                Rectangle b{row.x + row.width - 190 * s, row.y + 12 * s, 174 * s, 46 * s};
+                if ((Button(b, bl, 22 * s, false, interactive) ||
+                     (interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + i)))))
+                    req.switchShip = type;
+                y += 80 * s;
+            }
+        }
+        // "Abdocken" steht immer unten im Fenster und ist per Tastatur
+        // vorausgewählt (focused = true), daher hervorgehoben
+        Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
+        if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+    } else if (station.type == StationType::Dealer) {
+        // --- Raumschiffsverkäufer: alle Schiffstypen, die man noch nicht
+        //     besitzt, kaufen (altes Schiff parken) oder mit Inzahlunggabe
+        //     des geflogenen Schiffs (World::BuyShip) -------------------------
+        Rectangle r{W * 0.5f - 420 * s, H * 0.5f - 290 * s, 840 * s, 580 * s};
+        Panel(r);
+        float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
+        std::string title = station.name;
+        for (char& c : title) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        Text(title, x, y, 40 * s, DEALER_COLOR);
+        TextRight("Kontostand  " + Num(me.balance), x + bw, y + 10 * s, 24 * s, ACCENT);
+        y += 46 * s;
+        Text(TextFormat("Kaufen: altes Schiff wird geparkt.  In Zahlung: +%s Pkt. für das alte Schiff.",
+                        Num(w.TradeInValue(me)).c_str()),
+             x, y, 18 * s, MUTED);
+        y += 34 * s;
+        const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+        for (int t = 0; t < cfg::SHIP_TYPE_COUNT; ++t) {
+            Rectangle row{x, y, bw, 88 * s};
+            DrawRectangleRec(row, Color{36, 42, 54, 220});
+            const int zero[cfg::UP_COUNT] = {0, 0, 0, 0};
+            Text(cfg::SHIP_TYPES[t].name, row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
+            Text(ShipStats(t, zero), row.x + 16 * s, row.y + 50 * s, 18 * s, MUTED);
+            const bool owned = w.OwnsShipType(me, t);
+            if (owned) {
+                TextRight(t == me.shipType ? "Wird geflogen" : "Im Besitz", row.x + row.width - 20 * s, row.y + 12 * s, 22 * s, GOOD);
+            } else {
+                // Zwei Knöpfe: Kaufen und In Zahlung geben. Der Preis mit
+                // Inzahlunggabe kann negativ sein (Gutschrift).
+                const int price = w.ShipPrice(me, t, false);
+                const int tradePrice = w.ShipPrice(me, t, true);
+                const bool canBuy = me.balance >= price;
+                const bool canTrade = me.balance >= tradePrice;
+                const bool keyHit = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t));
+                std::string bl = (keyboard ? TextFormat("[%d] ", t + 1) : std::string()) + "Kaufen " + Num(price);
+                std::string tl = (keyboard ? TextFormat("[Umschalt+%d] ", t + 1) : std::string()) + "In Zahlung " +
+                                 Num(std::max(0, tradePrice));
+                // Knöpfe rechts in der oberen Zeile, die Werte stehen darunter
+                Rectangle b1{row.x + row.width - 486 * s, row.y + 8 * s, 200 * s, 36 * s};
+                Rectangle b2{row.x + row.width - 276 * s, row.y + 8 * s, 260 * s, 36 * s};
+                bool hover1 = false, hover2 = false;
+                bool click1 = Button(b1, bl, 18 * s, false, canBuy && interactive, &hover1);
+                bool click2 = Button(b2, tl, 18 * s, false, canTrade && interactive, &hover2);
+                if (interactive && canBuy && (click1 || (keyHit && !shift))) {
+                    req.buyShip = t;
+                } else if (interactive && canTrade && (click2 || (keyHit && shift))) {
+                    req.buyShip = t;
+                    req.tradeIn = true;
+                } else if (interactive && (keyHit || ((hover1 || hover2) && PointerPressed()))) {
+                    g_audio.Play(Sfx::Denied);
+                }
+            }
+            y += 98 * s;
+        }
+        Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
         if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
     } else {
         // --- Werft: vier Aufrüstungen, je eine Zeile mit Stufenkästchen,
@@ -619,30 +758,32 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
         // Bewaffnung, Lager). Die Werte-Tabellen in Config.hpp haben je
         // UPGRADE_LEVELS + 1 Einträge (Index 0 = Startwert), daher ist
         // [lvl + 1] gültig, solange die Stufe nicht maximal ist.
+        // Die Werte hängen vom Schiffstyp ab (cfg::ShipSpeed ...).
         const char* names[4] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager"};
+        const int st = std::clamp(me.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
         for (int t = 0; t < 4; ++t) {
             int lvl = me.upgrades[t];
             bool maxed = lvl >= cfg::UPGRADE_LEVELS;
             std::string desc;
             switch (t) {
                 case cfg::UP_SPEED:
-                    desc = maxed ? TextFormat("Tempo %.0f", cfg::SPEED_VALUES[lvl])
-                                 : TextFormat("Tempo %.0f  ->  %.0f", cfg::SPEED_VALUES[lvl], cfg::SPEED_VALUES[lvl + 1]);
+                    desc = maxed ? TextFormat("Tempo %.0f", cfg::ShipSpeed(st, lvl))
+                                 : TextFormat("Tempo %.0f  ->  %.0f", cfg::ShipSpeed(st, lvl), cfg::ShipSpeed(st, lvl + 1));
                     break;
                 case cfg::UP_ARMOR:
-                    desc = maxed ? TextFormat("Schild %.0f", cfg::ARMOR_VALUES[lvl])
-                                 : TextFormat("Schild %.0f  ->  %.0f", cfg::ARMOR_VALUES[lvl], cfg::ARMOR_VALUES[lvl + 1]);
+                    desc = maxed ? TextFormat("Schild %.0f", cfg::ShipArmor(st, lvl))
+                                 : TextFormat("Schild %.0f  ->  %.0f", cfg::ShipArmor(st, lvl), cfg::ShipArmor(st, lvl + 1));
                     break;
                 case cfg::UP_WEAPON:
                     // WEAPON_RATE ist die Pause zwischen zwei Schüssen in
                     // Sekunden; 1 / Pause = Schüsse pro Sekunde.
-                    desc = maxed ? TextFormat("Schaden %.0f, %.1f Schuss/s", cfg::WEAPON_DAMAGE[lvl], 1.0f / cfg::WEAPON_RATE[lvl])
-                                 : TextFormat("Schaden %.0f -> %.0f,  %.1f -> %.1f Schuss/s", cfg::WEAPON_DAMAGE[lvl],
-                                              cfg::WEAPON_DAMAGE[lvl + 1], 1.0f / cfg::WEAPON_RATE[lvl], 1.0f / cfg::WEAPON_RATE[lvl + 1]);
+                    desc = maxed ? TextFormat("Schaden %.0f, %.1f Schuss/s", cfg::ShipDamage(st, lvl), 1.0f / cfg::WEAPON_RATE[lvl])
+                                 : TextFormat("Schaden %.0f -> %.0f,  %.1f -> %.1f Schuss/s", cfg::ShipDamage(st, lvl),
+                                              cfg::ShipDamage(st, lvl + 1), 1.0f / cfg::WEAPON_RATE[lvl], 1.0f / cfg::WEAPON_RATE[lvl + 1]);
                     break;
                 default:
-                    desc = maxed ? TextFormat("Kapazität %d", cfg::CARGO_VALUES[lvl])
-                                 : TextFormat("Kapazität %d  ->  %d", cfg::CARGO_VALUES[lvl], cfg::CARGO_VALUES[lvl + 1]);
+                    desc = maxed ? TextFormat("Kapazität %d", cfg::ShipCargo(st, lvl))
+                                 : TextFormat("Kapazität %d  ->  %d", cfg::ShipCargo(st, lvl), cfg::ShipCargo(st, lvl + 1));
                     break;
             }
             Rectangle row{x, y, bw, 78 * s};

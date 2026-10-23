@@ -21,7 +21,7 @@
 // bekannt, kein Speicher, keine Linker-Probleme, auch im Server ohne raylib
 // verwendbar).
 //
-// Einheiten: Längen in Welt-Einheiten (etwa Meter; die Karte ist 300 x 300
+// Einheiten: Längen in Welt-Einheiten (etwa Meter; die Karte ist 600 x 600
 // groß), Zeiten in Sekunden, Geschwindigkeiten in Einheiten pro Sekunde.
 // "Punkte" = Ressourcenpunkte: 1 Einheit Ladung bringt beim Verkauf genau
 // 1 Punkt auf das Konto (World::Dock).
@@ -47,7 +47,7 @@ namespace cfg {
 constexpr int GOAL_POINTS = 100000;
 
 // Welt
-constexpr float WORLD_HALF = 150.0f;        // Spielfeld geht von -WORLD_HALF bis +WORLD_HALF (x und z), also 300 x 300
+constexpr float WORLD_HALF = 300.0f;        // Spielfeld geht von -WORLD_HALF bis +WORLD_HALF (x und z), also 600 x 600
 // Flughöhe über der Mondoberfläche (y). Alle Schiffe fliegen in dieser Höhe,
 // die Spiellogik ist also im Grunde zweidimensional (x/z). Stationsteile, die
 // höher als SHIP_ALTITUDE - 0,6 sind, werden zu Hindernissen (WorldGen.cpp).
@@ -62,6 +62,8 @@ constexpr float SCANNER_REGEN = 1.0f;       // Einheiten pro Sekunde, wenn aus
 // Ein Scannerring wächst in SCANNER_PULSE_TIME Sekunden von 0 auf
 // SCANNER_RADIUS und beginnt dann von vorn (mit "Ping"). Lagerstätten, die
 // der Ring überstreicht, gelten für diesen Spieler als entdeckt.
+// SCANNER_RADIUS ist der Grundwert; jeder Schiffstyp hat einen Faktor darauf
+// (SHIP_TYPES unten, das Startschiff 50 %).
 constexpr float SCANNER_RADIUS = 34.0f;
 constexpr float SCANNER_PULSE_TIME = 1.25f;
 
@@ -114,7 +116,7 @@ enum Upgrade { UP_SPEED = 0, UP_ARMOR = 1, UP_WEAPON = 2, UP_CARGO = 3, UP_COUNT
 // Höchstgeschwindigkeit (Einheiten/s). Die Beschleunigung ist 1,9 x dieser
 // Wert (World::UpdateShipPhysics): ein schnelleres Schiff zieht also auch
 // kräftiger an. Rückwärts geht es mit halbem Tempo. Zum Vergleich: Die Karte
-// ist 300 breit, mit Tempo 16 also knapp 20 s von Rand zu Rand.
+// ist 600 breit, mit Tempo 16 also knapp 40 s von Rand zu Rand.
 constexpr float SPEED_VALUES[UPGRADE_LEVELS + 1]  = {16.0f, 19.0f, 22.0f, 25.0f, 28.5f, 32.0f};
 // Schild (Ship::maxHp). Piraten treffen mit 10: Startschild hält 10 Treffer,
 // höchste Stufe 42 Treffer.
@@ -140,6 +142,47 @@ constexpr int UPGRADE_COST[UP_COUNT][UPGRADE_LEVELS] = {
     {1000, 2500, 5000, 8000, 13000},   // Bewaffnung (zusammen 29.500)
     {600, 1600, 3500, 6500, 11000},    // Lager     (zusammen 23.200)
 };
+
+// Schiffstypen (Raumschiffsverkäufer)
+// Typ 0 ist das Startschiff. Die anderen kauft man beim Raumschiffsverkäufer.
+// Die Werte sind Faktoren auf die Aufrüstungstabellen oben (Stufe 0 des
+// Startschiffs = 1,0): Tempo = SPEED_VALUES[Stufe] * speed, Schaden =
+// WEAPON_DAMAGE[Stufe] * weapon, Scanner = SCANNER_RADIUS * scanner. Schild
+// und Lager sind die Werte auf Stufe 0; Aufrüstungen wachsen im selben
+// Verhältnis wie beim Startschiff (ARMOR_VALUES bzw. CARGO_VALUES).
+// Jedes Schiff hat seine eigenen Aufrüstungen (sie lassen sich nicht übertragen).
+// Die Zahlenwerte sind Teil von Netzwerkprotokoll, Kontodatei und Spielstand:
+// Reihenfolge nicht ändern.
+enum ShipTypeId { SHIP_START = 0, SHIP_CARGO = 1, SHIP_HUNTER = 2, SHIP_SPEEDSTER = 3, SHIP_TYPE_COUNT = 4 };
+struct ShipTypeDef {
+    const char* name;
+    const char* model;   // Modellname aus assets/models
+    float shield;        // Schild auf Stufe 0
+    float scanner;       // Faktor auf SCANNER_RADIUS
+    float speed;         // Faktor auf SPEED_VALUES
+    float weapon;        // Faktor auf WEAPON_DAMAGE
+    int cargo;           // Lager auf Stufe 0
+    int cost;            // Kaufpreis in Punkten
+};
+// Für Hunter und Speedster ist kein Antrieb vorgegeben: Hunter wie das
+// Startschiff, Speedster etwas schneller.
+constexpr ShipTypeDef SHIP_TYPES[SHIP_TYPE_COUNT] = {
+    {"Startschiff", "craft_speederA", 100.0f, 0.5f, 1.0f, 1.0f, 300, 5000},
+    {"The Cargo", "craft_cargoA", 120.0f, 1.5f, 0.8f, 1.2f, 1200, 20000},
+    {"Hunter", "craft_miner", 80.0f, 0.3f, 1.0f, 1.6f, 300, 15000},
+    {"Speedster", "craft_speederD", 60.0f, 0.6f, 1.3f, 0.8f, 150, 10000},
+};
+// In Zahlung geben: so viel Prozent von Kaufpreis und bezahlten
+// Aufrüstungen des alten Schiffs werden gutgeschrieben.
+constexpr int TRADE_IN_PERCENT = 50;
+
+// Werte eines Schiffstyps auf einer Aufrüstungsstufe (Server, Client und
+// Vorhersage rechnen damit, siehe World::ApplyUpgrades)
+constexpr float ShipSpeed(int type, int lvl) { return SPEED_VALUES[lvl] * SHIP_TYPES[type].speed; }
+constexpr float ShipArmor(int type, int lvl) { return SHIP_TYPES[type].shield * ARMOR_VALUES[lvl] / ARMOR_VALUES[0]; }
+constexpr float ShipDamage(int type, int lvl) { return WEAPON_DAMAGE[lvl] * SHIP_TYPES[type].weapon; }
+constexpr int ShipCargo(int type, int lvl) { return SHIP_TYPES[type].cargo * CARGO_VALUES[lvl] / CARGO_VALUES[0]; }
+constexpr float ShipScanner(int type) { return SCANNER_RADIUS * SHIP_TYPES[type].scanner; }
 
 // Station wächst mit der Gesamtmenge abgelieferter Ressourcen
 // (World::totalDelivered). Stufe i ist erreicht, sobald insgesamt

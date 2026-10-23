@@ -371,7 +371,7 @@ std::vector<uint8_t> Encode(const DockActionMsg& m) {
 
 bool Decode(Reader& r, DockActionMsg& m) {
     const uint8_t a = r.U8();
-    if (a > 2) return false;
+    if (a > 4) return false;
     m.action = static_cast<DockActionType>(a);
     m.param = r.U8();
     return r.ok();
@@ -496,6 +496,13 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.I32(e.cargoMax);
         w.I64(e.balance);
         for (uint8_t u : e.upgrades) w.U8(u);
+        w.U8(e.shipType);
+        const size_t nh = std::min<size_t>(e.hangar.size(), MAX_HANGAR);
+        w.U8(static_cast<uint8_t>(nh));
+        for (size_t i = 0; i < nh; ++i) {
+            w.U8(e.hangar[i].type);
+            for (uint8_t u : e.hangar[i].upgrades) w.U8(u);
+        }
         w.F32(e.scanEnergy);
         w.F32(e.scanPhase);
         w.U8(e.mineKind);
@@ -596,6 +603,14 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         e.cargoMax = r.I32();
         e.balance = r.I64();
         for (uint8_t& u : e.upgrades) u = r.U8();
+        e.shipType = r.U8();
+        const uint8_t nh = r.U8();
+        if (nh > MAX_HANGAR) return false;
+        e.hangar.assign(nh, SnapMe::Parked{});
+        for (auto& h : e.hangar) {
+            h.type = r.U8();
+            for (uint8_t& u : h.upgrades) u = r.U8();
+        }
         e.scanEnergy = r.F32();
         e.scanPhase = r.F32();
         e.mineKind = r.U8();

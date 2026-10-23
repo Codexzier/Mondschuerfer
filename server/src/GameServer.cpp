@@ -1226,6 +1226,15 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             // aufrüsten an der Werft; param wird in BuyUpgrade/UpgradeCost geprüft
             if (st.type == StationType::Shipyard && m.param < cfg::UP_COUNT) world_.BuyUpgrade(*ps, m.param);
             break;
+        case net::DockActionType::BuyShip:
+            // Schiff kaufen beim Raumschiffsverkäufer; Bit 7 = in Zahlung geben.
+            // Typ und Preis prüft BuyShip.
+            if (st.type == StationType::Dealer) world_.BuyShip(*ps, m.param & 0x7F, (m.param & 0x80) != 0);
+            break;
+        case net::DockActionType::SwitchShip:
+            // Schiff wechseln an der Handelsstation (Tab "Schiff")
+            if (st.type == StationType::Trade) world_.SwitchShip(*ps, m.param);
+            break;
     }
 }
 
@@ -1269,7 +1278,8 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
 
     const bool returning = account && (account->progress.balance > 0 || account->progress.round > 1 ||
                                        account->progress.upgrades[0] + account->progress.upgrades[1] +
-                                               account->progress.upgrades[2] + account->progress.upgrades[3] > 0);
+                                               account->progress.upgrades[2] + account->progress.upgrades[3] > 0 ||
+                                       account->progress.shipType != 0 || !account->progress.hangar.empty());
     if (account) account->lastLogin = UnixNow();
     if (!c.isBot) {
         if (resumed)
@@ -1478,12 +1488,21 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         } else {
             // Kein Schiff (wartet auf ein neues): sinnvolle Werte statt 0/0,
             // damit der Client nicht durch 0 teilt.
-            e.maxHp = cfg::ARMOR_VALUES[std::clamp(ps->upgrades[cfg::UP_ARMOR], 0, cfg::UPGRADE_LEVELS)];
-            e.cargoMax = cfg::CARGO_VALUES[std::clamp(ps->upgrades[cfg::UP_CARGO], 0, cfg::UPGRADE_LEVELS)];
+            const int t = std::clamp(ps->shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
+            e.maxHp = cfg::ShipArmor(t, std::clamp(ps->upgrades[cfg::UP_ARMOR], 0, cfg::UPGRADE_LEVELS));
+            e.cargoMax = cfg::ShipCargo(t, std::clamp(ps->upgrades[cfg::UP_CARGO], 0, cfg::UPGRADE_LEVELS));
         }
         e.balance = ps->balance;
         for (int u = 0; u < cfg::UP_COUNT; ++u)
             e.upgrades[u] = static_cast<uint8_t>(std::clamp(ps->upgrades[u], 0, cfg::UPGRADE_LEVELS));
+        e.shipType = static_cast<uint8_t>(std::clamp(ps->shipType, 0, cfg::SHIP_TYPE_COUNT - 1));
+        e.hangar.clear();
+        for (const OwnedShip& o : ps->hangar) {
+            net::SnapMe::Parked h;
+            h.type = static_cast<uint8_t>(std::clamp(o.type, 0, cfg::SHIP_TYPE_COUNT - 1));
+            for (int u = 0; u < cfg::UP_COUNT; ++u) h.upgrades[u] = static_cast<uint8_t>(std::clamp(o.upgrades[u], 0, cfg::UPGRADE_LEVELS));
+            e.hangar.push_back(h);
+        }
         e.scanEnergy = ps->scanEnergy;
         e.scanOn = ps->scanOn;
         e.scanPhase = std::fmod(ps->scanPulse, cfg::SCANNER_PULSE_TIME);
@@ -1767,6 +1786,18 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     ps.balance = std::max(0LL, p.balance);
     ps.delivered = std::max(0LL, p.delivered);
     for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = std::clamp(p.upgrades[u], 0, cfg::UPGRADE_LEVELS);
+    // Schiffstyp und geparkte Schiffe; je Typ höchstens ein Schiff
+    ps.shipType = std::clamp(p.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
+    ps.hangar.clear();
+    for (const auto& h : p.hangar) {
+        const int t = std::clamp(h.type, 0, cfg::SHIP_TYPE_COUNT - 1);
+        if (world_.OwnsShipType(ps, t)) continue;
+        OwnedShip o;
+        o.type = t;
+        for (int u = 0; u < cfg::UP_COUNT; ++u) o.upgrades[u] = std::clamp(h.upgrades[u], 0, cfg::UPGRADE_LEVELS);
+        o.hp = h.hp;
+        ps.hangar.push_back(o);
+    }
     ps.playTime = static_cast<float>(p.shipTime);
     ps.roundTime = static_cast<float>(p.roundTime);
     ps.round = std::max(1, p.round);
@@ -1794,6 +1825,14 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     p.balance = ps.balance;
     p.delivered = ps.delivered;
     for (int u = 0; u < cfg::UP_COUNT; ++u) p.upgrades[u] = ps.upgrades[u];
+    p.shipType = ps.shipType;
+    for (const OwnedShip& o : ps.hangar) {
+        PlayerProgress::Parked h;
+        h.type = o.type;
+        for (int u = 0; u < cfg::UP_COUNT; ++u) h.upgrades[u] = o.upgrades[u];
+        h.hp = o.hp;
+        p.hangar.push_back(h);
+    }
     const Ship* s = world_.PlayerShip(ps);
     if (s && !s->crashing) {
         p.cargo = s->cargo;

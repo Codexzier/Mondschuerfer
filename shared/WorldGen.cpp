@@ -40,7 +40,7 @@
 //   Reihenfolge dagegen garantiert (von links nach rechts).
 //
 // Koordinaten: x = Osten, z = Süden (-z = Norden), y = Höhe. Die Karte geht
-// von -cfg::WORLD_HALF bis +cfg::WORLD_HALF (300 x 300 Einheiten), die
+// von -cfg::WORLD_HALF bis +cfg::WORLD_HALF (600 x 600 Einheiten), die
 // Kartenmitte (0, 0) ist die erste Handelsstation.
 //
 // Abhängigkeiten: World.hpp (und darüber Config.hpp mit den Balancing-Werten,
@@ -71,6 +71,7 @@ void World::ResolveModels() {
     mdl.miner = ModelId("craft_miner");      // die drei Händler-Modelle (ShipKind::Miner)
     mdl.cargoA = ModelId("craft_cargoA");
     mdl.cargoB = ModelId("craft_cargoB");
+    for (int t = 0; t < cfg::SHIP_TYPE_COUNT; ++t) mdl.shipTypes[t] = ModelId(cfg::SHIP_TYPES[t].model);
     mdl.terrain = ModelId("terrain");
     mdl.crystalSmall = ModelId("rock_crystals");          // Lagerstätten bis 1000
     mdl.crystalA = ModelId("rock_crystalsLargeA");        // große Lagerstätten (> 1000)
@@ -247,6 +248,7 @@ Vector3 RingSlot(int k) {
 namespace {
 void BuildTradeStation(Station& t);
 void BuildShipyard(Station& y);
+void BuildShipDealer(Station& d);
 } // namespace
 
 void World::BuildStations() {
@@ -288,13 +290,24 @@ void World::BuildStations() {
         nextIsYard = !nextIsYard;
     }
 
+    // Raumschiffsverkäufer: immer genau einer, als letzte Station. Er steht
+    // südlich der Mitte außerhalb des Rings (Ring-Bauplätze ~92 Einheiten von
+    // der Mitte, also mindestens 78 Abstand: die Schutzzonen berühren sich
+    // nicht). Das Startschiff blickt beim Start genau in diese Richtung.
+    Station dealer;
+    dealer.type = StationType::Dealer;
+    dealer.pos = {0, 0, 170.0f};
+    BuildShipDealer(dealer);
+    stations.push_back(dealer);
+
     // Namen mit Nummer, wenn es mehrere gibt
     // (Nummerierung in Bauplatz-Reihenfolge; "Handelsstation 1" ist immer
     // die in der Mitte.)
     int tn = 0, yn = 0;
     for (auto& st : stations) {
         if (st.type == StationType::Trade) st.name = trades > 1 ? Fmt("Handelsstation %d", ++tn) : "Handelsstation";
-        else st.name = yards > 1 ? Fmt("Werft %d", ++yn) : "Werft";
+        else if (st.type == StationType::Shipyard) st.name = yards > 1 ? Fmt("Werft %d", ++yn) : "Werft";
+        else st.name = "Raumschiffsverkäufer";
     }
 
     // Skalieren und Hindernisse (hohe Teile) bestimmen
@@ -470,6 +483,27 @@ void BuildShipyard(Station& y) {
     Part(y, "barrels", 4.6f, 2.4f, 0.0f, 0);
     y.turrets.push_back({{-2.8f, 0.0f, 0.0f}, 0, 0, 0, true});
     y.turrets.push_back({{5.0f, 0.0f, -2.4f}, 0, 0, 0, false});
+}
+
+void BuildShipDealer(Station& d) {
+    // -------------------------------------------------------------------
+    // Raumschiffsverkäufer (andere Schiffe kaufen)
+    // Wächst nicht (Stufe 0). Render.cpp färbt alle Teile lime-grün.
+    // Mitte: Glashangar auf 2x2 Plattformen; davor eine Reihe Plattformen,
+    // auf denen die drei Schiffe zum Kauf ausgestellt sind (nur Deko).
+    // -------------------------------------------------------------------
+    for (int ix = -1; ix <= 1; ix += 2)
+        for (int iz = -1; iz <= 1; iz += 2) Part(d, "platform_large", ix * 1.0f, iz * 1.0f, 0, 0);
+    for (int ix = -3; ix <= 3; ix += 3) Part(d, "platform_large", ix * 1.0f, 3.0f, 0, 0);
+    Part(d, "hangar_roundGlass", 0.0f, -0.6f, 0, 0, 0.1f);
+    Part(d, "craft_cargoA", -3.0f, 3.0f, PI, 0, 0.35f, 0.8f);
+    Part(d, "craft_miner", 0.0f, 3.0f, PI, 0, 0.35f, 0.8f);
+    Part(d, "craft_speederD", 3.0f, 3.0f, PI, 0, 0.35f, 0.8f);
+    Part(d, "machine_wireless", 2.4f, -1.6f, 0, 0);
+    Part(d, "desk_computerScreen", -2.2f, 1.2f, PI, 0);
+    Part(d, "barrels", -2.6f, -1.8f, 0.0f, 0);
+    d.turrets.push_back({{-3.0f, 0.0f, -2.0f}, 0, 0, 0, true});
+    d.turrets.push_back({{3.4f, 0.0f, 0.4f}, 0, 0, 0, false});
 }
 
 } // namespace

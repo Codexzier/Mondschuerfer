@@ -120,6 +120,12 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     f << "balance " << me.balance << '\n';
     f << "delivered " << w.totalDelivered << '\n';
     f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << '\n';
+    // Schiffstyp (vor "player", denn dort werden die Schiffswerte berechnet)
+    // und geparkte Schiffe: hangar Typ Stufe Stufe Stufe Stufe Schild
+    f << "shiptype " << me.shipType << '\n';
+    for (const OwnedShip& o : me.hangar)
+        f << "hangar " << o.type << ' ' << o.upgrades[0] << ' ' << o.upgrades[1] << ' ' << o.upgrades[2] << ' '
+          << o.upgrades[3] << ' ' << o.hp << '\n';
     // nextId: nächste freie ID für Schiffe, Lagerstätten und Wracks. Wird
     // mitgespeichert, damit nach dem Laden neu entstehende Objekte keine ID
     // bekommen, die eine gespeicherte Lagerstätte oder ein Wrack schon hat.
@@ -247,6 +253,14 @@ bool LoadGame(World& w) {
         if (key == "balance") ls >> me.balance;
         else if (key == "delivered") ls >> w.totalDelivered;
         else if (key == "upgrades") ls >> me.upgrades[0] >> me.upgrades[1] >> me.upgrades[2] >> me.upgrades[3];
+        else if (key == "shiptype") ls >> me.shipType;   // begrenzt ApplyUpgrades
+        else if (key == "hangar") {
+            OwnedShip o;
+            ls >> o.type >> o.upgrades[0] >> o.upgrades[1] >> o.upgrades[2] >> o.upgrades[3] >> o.hp;
+            o.type = std::clamp(o.type, 0, cfg::SHIP_TYPE_COUNT - 1);
+            for (int& u : o.upgrades) u = std::clamp(u, 0, cfg::UPGRADE_LEVELS);
+            if (!w.OwnsShipType(me, o.type) && ls) me.hangar.push_back(o);
+        }
         else if (key == "stats") ls >> me.playTime >> me.kills >> w.nextId;
         else if (key == "scanner") ls >> me.scanEnergy;
         else if (key == "player") {

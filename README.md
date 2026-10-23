@@ -106,7 +106,9 @@ den **Optionen**.
 | E | Scanner an / aus |
 | F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) |
 | R | Schild reparieren (an der Handelsstation) |
-| 1 – 4 | Upgrade kaufen (in der Werft) |
+| 1 – 4 | Upgrade kaufen (in der Werft) / Schiff kaufen (beim Raumschiffsverkäufer, mit Umschalt: in Zahlung geben) |
+| 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) |
+| Tab | Karteireiter der Handelsstation wechseln (Station / Schiff) |
 | ESC / P | Pause |
 | H | Steuerung einblenden |
 | M | Ton an / aus |
@@ -174,6 +176,19 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 - **Werft:** Upgrades für Antrieb (Tempo), Panzerung (maximaler Schild), Bewaffnung
   (Schaden und Feuerrate) und Lager (Kapazität), jeweils 5 Stufen. Bezahlt wird mit
   Ressourcenpunkten, das senkt also den Kontostand.
+- **Raumschiffsverkäufer** (lime-grüne Station südlich der Mitte): Hier gibt es weitere Schiffe.
+  Beim Kauf wird das alte Schiff geparkt, oder du gibst es in Zahlung (50 % von Kaufpreis und
+  bezahlten Upgrades werden gutgeschrieben). Jedes Schiff hat eigene Upgrades, sie lassen sich
+  nicht übertragen. Zwischen den eigenen Schiffen wechselst du an der Handelsstation im Tab „Schiff“.
+
+  | Schiff | Schild | Scanner | Antrieb | Waffen | Lager | Preis |
+  |---|---|---|---|---|---|---|
+  | Startschiff | 100 | 50 % | 100 % | 100 % | 300 | – |
+  | The Cargo | 120 | 150 % | 80 % | 120 % | 1.200 | 20.000 |
+  | Hunter | 80 | 30 % | 100 % | 160 % | 300 | 15.000 |
+  | Speedster | 60 | 60 % | 130 % | 80 % | 150 | 10.000 |
+
+  Die Prozente beziehen sich auf die Grundwerte (Scanner 34 m, Tempo 16, Schaden 10).
 - **Kampf:** Leertaste feuert 2 Schuss pro Sekunde mit je 10 Schaden. Dein Schild hat zu Beginn
   100 Punkte: nach 10 Treffern stürzt das Schiff ab, und das Spiel ist zu Ende.
   - *Piraten* (rötlich) greifen an, sobald du in ihre Nähe kommst.
@@ -225,7 +240,7 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
 - Grundregeln wie im Einzelspieler; jeder hat **eigenen** Kontostand, eigene Aufrüstungen und muss
   Lagerstätten **selbst** entdecken. Abbauen kann sie aber jeder – wer zuerst kommt …
 - **Absturz:** Nach 4 Sekunden gibt es ein neues Schiff an einer Handelsstation, aber der
-  Fortschritt (Kontostand, Aufrüstungen, Runde, Schiffszeit) beginnt **von vorn**.
+  Fortschritt (Kontostand, Aufrüstungen, gekaufte Schiffe, Runde, Schiffszeit) beginnt **von vorn**.
 - **Schiffszeit:** wie lange du schon mit dem aktuellen Schiff fliegst.
 - **Ziel erreicht** (100.000 Punkte): Eintrag in die **Bestenliste** (die schnellsten Runden),
   alle Spieler sehen es, und eine **neue Runde** beginnt mit Kontostand 0 – die Aufrüstungen
@@ -281,16 +296,34 @@ Beim Wechsel zwischen Menü und Spiel blendet die Musik weich über (das alte St
 leiser, das neue in 1,5 s lauter). Ein Stück, das gerade nicht läuft, wird angehalten und setzt
 später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
 
-**Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*):
+**Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*) mit drei Karteireitern:
 
+*Musik*
 - **Musik: An / Aus** – Umschalter (Mausklick, oder Zeile wählen und Enter).
 - **Lautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
   Die Änderung ist sofort zu hören.
-- **Steuerung** – Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
+
+*Grafik* (wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf)
+- **Tilt-Shift** – Kameraeffekt, der die Welt wie ein Miniaturmodell wirken lässt: Die Bildmitte
+  bleibt scharf, nach oben und unten wird das Bild unscharf.
+  Schieberegler in 10-%-Schritten, ganz links „Aus“. Wirkt sofort, im Spiel wie in den
+  Menü-Hintergründen.
+- **Kantenglättung** – glättet die Kanten der 3D-Welt (MSAA). Regler mit den Stufen Aus, 2x, 4x,
+  8x und 16x; Standard 4x. Kann die Grafikkarte eine Stufe nicht, steht daneben, wie viel sie
+  kann, und es wird diese Stufe benutzt.
+- **FXAA** – glättet Kanten zusätzlich per Shader; Regler in 10-%-Schritten, ganz links „Aus“
+  (Standard). Lässt sich zusammen mit der Kantenglättung einschalten.
+
+*Steuerung*
+- Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
   (alle übrigen Tasten, z. B. im Stationsfenster, stehen oben im Abschnitt „Steuerung“).
-- Bedienung mit der Tastatur: ↑ / ↓ Zeile wählen, ← / → Lautstärke, Enter umschalten, ESC zurück.
-- Mit dem Controller: Zeiger mit dem linken Stick, A klickt (Regler: A halten und ziehen),
-  Steuerkreuz wie die Pfeiltasten, B zurück.
+
+Bedienung:
+- Maus: Karteireiter anklicken, Umschalter/Zeile anklicken, Regler ziehen.
+- Tastatur: **Tab** nächste Seite (Umschalt+Tab vorige), ↑ / ↓ Zeile wählen (ganz oben die
+  Karteireiter, dort wechselt ← / → die Seite), ← / → Regler verstellen, Enter umschalten, ESC zurück.
+- Controller: **LB / RB** (PlayStation: L1 / R1) wechselt die Seite, Zeiger mit dem linken Stick,
+  A klickt (Regler: A halten und ziehen), Steuerkreuz wie die Pfeiltasten, B zurück.
 
 Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte und Musik); die
 Einstellungen in den Optionen bleiben dabei erhalten.
@@ -303,13 +336,19 @@ server localhost:7777
 name Anna
 music 1
 music_volume 0.50
+tilt_shift 0.50
+msaa 4
+fxaa 0.00
 ```
 
-`music` ist `1` (an) oder `0` (aus), `music_volume` eine Zahl von `0` bis `1` (Punkt oder Komma).
-Fehlt die Datei oder eine Zeile, gelten die Standardwerte (Musik an, 50 %).
+`music` ist `1` (an) oder `0` (aus), `music_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
+(Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`. Fehlt die Datei
+oder eine Zeile, gelten die Standardwerte (Musik an, Lautstärke 50 %, Tilt-Shift 50 %,
+Kantenglättung 4x, FXAA aus).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
-`src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/ClientConfig.*` (Datei).
+`src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/TiltShift.*`
+(Tilt-Shift, Kantenglättung, FXAA), `src/ClientConfig.*` (Datei).
 
 ---
 
@@ -343,7 +382,8 @@ Mondschuerfer/
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
-│   ├── Options.cpp/.hpp  Bildschirm "Optionen": Musik an/aus, Lautstärke, Steuerungsübersicht
+│   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Musik, Grafik, Steuerung)
+│   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA (Werte aus den Optionen)
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader

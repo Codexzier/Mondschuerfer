@@ -84,6 +84,7 @@
 #include "Multiplayer.hpp"
 #include "Options.hpp"
 #include "Save.hpp"
+#include "TiltShift.hpp"
 #include "Ui.hpp"
 #include "World.hpp"
 #include <algorithm>
@@ -681,6 +682,7 @@ private:
         }
         BeginDrawing();
         ClearBackground(Color{14, 17, 26, 255});
+        tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
         BeginMode3D(cam_);
         world_.Draw(cam_);
         // Mausziel: pulsierender Ring am Boden (nur im Einzelspiel, auch in der
@@ -688,6 +690,7 @@ private:
         if (screen_ == Screen::Playing || screen_ == Screen::Paused || (screen_ == Screen::Options && !MenuBackground()))
             controls_.DrawTarget3D(elapsed_);
         EndMode3D();
+        tiltshift::End();
 
         if (opt_.noHud) { EndDrawing(); return; }
         switch (screen_) {
@@ -789,6 +792,8 @@ private:
             DockRequest req = DrawDockPanel(world_, dockFrames_ > 1);
             if (req.repair) world_.Repair();
             if (req.buy >= 0) world_.BuyUpgrade(req.buy);
+            if (req.buyShip >= 0) world_.BuyShip(req.buyShip, req.tradeIn);
+            if (req.switchShip >= 0) world_.SwitchShip(req.switchShip);
             if (req.undock) {
                 world_.Undock();
                 if (world_.outcome == Outcome::None) SaveGame(world_);
@@ -1201,6 +1206,7 @@ int main(int argc, char** argv) {
     // OpenGL-Kontext noch gibt).
     app.OnExit();
     g_audio.Shutdown();
+    tiltshift::Shutdown();
     g_assets.Shutdown();
     CloseWindow();
     return 0;

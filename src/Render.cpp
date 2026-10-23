@@ -170,7 +170,7 @@ void World::Draw(const Camera3D& cam) const {
     // Das Modell "terrain" ist eine flache Platte von 1 m x 1 m. Zwei Platten:
     //   1. 1400 m groß als Umgebung bis zum Horizont, etwas dunkler und 5 cm
     //      tiefer (sonst Z-Fighting mit der zweiten Platte).
-    //   2. das Spielfeld: 2 * WORLD_HALF + 30 = 330 m (Feld ±150 m plus 15 m
+    //   2. das Spielfeld: 2 * WORLD_HALF + 30 = 630 m (Feld ±300 m plus 15 m
     //      Rand), heller, damit man sieht, wo das Spielfeld endet.
     // Der tint wird mit der (umgefärbten) Gesteinsfarbe multipliziert.
     // Beim orangefarbenen Mond (Originalfarbe) den Boden kaum abdunkeln
@@ -209,6 +209,8 @@ void World::Draw(const Camera3D& cam) const {
         // von ihnen werden nur Teile der Stufe 0 gezeichnet.
         const bool trade = st.type == StationType::Trade;
         int stage = trade ? StationStage() : 0;
+        // Raumschiffsverkäufer: alle Teile lime-grün eingefärbt
+        const Color tint = st.type == StationType::Dealer ? Color{170, 255, 90, 255} : WHITE;
         for (const auto& p : st.parts) {
             if (p.stage > stage) continue;
             float scale = p.scale;
@@ -229,7 +231,7 @@ void World::Draw(const Camera3D& cam) const {
                 off.y *= std::max(0.0f, k);
             }
             Vector3 wp = Vector3Add(st.pos, off);
-            g_assets.Draw(p.model, wp, p.yaw, scale);
+            g_assets.Draw(p.model, wp, p.yaw, scale, tint);
         }
         // Modell-IDs der Geschütztürme nur einmal nachschlagen (static). Das
         // ist sicher, weil sich eine Modell-ID während des Programmlaufs nie
@@ -353,7 +355,7 @@ void World::Draw(const Camera3D& cam) const {
     // Andockbereich der Stationen
     // Gestrichelter Kreis mit dem Radius DOCK_RANGE (in diesem Abstand kann
     // man andocken). Er erscheint ab 55 m Entfernung und ist ab 30 m voll
-    // sichtbar ((55 - d) / 25). Handelsstation orange, Werft blau. Er dreht
+    // sichtbar ((55 - d) / 25). Handelsstation orange, Werft blau, Verkäufer grün. Er dreht
     // sich langsam (ein Strichabstand in ca. 6,7 s). Angedockt (hidden):
     // keine Ringe.
     for (const Station& st : stations) {
@@ -361,8 +363,9 @@ void World::Draw(const Camera3D& cam) const {
         float d = Dist2D(player.pos, st.pos);
         if (d < 55.0f) {
             float a = std::clamp((55.0f - d) / 25.0f, 0.0f, 1.0f);
-            Color c = st.type == StationType::Trade ? Color{255, 190, 80, static_cast<unsigned char>(120 * a)}
-                                                    : Color{120, 210, 255, static_cast<unsigned char>(120 * a)};
+            Color c = st.type == StationType::Trade      ? Color{255, 190, 80, static_cast<unsigned char>(120 * a)}
+                      : st.type == StationType::Shipyard ? Color{120, 210, 255, static_cast<unsigned char>(120 * a)}
+                                                         : Color{150, 255, 90, static_cast<unsigned char>(120 * a)};
             DrawDashedRing(st.pos, cfg::DOCK_RANGE, 0.35f, c, 28, time * 0.15f);
         }
     }
@@ -376,17 +379,18 @@ void World::Draw(const Camera3D& cam) const {
 
     // Scanner
     // Ein Ring läuft in SCANNER_PULSE_TIME (1,25 s) vom Schiff bis
-    // SCANNER_RADIUS (34 m) nach außen und wird dabei blasser (Alpha 200 -> 60).
+    // Scannerradius des Schiffstyps (World::ScannerRadius) nach außen und wird dabei blasser (Alpha 200 -> 60).
     // World::Update deckt Lagerstätten mit derselben Formel auf, wenn der Ring
     // sie erreicht – Bild und Spiellogik passen also zusammen. Im Mehrspieler
     // zählt NetClient scanPulse lokal weiter. Der zweite, feste Ring zeigt
     // die Reichweite des Scanners.
     if (me.scanOn && !player.crashing && !player.hidden) {
         float f = fmodf(me.scanPulse, cfg::SCANNER_PULSE_TIME) / cfg::SCANNER_PULSE_TIME;
-        float r = cfg::SCANNER_RADIUS * f;
+        const float radius = ScannerRadius(me);
+        float r = radius * f;
         unsigned char a = static_cast<unsigned char>(200 * (1.0f - f * 0.7f));
         DrawGroundRing(player.pos, std::max(0.0f, r - 0.9f), r, Color{60, 255, 180, a}, 96);
-        DrawGroundRing(player.pos, cfg::SCANNER_RADIUS - 0.25f, cfg::SCANNER_RADIUS, Color{60, 220, 160, 90}, 96);
+        DrawGroundRing(player.pos, radius - 0.25f, radius, Color{60, 220, 160, 90}, 96);
     }
 
     // Leuchtmarkierungen für entdeckte Lagerstätten und Wracks

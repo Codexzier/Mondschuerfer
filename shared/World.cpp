@@ -372,6 +372,8 @@ void World::SpawnPlayerShip(PlayerState& ps) {
 void World::ResetProgress(PlayerState& ps) {
     ps.balance = 0;
     for (int& u : ps.upgrades) u = 0;
+    ps.shipType = cfg::SHIP_START;   // auch gekaufte Schiffe sind weg
+    ps.hangar.clear();
     ps.scanEnergy = cfg::SCANNER_MAX_ENERGY;
     ps.scanOn = false;
     ps.scanPulse = 0.0f;
@@ -762,11 +764,11 @@ void World::UpdatePlayer(PlayerState& ps, float dt) {
         if (floorf(ps.scanPulse / cfg::SCANNER_PULSE_TIME) > floorf(lastPulse / cfg::SCANNER_PULSE_TIME))
             SoundAt(Sfx::ScanPing, p.pos, 1.0f, 0.0f, ps.id);
         // Aktueller Radius des Rings: wächst in jeder Periode (1,25 s)
-        // gleichmäßig von 0 auf SCANNER_RADIUS. fmodf = Rest der Division,
+        // gleichmäßig von 0 auf den Scannerradius des Schiffstyps. fmodf = Rest der Division,
         // also die Zeit seit Beginn des aktuellen Rings. Alles, was der Ring
         // erreicht, ist entdeckt. Render.cpp zeichnet den Ring mit derselben
         // Formel, damit Bild und Regel zusammenpassen.
-        float ring = cfg::SCANNER_RADIUS * fmodf(ps.scanPulse, cfg::SCANNER_PULSE_TIME) / cfg::SCANNER_PULSE_TIME;
+        float ring = ScannerRadius(ps) * fmodf(ps.scanPulse, cfg::SCANNER_PULSE_TIME) / cfg::SCANNER_PULSE_TIME;
         int found = 0;
         for (auto& d : deposits) {
             if (!RevealedFor(d, ps) && Dist2D(d.pos, p.pos) <= ring) {
@@ -817,7 +819,7 @@ void World::UpdatePlayer(PlayerState& ps, float dt) {
         } else {
             int kind = 0, id = -1;
             InteractTarget(ps, &kind, &id);
-            if (kind == 3 || kind == 4) {
+            if (kind >= 3) {
                 Dock(ps, id);
                 return;   // angedockt: Rest dieses Schritts entfällt
             } else if (kind == 1 || kind == 2) {
@@ -1010,7 +1012,7 @@ int World::InteractTarget(const PlayerState& ps, int* kind, int* id) const {
     const Ship& p = *sp;
     for (int i = 0; i < static_cast<int>(stations.size()); ++i) {
         if (NearStation(p, i, cfg::DOCK_RANGE)) {
-            *kind = stations[i].type == StationType::Trade ? 3 : 4;
+            *kind = stations[i].type == StationType::Trade ? 3 : (stations[i].type == StationType::Shipyard ? 4 : 5);
             *id = i;
             return *kind;
         }
@@ -1207,8 +1209,8 @@ bool World::BuyUpgrade(PlayerState& ps, int type) {
     return true;
 }
 
-// Überträgt die Aufrüstungsstufen auf die Werte des Schiffs (Tabellen in
-// Config.hpp). refill = true: neues Schiff, Schild voll. Sonst bleibt ein
+// Überträgt Schiffstyp und Aufrüstungsstufen auf die Werte und das Modell
+// des Schiffs (Tabellen und ShipSpeed/ShipArmor ... in Config.hpp). refill = true: neues Schiff, Schild voll. Sonst bleibt ein
 // Schaden erhalten; wird die Panzerung verbessert, wächst der aktuelle
 // Schild um denselben Betrag wie das Maximum (der Kauf "repariert" also
 // nicht, aber er schadet auch nicht).
@@ -1218,13 +1220,91 @@ void World::ApplyUpgrades(PlayerState& ps, bool refill) {
     if (!sp) return;
     Ship& p = *sp;
     float oldMax = p.maxHp;
-    p.maxSpeed = cfg::SPEED_VALUES[ps.upgrades[cfg::UP_SPEED]];
-    p.maxHp = cfg::ARMOR_VALUES[ps.upgrades[cfg::UP_ARMOR]];
-    p.damage = cfg::WEAPON_DAMAGE[ps.upgrades[cfg::UP_WEAPON]];
+    // Typ begrenzen: er dient als Index (kommt auch aus Spielstand und Konto)
+    ps.shipType = std::clamp(ps.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
+    const int t = ps.shipType;
+    p.model = mdl.shipTypes[t];
+    p.maxSpeed = cfg::ShipSpeed(t, ps.upgrades[cfg::UP_SPEED]);
+    p.maxHp = cfg::ShipArmor(t, ps.upgrades[cfg::UP_ARMOR]);
+    p.damage = cfg::ShipDamage(t, ps.upgrades[cfg::UP_WEAPON]);
     p.fireInterval = cfg::WEAPON_RATE[ps.upgrades[cfg::UP_WEAPON]];
-    p.cargoMax = cfg::CARGO_VALUES[ps.upgrades[cfg::UP_CARGO]];
+    p.cargoMax = cfg::ShipCargo(t, ps.upgrades[cfg::UP_CARGO]);
     if (refill) p.hp = p.maxHp;
     else if (p.maxHp > oldMax) p.hp += p.maxHp - oldMax;
+}
+
+float World::ScannerRadius(const PlayerState& ps) const {
+    return cfg::ShipScanner(std::clamp(ps.shipType, 0, cfg::SHIP_TYPE_COUNT - 1));
+}
+
+// ===========================================================================
+// Raumschiffsverkäufer
+// ===========================================================================
+bool World::OwnsShipType(const PlayerState& ps, int type) const {
+    if (ps.shipType == type) return true;
+    for (const auto& o : ps.hangar)
+        if (o.type == type) return true;
+    return false;
+}
+
+// Gutschrift für das geflogene Schiff: TRADE_IN_PERCENT von Kaufpreis und
+// allen bezahlten Aufrüstungen (UPGRADE_COST der erreichten Stufen).
+int World::TradeInValue(const PlayerState& ps) const {
+    long long value = cfg::SHIP_TYPES[std::clamp(ps.shipType, 0, cfg::SHIP_TYPE_COUNT - 1)].cost;
+    for (int u = 0; u < cfg::UP_COUNT; ++u)
+        for (int l = 0; l < ps.upgrades[u] && l < cfg::UPGRADE_LEVELS; ++l) value += cfg::UPGRADE_COST[u][l];
+    return static_cast<int>(value * cfg::TRADE_IN_PERCENT / 100);
+}
+
+int World::ShipPrice(const PlayerState& ps, int type, bool tradeIn) const {
+    if (type < 0 || type >= cfg::SHIP_TYPE_COUNT || OwnsShipType(ps, type)) return -1;
+    return cfg::SHIP_TYPES[type].cost - (tradeIn ? TradeInValue(ps) : 0);
+}
+
+// Neues Schiff kaufen. tradeIn = altes Schiff in Zahlung geben (es ist dann
+// weg), sonst wird es geparkt (hangar) und kann an der Handelsstation wieder
+// gewählt werden. Das neue Schiff beginnt ohne Aufrüstungen und mit vollem
+// Schild. Die Ladung wird umgeladen, soweit sie ins neue Lager passt.
+bool World::BuyShip(PlayerState& ps, int type, bool tradeIn) {
+    Ship* sp = PlayerShip(ps);
+    if (!sp) return false;
+    const int cost = ShipPrice(ps, type, tradeIn);
+    if (type < 0 || type >= cfg::SHIP_TYPE_COUNT || OwnsShipType(ps, type) || ps.balance < cost) return false;
+    ps.balance -= cost;
+    if (!tradeIn) {
+        OwnedShip old;
+        old.type = ps.shipType;
+        for (int u = 0; u < cfg::UP_COUNT; ++u) old.upgrades[u] = ps.upgrades[u];
+        old.hp = sp->hp;
+        ps.hangar.push_back(old);
+    }
+    ps.shipType = type;
+    for (int& u : ps.upgrades) u = 0;
+    ApplyUpgrades(ps, true);
+    sp->cargo = std::min(sp->cargo, sp->cargoMax);
+    SoundAt(Sfx::Upgrade, sp->pos, 1.0f, 0.0f, ps.id);
+    if (!simulation) Notify(ps, Fmt("Neues Schiff: %s", cfg::SHIP_TYPES[type].name), Color{150, 255, 90, 255});
+    return true;
+}
+
+// Zum geparkten Schiff dieses Typs wechseln; das bisherige wird geparkt.
+bool World::SwitchShip(PlayerState& ps, int type) {
+    Ship* sp = PlayerShip(ps);
+    if (!sp || type == ps.shipType) return false;
+    auto it = std::find_if(ps.hangar.begin(), ps.hangar.end(), [&](const OwnedShip& o) { return o.type == type; });
+    if (it == ps.hangar.end()) return false;
+    OwnedShip next = *it;
+    it->type = ps.shipType;
+    for (int u = 0; u < cfg::UP_COUNT; ++u) it->upgrades[u] = ps.upgrades[u];
+    it->hp = sp->hp;
+    ps.shipType = next.type;
+    for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = std::clamp(next.upgrades[u], 0, cfg::UPGRADE_LEVELS);
+    ApplyUpgrades(ps, true);
+    if (next.hp > 0.0f) sp->hp = std::min(next.hp, sp->maxHp);
+    sp->cargo = std::min(sp->cargo, sp->cargoMax);
+    SoundAt(Sfx::Upgrade, sp->pos, 1.0f, 0.0f, ps.id);
+    if (!simulation) Notify(ps, Fmt("Schiff gewechselt: %s", cfg::SHIP_TYPES[next.type].name), Color{150, 255, 90, 255});
+    return true;
 }
 
 void World::GoalReached(PlayerState& ps) {
