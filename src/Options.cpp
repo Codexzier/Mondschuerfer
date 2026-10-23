@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Ton" (Musik
-// an/aus, Musik- und Clip-Lautstärke), "Grafik" (Tilt-Shift, Kantenglättung, FXAA) und "Steuerung"
+// an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA) und "Steuerung"
 // (Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
@@ -24,7 +24,7 @@
 //      zurück.
 //   3. Karteireiter zeichnen; Klick wechselt die Seite.
 //   4. Inhalt der gewählten Seite:
-//      "Ton":       Umschalter und zwei Schieberegler (Maus wird dabei ausgewertet)
+//      "Ton":       zwei Umschalter und zwei Schieberegler (Maus wird dabei ausgewertet)
 //      "Grafik":    Schieberegler für Tilt-Shift, Kantenglättung (MSAA) und
 //                   FXAA (alle umgesetzt in TiltShift.cpp)
 //      "Steuerung": feste Tabelle (kControls unten)
@@ -113,10 +113,10 @@ constexpr float kTableText = 18.0f;  // Schriftgröße der Tabelle
 constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Höhe des Inhalts der einzelnen Seiten (in derselben Reihenfolge wie in Draw):
-//   Ton:       drei Zeilen, Hinweiszeile 42
+//   Ton:       vier Zeilen, Hinweiszeile 42
 //   Grafik:    drei Zeilen, Hinweiszeile 42
 //   Steuerung: Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
-float SoundHeight() { return 3.0f * (kRowH + kRowGap) + 42.0f; }
+float SoundHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
 float GraphicsHeight() { return 3.0f * (kRowH + kRowGap) + 42.0f; }
 float ControlsHeight() { return 30.0f + 30.0f + kControlCount * kTableRowH; }
 
@@ -245,11 +245,17 @@ void OptionsScreen::SetFxaa(float v, bool save) {
     else g_clientConfig.unsaved = true;
 }
 
+// Wie SetMusicOn; Hud.cpp liest den Wert jedes Frame aus g_clientConfig.
+void OptionsScreen::SetSubtitlesOn(bool on) {
+    g_clientConfig.subtitles = on;
+    g_clientConfig.Save();
+}
+
 // ===========================================================================
 // Zeichnen und Bedienen (Ablauf siehe Dateikopf)
 // ===========================================================================
 // Wählbare Zeilen der Seite tab von oben nach unten (Pfeil hoch/runter).
-// Liefert die Anzahl; rows muss Platz für 5 Einträge haben.
+// Liefert die Anzahl; rows muss Platz für 6 Einträge haben.
 int OptionsScreen::RowsOf(int tab, int* rows) {
     int n = 0;
     rows[n++] = ROW_TABS;
@@ -257,6 +263,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_MUSIC;
         rows[n++] = ROW_VOLUME;
         rows[n++] = ROW_CLIPS;
+        rows[n++] = ROW_SUBTITLES;
     } else if (tab == TAB_GRAPHICS) {
         rows[n++] = ROW_TILT;
         rows[n++] = ROW_MSAA;
@@ -273,7 +280,7 @@ void OptionsScreen::SetTab(int tab, bool keepTabsRow) {
     tab_ = (tab + TAB_COUNT) % TAB_COUNT;
     dragging_ = draggingClip_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = false;
     g_clientConfig.SaveIfChanged();
-    int rows[5];
+    int rows[6];
     RowsOf(tab_, rows);
     sel_ = keepTabsRow ? ROW_TABS : rows[1];
 }
@@ -311,7 +318,7 @@ bool OptionsScreen::Draw() {
     // Seite wechseln: Tab (mit Umschalt rückwärts) bzw. LB/RB auf jeder Zeile,
     // auf den Karteireitern auch Pfeil links/rechts.
     const bool keys = frames_ > 1;
-    bool toggle = false, close = false;
+    bool toggle = false, toggleSubs = false, close = false;
     float volStep = 0.0f, clipStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
     int msaaStep = 0;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
@@ -321,7 +328,7 @@ bool OptionsScreen::Draw() {
         if (PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) SetTab(tab_ + 1, sel_ == ROW_TABS);
         if (PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)) SetTab(tab_ - 1, sel_ == ROW_TABS);
         // Pfeil hoch/runter: nur durch die Zeilen der aktuellen Seite
-        int rows[5];
+        int rows[6];
         const int n = RowsOf(tab_, rows);
         int at = 0;
         while (at < n - 1 && rows[at] != sel_) ++at;
@@ -345,6 +352,7 @@ bool OptionsScreen::Draw() {
         if (sel_ == ROW_FXAA) fxaaStep = 0.1f * dir;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
+            else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
             else if (sel_ == ROW_BACK) close = true;
         }
         if (BackPressed()) close = true;
@@ -443,13 +451,30 @@ bool OptionsScreen::Draw() {
              y + labelY, label, TEXT);
         y += (kRowH + kRowGap) * s;
 
+        // Zeile "Untertitel": wie die Zeile "Musik", schaltet den Text der
+        // Funksprüche unten rechts (Hud.cpp) an und aus.
+        const Rectangle rowSubs{x, y, iw, kRowH * s};
+        const bool overSubs = CheckCollisionPointRec(mouse, rowSubs);
+        if (overSubs && MouseMoved()) sel_ = ROW_SUBTITLES;
+        DrawRow(rowSubs, sel_ == ROW_SUBTITLES);
+        Text("Untertitel einblenden", x + 22 * s, y + labelY, label, TEXT);
+        const Rectangle subsSw{x + kCtrlX * s, y + 9 * s, 120 * s, kRowH * s - 18 * s};
+        const bool subsClicked = Toggle(subsSw, g_clientConfig.subtitles, 20 * s, sel_ == ROW_SUBTITLES);
+        if (subsClicked || (overSubs && PointerPressed())) {
+            toggleSubs = true;
+            sel_ = ROW_SUBTITLES;
+        }
+        Text("Text zu den Funkspruch-Clips unten rechts", subsSw.x + subsSw.width + 30 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s,
+             MUTED);
+        y += (kRowH + kRowGap) * s;
+
         // Hinweis zur Taste M; ist der Ton gerade stumm, auffälliger in Orange –
         // sonst wundert man sich, warum der Regler nichts bewirkt.
         if (g_audio.Muted())
             Text("Der Ton ist gerade stumm geschaltet. Taste M schaltet ihn wieder ein.", x, y + 4 * s, 17 * s, ACCENT);
         else
             Text("Taste M schaltet jederzeit den ganzen Ton stumm (Effekte, Musik und Clips).", x, y + 4 * s, 17 * s, MUTED);
-        overRow = overMusic || overVol || overClip;
+        overRow = overMusic || overVol || overClip || overSubs;
     } else if (tab_ == TAB_GRAPHICS) {
         // Zeile "Tilt-Shift": Schieberegler plus Prozentanzeige (0 = "Aus").
         const Rectangle rowTilt{x, y, iw, kRowH * s};
@@ -566,6 +591,7 @@ bool OptionsScreen::Draw() {
     // Controller-A ohne Zeiger auf einem Bedienelement: wie Enter
     if (padA && !(PadPointerActive() && (overRow || overTabs || backHover))) {
         if (sel_ == ROW_MUSIC) toggle = true;
+        else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
         else if (sel_ == ROW_BACK) close = true;
     }
     if (volStep != 0.0f) {
@@ -592,7 +618,11 @@ bool OptionsScreen::Draw() {
         SetMusicOn(!g_audio.MusicEnabled());
         g_audio.Play(Sfx::UiConfirm);
     }
-    if ((sel_ != before || tab_ != tabBefore) && !toggle) g_audio.Play(Sfx::UiMove);
+    if (toggleSubs) {
+        SetSubtitlesOn(!g_clientConfig.subtitles);
+        g_audio.Play(Sfx::UiConfirm);
+    }
+    if ((sel_ != before || tab_ != tabBefore) && !toggle && !toggleSubs) g_audio.Play(Sfx::UiMove);
     if (close) {
         Close();
         return true;

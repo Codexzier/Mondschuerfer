@@ -313,6 +313,8 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
   Die Änderung ist sofort zu hören.
 - **Clip-Lautstärke** – Lautstärke der Funkspruch-Clips der Missionen, ebenfalls in 5-%-Schritten
   (Standard 100 %; der Ton jedes Clips wird beim Laden auf volle Lautstärke gebracht).
+- **Untertitel einblenden: An / Aus** – Text neben den Funkspruch-Clips unten rechts (Missionen,
+  Begrüßung bei *Neues Spiel* und *Fortsetzen*); Standard an. Aus = nur Clip und Überschrift.
 
 *Grafik* (wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf)
 - **Tilt-Shift** – Kameraeffekt, der die Welt wie ein Miniaturmodell wirken lässt: Die Bildmitte
@@ -348,14 +350,15 @@ name Anna
 music 1
 music_volume 0.50
 clip_volume 1.00
+subtitles 1
 tilt_shift 0.50
 msaa 4
 fxaa 0.00
 ```
 
-`music` ist `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
+`music` und `subtitles` sind `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
 (Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`. Fehlt die Datei
-oder eine Zeile, gelten die Standardwerte (Musik an, Musiklautstärke 50 %, Clip-Lautstärke 100 %, Tilt-Shift 50 %,
+oder eine Zeile, gelten die Standardwerte (Musik an, Musiklautstärke 50 %, Clip-Lautstärke 100 %, Untertitel an, Tilt-Shift 50 %,
 Kantenglättung 4x, FXAA aus).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),

@@ -36,7 +36,7 @@ void ClipPlayer::Update(float dt, int cue, bool show) {
         Stop();
         cue_ = cue;
     }
-    if (cue_ < 0 || cue_ >= cfg::MISSION_TYPE_COUNT * 3) return;
+    if (cue_ < 0 || cue_ >= cfg::CUE_COUNT) return;
     if (!show) {
         if (hasSound_ && !paused_) PauseSound(sound_);
         paused_ = true;
@@ -44,7 +44,7 @@ void ClipPlayer::Update(float dt, int cue, bool show) {
     }
     if (!tried_) {
         tried_ = true;
-        const char* file = cfg::MISSIONS[cue_ / 3].clip[cue_ % 3];
+        const char* file = cfg::CueInfo(cue_).clip;
         if (file[0] != '\0') Open(file);
         if (hasSound_) PlaySound(sound_);
     } else if (paused_ && hasSound_) {

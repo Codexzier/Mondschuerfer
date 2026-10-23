@@ -22,6 +22,8 @@
 //   - Controls.hpp: Tastennamen passend zum zuletzt benutzten Gerät
 //     ("[F] Andocken" bzw. "[Y] Andocken" / "[Dreieck] Andocken") und die
 //     Zeilen der Tastenhilfe.
+//   - ClientConfig.hpp: g_clientConfig.subtitles (Optionen: Untertitel der
+//     Funksprüche an/aus).
 //   - Audio.hpp: g_audio für den Ton "Abgelehnt" (Sfx::Denied), wenn etwas
 //     zu teuer ist. Der Ton entsteht direkt hier im Client, auch im
 //     Mehrspieler – es ist reine Bedien-Rückmeldung, der Server weiß davon nichts.
@@ -43,12 +45,13 @@
 //   4. Minikarte oben rechts
 //   5. Mission oben in der Mitte, Meldungen darunter
 //   6. Kontext-Hinweis unten ("[F] Andocken ...", Abbau-Fortschritt)
-//   7. Funkspruch der Mission unten rechts
+//   7. Funkspruch (Mission, Start, Fortsetzen) unten rechts
 //   8. Tastenhilfe unten links
 // ---------------------------------------------------------------------------
 #include "Hud.hpp"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "ClientConfig.hpp"
 #include "ClipPlayer.hpp"
 #include "Controls.hpp"
 #include "Ui.hpp"
@@ -563,20 +566,24 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
         }
     }
 
-    // --- Funkspruch der Mission unten rechts --------------------------------------------
-    // Avatar-Clip (links, abgespielt von ClipPlayer) mit Untertitel (Start,
-    // Ende, Fehlschlag; Dateien und Texte in cfg::MISSIONS). Fehlt der Clip,
-    // steht nur der Untertitel da. Die Restzeit läuft nur außerhalb der
-    // Station (World::UpdateMissions), angedockt wird er nicht gezeigt. Die
+    // --- Funkspruch unten rechts ---------------------------------------------------------
+    // Avatar-Clip (links, abgespielt von ClipPlayer) mit Untertitel (Mission:
+    // Start, Ende, Fehlschlag; außerdem neues Spiel und Fortsetzen; Dateien
+    // und Texte über cfg::CueInfo). Fehlt der Clip, steht nur der Untertitel
+    // da. Sind die Untertitel in den Optionen aus, bleibt nur der Clip mit
+    // Überschrift (ohne Clip dann gar nichts). Die Restzeit läuft nur außerhalb
+    // der Station (World::UpdateMissions), angedockt wird er nicht gezeigt. Die
     // letzten 0,6 s blendet er aus.
-    if (me.cue >= 0 && me.cue < cfg::MISSION_TYPE_COUNT * 3 && me.cueT > 0.0f && me.dockedAt < 0) {
-        const cfg::MissionDef& def = cfg::MISSIONS[me.cue / 3];
+    const Texture2D* clip = g_clip.Frame(me.cue);
+    const bool subs = g_clientConfig.subtitles;
+    if (me.cue >= 0 && me.cue < cfg::CUE_COUNT && me.cueT > 0.0f && me.dockedAt < 0 && (clip || subs)) {
+        const cfg::CueDef def = cfg::CueInfo(me.cue);
+        const std::string title = std::string("FUNKSPRUCH  ") + def.name;
         const float a = std::clamp(me.cueT / 0.6f, 0.0f, 1.0f);
-        const Texture2D* clip = g_clip.Frame(me.cue);
         const float vs = clip ? 160 * s : 0.0f;              // Kantenlänge des Clipbilds
         const float tx = clip ? vs + 32 * s : 16 * s;       // Textspalte, vom linken Rand
-        const float bw2 = 430 * s + tx - 16 * s;
-        const std::vector<std::string> lines = WrapLines(def.subtitle[me.cue % 3], 430 * s - 32 * s, 20 * s);
+        const float bw2 = subs ? 430 * s + tx - 16 * s : tx + Width(title, 16 * s) + 16 * s;
+        const std::vector<std::string> lines = subs ? WrapLines(def.subtitle, 430 * s - 32 * s, 20 * s) : std::vector<std::string>{};
         const float bh = std::max(52 * s + static_cast<float>(lines.size()) * 26 * s, clip ? vs + 32 * s : 0.0f);
         const Rectangle cr{W - bw2 - 16 * s, H - bh - 16 * s, bw2, bh};
         DrawRectangleRec(cr, Color{15, 18, 26, static_cast<unsigned char>(210 * a)});
@@ -587,7 +594,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
                            Vector2{0, 0}, 0.0f, Fade(WHITE, a));
             DrawRectangleLinesEx(vr, 1.0f, Fade(Color{255, 230, 120, 255}, 0.4f * a));
         }
-        Text(std::string("FUNKSPRUCH  ") + def.name, cr.x + tx, cr.y + 12 * s, 16 * s, Fade(Color{255, 230, 120, 255}, a));
+        Text(title, cr.x + tx, cr.y + 12 * s, 16 * s, Fade(Color{255, 230, 120, 255}, a));
         for (size_t i = 0; i < lines.size(); ++i)
             Text(lines[i], cr.x + tx, cr.y + 40 * s + static_cast<float>(i) * 26 * s, 20 * s, Fade(TEXT, a));
     }

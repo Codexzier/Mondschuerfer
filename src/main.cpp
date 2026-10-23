@@ -308,10 +308,12 @@ private:
     // Menü-Hintergrundwelt), legt Stationen, Mond, Lagerstätten, Piraten und
     // Händler an und stellt das eigene Schiff neben die Handelsstation in der
     // Mitte. Danach werden – nur bei Testläufen – Werte aus der Kommandozeile
-    // eingesetzt.
+    // eingesetzt. Zur Begrüßung läuft der Funkspruch clip_newstart.
     void NewGame() {
         unsigned int seed = opt_.seed ? opt_.seed : static_cast<unsigned int>(std::time(nullptr));
         world_.NewGame(seed, false);
+        world_.Me().cue = cfg::CUE_NEWSTART;
+        world_.Me().cueT = cfg::CUE_TIME;
         screen_ = Screen::Playing;
         camTarget_ = world_.Player().pos;
         endHandled_ = false;
@@ -352,10 +354,13 @@ private:
         dockFrames_ = 0;
     }
 
-    // "Fortsetzen": Spielstand aus der Datei neben der .exe laden (Save.cpp).
-    // Ist die Datei kaputt, wird der Knopf gesperrt und ein Fehlerton kommt.
+    // "Fortsetzen": Spielstand aus der Datei neben der .exe laden (Save.cpp)
+    // und Funkspruch clip_return. Ist die Datei kaputt, wird der Knopf
+    // gesperrt und ein Fehlerton kommt.
     void Continue() {
         if (LoadGame(world_)) {
+            world_.Me().cue = cfg::CUE_RETURN;
+            world_.Me().cueT = cfg::CUE_TIME;
             controls_.Reset();
             screen_ = Screen::Playing;
             camTarget_ = world_.Player().pos;

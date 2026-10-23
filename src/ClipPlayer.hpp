@@ -4,8 +4,9 @@
 // ClipPlayer.cpp).
 //
 // Wofür ist die Datei da?
-//   Missionen melden sich mit einem Funkspruch: ein kurzer Avatar-Clip aus
-//   assets/clips/ (Dateinamen in cfg::MISSIONS) mit Untertitel. Welcher
+//   Missionen (und der Beginn bzw. das Fortsetzen eines Spiels) melden sich
+//   mit einem Funkspruch: ein kurzer Avatar-Clip aus assets/clips/
+//   (Dateinamen in cfg::MISSIONS und cfg::GENERAL_CUES) mit Untertitel. Welcher
 //   Funkspruch gerade läuft, steht in PlayerState::cue/cueT (Spiellogik bzw.
 //   vom Server). Diese Klasse spielt den passenden Clip ab: Bild als Textur,
 //   Ton als raylib-Sound. Es gibt genau ein Objekt davon: g_clip.
@@ -20,7 +21,7 @@
 //
 // Abhängigkeiten:
 //   - raylib (Textur, Sound), third_party/pl_mpeg (MPEG-1-Video, MP2-Ton).
-//   - shared/Config.hpp: cfg::MISSIONS (Clip je Missionsart und Phase).
+//   - shared/Config.hpp: cfg::CueInfo (Clip je Missionsart und Phase, Start, Fortsetzen).
 //   Die Clips müssen MPEG-1-Video mit MPEG-1-Layer-II-Ton (MP2, 32, 44,1
 //   oder 48 kHz) sein; anderes kann pl_mpeg nicht lesen. Umwandeln, das Bild
 //   bleibt dabei unverändert:
@@ -45,8 +46,7 @@ public:
     // volle Aussteuerung gebracht (Open), 1 = so laut wie möglich.
     void SetVolume(float v);
 
-    // Einmal pro Frame. cue = Funkspruch (Missionstyp * 3 + Phase, wie
-    // PlayerState::cue), -1 = keiner. Ein neuer Wert beendet den alten Clip.
+    // Einmal pro Frame. cue = Funkspruch (wie PlayerState::cue), -1 = keiner. Ein neuer Wert beendet den alten Clip.
     // show = der Kasten ist zu sehen (nicht angedockt, keine Pause): Erst dann
     // startet der Clip; ist show false, hält er an (Bild und Ton) und läuft
     // später an derselben Stelle weiter. Nach dem Ende bleibt das letzte Bild

@@ -134,6 +134,10 @@ bool ClientConfig::Load() {
         } else if (key == "clip_volume") {
             float v = 0.0f;
             if (ParseNumber(Clean(value, 16), v)) clipVolume = v > 1.0f ? 1.0f : v;
+        } else if (key == "subtitles") {
+            const std::string v = Clean(value, 8);
+            if (v == "1") subtitles = true;
+            else if (v == "0") subtitles = false;
         } else if (key == "tilt_shift") {
             float v = 0.0f;
             if (ParseNumber(Clean(value, 16), v)) tiltShift = v > 1.0f ? 1.0f : v;
@@ -161,6 +165,7 @@ bool ClientConfig::Save() {
     f << "music " << (musicEnabled ? 1 : 0) << '\n';
     f << "music_volume " << FormatVolume(musicVolume) << '\n';
     f << "clip_volume " << FormatVolume(clipVolume) << '\n';
+    f << "subtitles " << (subtitles ? 1 : 0) << '\n';
     f << "tilt_shift " << FormatVolume(tiltShift) << '\n';
     f << "msaa " << msaa << '\n';
     f << "fxaa " << FormatVolume(fxaa) << '\n';
