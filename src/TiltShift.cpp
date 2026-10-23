@@ -100,7 +100,11 @@ void main() {
         }
         sum /= 25.0;
     }
-    finalColor = vec4(sum, 1.0);
+    // Mit der Vertexfarbe multiplizieren (beim Bild der Welt WHITE, also ohne
+    // Wirkung): Zeichnet ein Treiber eine nachfolgende 2D-Fläche noch mit
+    // diesem Shader, behält sie so wenigstens ihre Farbe und Durchsichtigkeit
+    // statt weiß zu erscheinen.
+    finalColor = vec4(sum, 1.0) * fragColor;
 }
 )";
 
@@ -257,20 +261,26 @@ void End() {
         rlBindFramebuffer(RL_READ_FRAMEBUFFER, msaaFbo_);
         rlBindFramebuffer(RL_DRAW_FRAMEBUFFER, resolve_.id);
         rlBlitFramebuffer(0, 0, iw, ih, 0, 0, iw, ih, GL_COLOR_BUFFER_BIT_);
-        rlBindFramebuffer(RL_READ_FRAMEBUFFER, 0);
-        rlBindFramebuffer(RL_DRAW_FRAMEBUFFER, 0);
+        rlDisableFramebuffer();   // wieder der Bildschirm (Lesen und Schreiben)
     }
     const float w = static_cast<float>(iw), h = static_cast<float>(ih);
     const float texel[2] = {1.0f / w, 1.0f / h};
     const float radius = g_clientConfig.tiltShift * kMaxBlur * h;
     const float fxaa = g_clientConfig.fxaa;
+    // Werte erst nach BeginShaderMode setzen: SetShaderValue schaltet in
+    // OpenGL auf den Shader um, ohne dass raylib davon weiß. So stimmen
+    // OpenGL und raylib beim Zeichnen sicher überein.
+    BeginShaderMode(shader_);
     SetShaderValue(shader_, locTexel_, texel, SHADER_UNIFORM_VEC2);
     SetShaderValue(shader_, locRadius_, &radius, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader_, locFxaa_, &fxaa, SHADER_UNIFORM_FLOAT);
-    BeginShaderMode(shader_);
     // Negative Höhe: Bilder aus BeginTextureMode stehen in OpenGL auf dem Kopf.
     DrawTextureRec(resolve_.texture, {0.0f, 0.0f, w, -h}, {0.0f, 0.0f}, WHITE);
     EndShaderMode();
+    // Das Bild sofort zeichnen und wieder den Standard-Shader in OpenGL
+    // aktivieren, bevor HUD und Menüs kommen
+    rlDrawRenderBatchActive();
+    rlEnableShader(rlGetShaderIdDefault());
 }
 
 void Shutdown() {
