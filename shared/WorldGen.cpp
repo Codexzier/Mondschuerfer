@@ -212,8 +212,6 @@ void World::GenerateTerrain() {
 //                die Station so weit gewachsen ist.
 //   - turrets:   Geschütztürme (schießen auf Piraten, World::UpdateTurrets),
 //                ebenfalls mit Ausbaustufe.
-//   - obstacles: Kreise um hohe Teile, die Schiffe nicht durchfliegen dürfen
-//                (World::UpdateShipPhysics).
 // Die Ausbaustufe der Handelsstationen ergibt sich aus der Gesamtmenge
 // abgelieferter Ressourcen (World::StationStage, Schwellen in
 // cfg::STATION_THRESHOLDS). Im Mehrspieler zählen dafür die Lieferungen ALLER
@@ -310,36 +308,12 @@ void World::BuildStations() {
         else st.name = "Raumschiffsverkäufer";
     }
 
-    // Skalieren und Hindernisse (hohe Teile) bestimmen
-    // Erst hier wird vom Kit-Raster in Weltgrößen umgerechnet (STATION_SCALE).
-    // Hindernis wird jedes Teil, dessen Oberkante höher reicht als
-    // SHIP_ALTITUDE - 0,6 (also über ~2,6): Darunter fliegt ein Schiff
-    // einfach drüber hinweg (0,6 Spielraum, weil die Schiffe leicht auf und ab
-    // schweben und selbst etwas Höhe haben).
-    // Die Grundfläche wird als Kreis angenähert: Radius = halbe größere
-    // Kantenlänge der Bounding Box (Box = achsparalleler Quader um das
-    // Modell, aus ModelBounds.inc). * 0,9 macht den Kreis etwas kleiner als
-    // die Box (runde Kuppeln füllen ihre Box nicht aus), + 1,0 ist ungefähr
-    // die halbe Schiffsbreite, damit der Rumpf nicht in die Wand ragt.
-    // Vereinfachungen: Die Drehung (yaw) des Teils und ein Modell, dessen
-    // Ursprung nicht in der Mitte liegt, werden nicht berücksichtigt.
-    // Gespeichert wird (x, Radius, z) in einem Vector3 – y ist hier also
-    // NICHT die Höhe, sondern der Radius (siehe Station::obstacles).
-    // Hinweis: Es werden die Teile ALLER Ausbaustufen eingetragen, auch die,
-    // die noch gar nicht gebaut (also unsichtbar) sind.
-    // Client und Server rechnen hier mit derselben Tabelle (ModelBounds.inc)
-    // und erhalten dieselben Hindernisse; das braucht die Vorhersage des
-    // eigenen Schiffs im Mehrspieler.
+    // Skalieren: Erst hier wird vom Kit-Raster in Weltgrößen umgerechnet (STATION_SCALE).
+    // Stationen sind keine Kollisionsobjekte, Schiffe fliegen durch.
     for (auto& st : stations) {
         for (auto& p : st.parts) {
             p.offset = Vector3Scale(p.offset, STATION_SCALE);
             p.scale *= STATION_SCALE;
-            BoundingBox b = ModelBounds(p.model);
-            float height = b.max.y * p.scale + p.offset.y;
-            if (height > cfg::SHIP_ALTITUDE - 0.6f) {
-                float r = fmaxf(b.max.x - b.min.x, b.max.z - b.min.z) * 0.5f * p.scale;
-                st.obstacles.push_back({p.offset.x, r * 0.9f + 1.0f, p.offset.z});
-            }
         }
         for (auto& tu : st.turrets) tu.offset = Vector3Scale(tu.offset, STATION_SCALE);
     }

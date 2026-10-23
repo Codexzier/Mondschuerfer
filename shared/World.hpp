@@ -230,9 +230,6 @@ struct Station {
     Vector3 pos{};
     std::vector<StationPart> parts;
     std::vector<Turret> turrets;
-    // Hohe Teile, um die Schiffe herumfliegen müssen (UpdateShipPhysics).
-    // Platzsparend als Vector3 gespeichert:
-    std::vector<Vector3> obstacles; // x,z = Position (lokal), y = Radius (für hohe Teile)
 };
 
 // Eine Meldung oben im Bild ("Lagerstätte entdeckt!" ...).

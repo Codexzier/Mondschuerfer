@@ -944,25 +944,6 @@ void World::UpdateShipPhysics(Ship& s, float dt, const ShipInput& in) {
     s.pos.y = cfg::SHIP_ALTITUDE + sinf(time * 2.0f + static_cast<float>(s.id)) * 0.12f;
     s.thrustVisual = Lerp(s.thrustVisual, std::max(0.0f, in.thrust), std::min(1.0f, 8.0f * dt));
 
-    // Hohe Stationsteile umfliegen: Jedes Hindernis ist ein Kreis (Mitte x/z,
-    // Radius y, siehe Station::obstacles). Steckt das Schiff darin, wird es
-    // auf den Kreisrand geschoben, und der Teil der Geschwindigkeit, der in
-    // das Hindernis hineinzeigt, wird gestrichen. Das Schiff gleitet so am
-    // Hindernis entlang, statt hängen zu bleiben.
-    for (const auto& st : stations) {
-        for (const auto& ob : st.obstacles) {
-            Vector2 c{st.pos.x + ob.x, st.pos.z + ob.z};
-            Vector2 d{s.pos.x - c.x, s.pos.z - c.y};
-            float len = Vector2Length(d);
-            if (len < ob.y && len > 0.001f) {
-                Vector2 n = Vector2Scale(d, 1.0f / len);
-                s.pos.x = c.x + n.x * ob.y;
-                s.pos.z = c.y + n.y * ob.y;
-                float vn = s.vel.x * n.x + s.vel.z * n.y;
-                if (vn < 0) { s.vel.x -= n.x * vn; s.vel.z -= n.y * vn; }
-            }
-        }
-    }
     // Grenze des Einsatzgebiets: am Rand anhalten, nur die Bewegung nach
     // außen wird gestrichen (am Rand entlangfliegen geht weiter)
     const float lim = cfg::WORLD_HALF;
