@@ -283,6 +283,16 @@ void World::Draw(const Camera3D& cam) const {
         g_assets.Draw(w.model, TRS(w.pos, w.yaw, w.tilt, w.tilt * 0.7f, 1.0f), Color{95, 92, 92, 255});
     }
 
+    // --- Personen (Mission "Personen einsammeln") --------------------------------
+    // Nur die eigenen (im Mehrspieler schickt der Server ohnehin nur diese).
+    // 1,8-fach vergrößert (das Modell ist nur 0,8 m hoch), damit man sie von
+    // oben erkennt; sie hüpfen leicht, als würden sie auf sich aufmerksam machen.
+    for (const auto& pe : persons) {
+        if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
+        const float hop = 0.12f * fabsf(sinf(time * 4.0f + static_cast<float>(pe.id)));
+        g_assets.Draw(pe.model, Vector3{pe.pos.x, hop, pe.pos.z}, pe.yaw, 1.8f);
+    }
+
     // --- Schiffe -------------------------------------------------------------------
     // dead = wird gerade entfernt, hidden = angedockt (steht unsichtbar in der
     // Station) bzw. Platzhalter ohne Schiff im Mehrspieler.
@@ -348,6 +358,8 @@ void World::Draw(const Camera3D& cam) const {
             DrawGroundRing(s.pos, 1.7f, 1.95f, Color{110, 240, 170, 130}, 32);
         else if (s.faction == Faction::Pirate || s.hostileToPlayer)
             DrawGroundRing(s.pos, 1.7f, 1.95f, Color{255, 70, 60, 150}, 32);
+        else if (s.kind == ShipKind::Convoy)   // Frachter des Konvois (Mission)
+            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{150, 255, 120, 140}, 32);
         else
             DrawGroundRing(s.pos, 1.7f, 1.9f, Color{120, 200, 255, 100}, 32);
     }
@@ -408,6 +420,13 @@ void World::Draw(const Camera3D& cam) const {
         float pulse = 0.6f + 0.4f * sinf(time * 3.0f + w.id);
         DrawBeam(w.pos, 8.0f, 0.3f, Color{220, 140, 40, static_cast<unsigned char>(70 * pulse)});
         DrawGroundRing(w.pos, 3.0f, 3.4f, Color{255, 170, 60, static_cast<unsigned char>(120 * pulse)}, 40);
+    }
+    // Personen: gelbe Lichtsäule und Bodenring (gelb wie auf der Minikarte)
+    for (const auto& pe : persons) {
+        if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
+        float pulse = 0.6f + 0.4f * sinf(time * 4.0f + static_cast<float>(pe.id));
+        DrawBeam(pe.pos, 10.0f, 0.3f, Color{230, 200, 40, static_cast<unsigned char>(80 * pulse)});
+        DrawGroundRing(pe.pos, 2.4f, 2.8f, Color{255, 225, 60, static_cast<unsigned char>(140 * pulse)}, 40);
     }
 
     // Abbaustrahlen

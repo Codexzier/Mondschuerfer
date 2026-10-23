@@ -223,7 +223,8 @@ float WrapAngle(float a) {
 // Welcher Fraktion gehört ein Schiff dieser Art? (Wie World::MakeShip)
 Faction FactionOf(ShipKind k) {
     switch (k) {
-        case ShipKind::Player: return Faction::Player;
+        case ShipKind::Player:
+        case ShipKind::Convoy: return Faction::Player;
         case ShipKind::Pirate:
         case ShipKind::Elite: return Faction::Pirate;
         case ShipKind::Miner: return Faction::Neutral;
@@ -940,6 +941,46 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     ps.kills = me.kills;
     ps.respawnT = me.respawnT;
 
+    // Mini-Missionen: Angebote und eigene Mission als World::missions
+    // nachbauen (IDs nur hier im Client gültig: 1 = eigene Mission), Personen
+    // aus den Markierungen (nur Anzeige; eingesammelt wird auf dem Server).
+    world.missions.clear();
+    ps.mission = -1;
+    if (me.missionType >= 0 && me.missionType < cfg::MISSION_TYPE_COUNT) {
+        Mission m;
+        m.id = 1;
+        m.type = static_cast<MissionType>(me.missionType);
+        m.owner = ps.id;
+        m.progress = me.missionProgress;
+        m.goal = me.missionGoal;
+        m.alive = me.missionAlive;
+        world.missions.push_back(m);
+        ps.mission = m.id;
+    }
+    for (size_t i = 0; i < me.offers.size(); ++i) {
+        if (me.offers[i] >= cfg::MISSION_TYPE_COUNT) continue;
+        Mission m;
+        m.id = static_cast<int>(i) + 2;
+        m.type = static_cast<MissionType>(me.offers[i]);
+        world.missions.push_back(m);
+    }
+    ps.markers.clear();
+    world.persons.clear();
+    for (const auto& mk : me.markers) {
+        ps.markers.push_back({mk.kind, Vector3{mk.x, 0.0f, mk.z}});
+        if (mk.kind != 0) continue;
+        Person pe;
+        pe.id = static_cast<int>(world.persons.size()) + 1;
+        pe.mission = ps.mission;
+        pe.owner = ps.id;
+        pe.pos = Vector3{mk.x, 0.0f, mk.z};
+        pe.yaw = static_cast<float>(pe.id) * 2.1f;   // fester Blickwinkel je Person
+        pe.model = pe.id % 2 == 1 ? world.mdl.astronautA : world.mdl.astronautB;
+        world.persons.push_back(pe);
+    }
+    ps.cue = me.cue;
+    ps.cueT = me.cue >= 0 ? me.cueT : 0.0f;
+
     // Bestätigte Eingaben hat der Server angewendet: Sie stecken schon in
     // seiner Position und werden nicht mehr gebraucht.
     while (!pending.empty() && pending.front().seq <= me.ackSeq) pending.pop_front();
@@ -1365,7 +1406,7 @@ void NetClient::Impl::UpdateRemoteShips() {
         }
         Ship s;
         s.id = static_cast<int>(b.id);
-        s.kind = b.kind <= static_cast<uint8_t>(ShipKind::Miner) ? static_cast<ShipKind>(b.kind) : ShipKind::Pirate;
+        s.kind = b.kind <= static_cast<uint8_t>(ShipKind::Convoy) ? static_cast<ShipKind>(b.kind) : ShipKind::Pirate;
         s.faction = FactionOf(s.kind);
         s.model = net::ShipModel(models, b.variant);
         s.playerId = b.playerId;

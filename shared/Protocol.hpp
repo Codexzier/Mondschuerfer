@@ -50,7 +50,9 @@ namespace net {
 // Version 2: Welcome enthält den Simulationsschritt (tick), siehe WelcomeMsg.
 // Version 3: Schiffstypen (SnapMe::shipType/hangar, DockAction BuyShip/SwitchShip).
 // Version 4: Upgrade Kanonen (5 Stufenwerte), Leben (SnapMe/PlayerEntry::lives, GameSettings::lives).
-constexpr uint16_t PROTOCOL_VERSION = 4;
+// Version 5: Mini-Missionen (SnapMe Mission/Angebote/Markierungen/Funkspruch,
+//            DockAction AcceptMission, GameSettings::missions, ShipKind::Convoy).
+constexpr uint16_t PROTOCOL_VERSION = 5;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -61,6 +63,7 @@ constexpr float INTERP_DELAY = 0.12f;            // Client zeigt fremde Schiffe 
 
 constexpr float AOI_SHIPS = 110.0f;
 constexpr int MAX_HANGAR = 8;                    // höchstens so viele geparkte Schiffe in SnapMe              // Sichtweite für Schiffe/Wracks im Snapshot
+constexpr int MAX_MARKERS = 16;                  // höchstens so viele Missions-Markierungen in SnapMe
 constexpr float AOI_BULLETS = 75.0f;             // Sichtweite für Geschosse
 constexpr float AOI_EVENTS = 120.0f;             // Hörweite/Sichtweite für Ereignisse
 
@@ -214,12 +217,13 @@ struct InputMsg {
     std::vector<InputRecord> records;   // älteste zuerst, höchstens MAX_INPUTS_PER_MSG
 };
 
-enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4 };
+enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4, AcceptMission = 5 };
 
 struct DockActionMsg {
     DockActionType action = DockActionType::Undock;
     // BuyUpgrade: Upgrade-Typ (cfg::Upgrade). BuyShip: Schiffstyp (Bit 0-6,
     // cfg::ShipTypeId), Bit 7 = altes Schiff in Zahlung geben. SwitchShip: Schiffstyp.
+    // AcceptMission: Missionsart (MissionType).
     uint8_t param = 0;
 };
 
@@ -300,6 +304,21 @@ struct SnapMe {
     uint16_t kills = 0;
     float respawnT = 0;
     uint8_t lives = 0;            // verbleibende Leben
+    // Mini-Missionen: eigene laufende Mission (-1 = keine) mit Fortschritt,
+    // Ziel und (Konvoi) Frachtern unterwegs; Arten der offenen Angebote
+    // (höchstens limits::MAX_MISSIONS); Markierungen für die Minikarte
+    // (Personen, Ziele, Frachter; auch außerhalb der Sichtweite);
+    // Funkspruch (PlayerState::cue, -1 = keiner) mit Restzeit.
+    int8_t missionType = -1;
+    uint8_t missionProgress = 0, missionGoal = 0, missionAlive = 0;
+    std::vector<uint8_t> offers;
+    struct Marker {
+        uint8_t kind = 0;         // MissionMarker::kind
+        float x = 0, z = 0;
+    };
+    std::vector<Marker> markers;  // höchstens MAX_MARKERS
+    int8_t cue = -1;
+    float cueT = 0;
 };
 
 struct SnapShip {

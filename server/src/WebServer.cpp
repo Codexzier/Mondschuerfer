@@ -319,6 +319,7 @@ void WriteSettings(JsonWriter& w, const GameSettings& g) {
     w.Key("moon").String(MoonColorKey(g.moon));
     w.Key("maxPlayers").Int(g.maxPlayers);
     w.Key("lives").Int(g.lives);
+    w.Key("missions").Int(g.missions);
     w.EndObject();
 }
 
@@ -397,6 +398,7 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("maxShipyards").Int(limits::MAX_SHIPYARDS);
     w.Key("maxPlayersLimit").Int(limits::MAX_PLAYERS_LIMIT);
     w.Key("maxLives").Int(limits::MAX_LIVES);
+    w.Key("maxMissions").Int(limits::MAX_MISSIONS);
     w.EndObject();
 
     w.EndObject();
@@ -806,7 +808,7 @@ bool ParseIntInRange(const std::string& text, int minValue, int maxValue, int& o
 // fehlende Felder bleiben also unverändert). false + error bei ungültigen Werten.
 bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& next, std::string& error) {
     static const char* const kKnown[] = {"serverName", "difficulty", "enemyShips", "tradeStations",
-                                         "shipyards",  "moon",       "maxPlayers", "lives"};
+                                         "shipyards",  "moon",       "maxPlayers", "lives", "missions"};
     for (const auto& kv : fields) {
         const bool known = std::any_of(std::begin(kKnown), std::end(kKnown), [&](const char* k) { return kv.first == k; });
         if (!known) {
@@ -881,13 +883,19 @@ bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& n
             return false;
         }
     }
+    if (const std::string* v = field("missions")) {
+        if (!ParseIntInRange(*v, 0, limits::MAX_MISSIONS, next.missions)) {
+            error = "Mini-Missionen: bitte eine ganze Zahl von 0 bis " + std::to_string(limits::MAX_MISSIONS) + ".";
+            return false;
+        }
+    }
     return true;
 }
 
 bool SameSettings(const GameSettings& a, const GameSettings& b) {
     return a.serverName == b.serverName && a.difficulty == b.difficulty && a.enemyShips == b.enemyShips &&
            a.tradeStations == b.tradeStations && a.shipyards == b.shipyards && a.moon == b.moon &&
-           a.maxPlayers == b.maxPlayers && a.lives == b.lives;
+           a.maxPlayers == b.maxPlayers && a.lives == b.lives && a.missions == b.missions;
 }
 
 // Erfolgsantwort für beide Einstellungs-Routen.

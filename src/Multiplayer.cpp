@@ -1178,6 +1178,8 @@ void MultiplayerScreen::DrawPlaying() {
         if (req.buyShip >= 0)
             net_.SendDockAction(net::DockActionType::BuyShip, static_cast<uint8_t>(req.buyShip | (req.tradeIn ? 0x80 : 0)));
         if (req.switchShip >= 0) net_.SendDockAction(net::DockActionType::SwitchShip, static_cast<uint8_t>(req.switchShip));
+        if (req.acceptMission >= 0)
+            net_.SendDockAction(net::DockActionType::AcceptMission, static_cast<uint8_t>(req.acceptMission));
         if (req.undock) {
             net_.SendDockAction(net::DockActionType::Undock);
             undockSentT_ = 0.0f;   // Fenster ausblenden, bis der Server das Abdocken bestätigt

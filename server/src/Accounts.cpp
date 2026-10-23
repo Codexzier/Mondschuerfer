@@ -638,6 +638,7 @@ bool Accounts::LoadSettings(GameSettings& inOut) const {
         else if (key == "moon") ParseMoonColor(value, inOut.moon);
         else if (key == "maxPlayers") ParseInt(value, inOut.maxPlayers, 1, limits::MAX_PLAYERS_LIMIT);
         else if (key == "lives") ParseInt(value, inOut.lives, 1, limits::MAX_LIVES);
+        else if (key == "missions") ParseInt(value, inOut.missions, 0, limits::MAX_MISSIONS);
     }
     Sanitize(inOut);
     return true;
@@ -656,6 +657,7 @@ void Accounts::SaveSettings(const GameSettings& s) {
     out += std::string("moon=") + MoonColorKey(s.moon) + "\n";
     out += "maxPlayers=" + std::to_string(s.maxPlayers) + "\n";
     out += "lives=" + std::to_string(s.lives) + "\n";
+    out += "missions=" + std::to_string(s.missions) + "\n";
     QueueWrite(PathOf(SETTINGS_FILE), std::move(out), false, "Einstellungen");
 }
 

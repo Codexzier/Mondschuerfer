@@ -104,11 +104,11 @@ den **Optionen**.
 | A / D oder ← / → | Drehen |
 | Leertaste | Schießen (2 Schuss pro Sekunde) |
 | E | Scanner an / aus |
-| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) |
+| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person einsammeln (Mission) |
 | R | Schild reparieren (an der Handelsstation) |
 | 1 – 4 | Upgrade kaufen (in der Werft) / Schiff kaufen (beim Raumschiffsverkäufer, mit Umschalt: in Zahlung geben) |
-| 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) |
-| Tab | Karteireiter der Handelsstation wechseln (Station / Schiff) |
+| 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) / Mission annehmen (Tab „Missionen“) |
+| Tab | Karteireiter der Handelsstation wechseln (Station / Schiff / Missionen) |
 | ESC / P | Pause |
 | H | Steuerung einblenden |
 | M | Ton an / aus |
@@ -189,6 +189,15 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
   | Speedster | 60 | 60 % | 130 % | 80 % | 150 | 10.000 |
 
   Die Prozente beziehen sich auf die Grundwerte (Scanner 34 m, Tempo 16, Schaden 10).
+- **Mini-Missionen:** An der Handelsstation im Tab „Missionen“ nimmst du eine Mission an (immer
+  nur eine gleichzeitig). Die Belohnung kommt sofort aufs Konto. Ziele stehen pulsierend auf
+  dem Radar, der Fortschritt oben in der Mitte, der Funkspruch unten rechts.
+  - *Personen einsammeln* (2.000 Punkte): drei Personen (gelb) mit F abholen und an einer
+    Handelsstation abliefern.
+  - *Piraten abschießen* (2.500 Punkte): drei Missionspiraten (rot) abschießen.
+  - *Konvoi verteidigen* (3.500 Punkte): drei Frachter (grün) fliegen zu einer anderen Station,
+    unterwegs greifen zwei Piratenwellen an. Kommt keiner an, ist die Mission gescheitert.
+  Stürzt du ab, scheitert die Mission, und das Angebot steht wieder an der Station.
 - **Kampf:** Leertaste feuert 2 Schuss pro Sekunde mit je 10 Schaden. Dein Schild hat zu Beginn
   100 Punkte: nach 10 Treffern stürzt das Schiff ab, und das Spiel ist zu Ende.
   - *Piraten* (rötlich) greifen an, sobald du in ihre Nähe kommst.

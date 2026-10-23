@@ -245,6 +245,7 @@ void WriteSettings(Writer& w, const GameSettings& s) {
     w.U8(static_cast<uint8_t>(s.moon));
     w.U8(static_cast<uint8_t>(s.maxPlayers));
     w.U8(static_cast<uint8_t>(s.lives));
+    w.U8(static_cast<uint8_t>(s.missions));
 }
 
 void ReadSettings(Reader& r, GameSettings& s) {
@@ -256,6 +257,7 @@ void ReadSettings(Reader& r, GameSettings& s) {
     s.moon = static_cast<MoonColor>(r.U8());
     s.maxPlayers = r.U8();
     s.lives = r.U8();
+    s.missions = r.U8();
     Sanitize(s);   // ungültige Werte (z. B. von einem fremden Server) auf erlaubte Grenzen bringen
 }
 
@@ -373,7 +375,7 @@ std::vector<uint8_t> Encode(const DockActionMsg& m) {
 
 bool Decode(Reader& r, DockActionMsg& m) {
     const uint8_t a = r.U8();
-    if (a > 4) return false;
+    if (a > static_cast<uint8_t>(DockActionType::AcceptMission)) return false;
     m.action = static_cast<DockActionType>(a);
     m.param = r.U8();
     return r.ok();
@@ -518,6 +520,26 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U16(e.kills);
         w.F32(e.respawnT);
         w.U8(e.lives);
+        // Mission: Typ, und nur bei laufender Mission Fortschritt/Ziel/Frachter
+        w.I8(e.missionType);
+        if (e.missionType >= 0) {
+            w.U8(e.missionProgress);
+            w.U8(e.missionGoal);
+            w.U8(e.missionAlive);
+        }
+        const size_t no = std::min<size_t>(e.offers.size(), limits::MAX_MISSIONS);
+        w.U8(static_cast<uint8_t>(no));
+        for (size_t i = 0; i < no; ++i) w.U8(e.offers[i]);
+        const size_t nm = std::min<size_t>(e.markers.size(), MAX_MARKERS);
+        w.U8(static_cast<uint8_t>(nm));
+        for (size_t i = 0; i < nm; ++i) {
+            w.U8(e.markers[i].kind);
+            w.I16(QPos(e.markers[i].x));
+            w.I16(QPos(e.markers[i].z));
+        }
+        // Funkspruch: Restzeit in Zehntelsekunden (höchstens 25,5 s)
+        w.I8(e.cue);
+        w.U8(static_cast<uint8_t>(std::clamp(e.cueT * 10.0f, 0.0f, 255.0f)));
     }
     w.U16(static_cast<uint16_t>(std::min<size_t>(m.ships.size(), 65535)));
     for (size_t i = 0; i < m.ships.size() && i < 65535; ++i) {
@@ -627,6 +649,26 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         e.kills = r.U16();
         e.respawnT = r.F32();
         e.lives = r.U8();
+        e.missionType = r.I8();
+        if (e.missionType >= 0) {
+            e.missionProgress = r.U8();
+            e.missionGoal = r.U8();
+            e.missionAlive = r.U8();
+        }
+        const uint8_t no = r.U8();
+        if (no > limits::MAX_MISSIONS) return false;
+        e.offers.assign(no, 0);
+        for (uint8_t& o : e.offers) o = r.U8();
+        const uint8_t nm = r.U8();
+        if (nm > MAX_MARKERS) return false;
+        e.markers.assign(nm, SnapMe::Marker{});
+        for (auto& mk : e.markers) {
+            mk.kind = r.U8();
+            mk.x = DPos(r.I16());
+            mk.z = DPos(r.I16());
+        }
+        e.cue = r.I8();
+        e.cueT = r.U8() / 10.0f;
     }
     const uint16_t ns = r.U16();
     if (ns > MAX_LIST) return false;

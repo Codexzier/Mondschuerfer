@@ -56,12 +56,14 @@ struct DockRequest {
     int buyShip = -1;      // Raumschiffsverkäufer: Schiffstyp (cfg::ShipTypeId) oder -1
     bool tradeIn = false;  // ... dabei das alte Schiff in Zahlung geben
     int switchShip = -1;   // Handelsstation, Tab "Schiff": zu diesem Schiffstyp wechseln, -1 = nein
+    int acceptMission = -1;   // Handelsstation, Tab "Missionen": Missionsart (MissionType) annehmen, -1 = nein
 };
 
 // Stationsfenster des eigenen Spielers (w.Me()). Handelsstation: Tab
 // "Station" mit Verkaufsergebnis, Kontostand, Stationsausbau, Reparieren [R];
-// Tab "Schiff" zum Wechseln zwischen den eigenen Schiffen [1]-[3] (Tab-Taste
-// bzw. LB/RB wechselt den Tab). Werft: vier Aufrüstungen [1]-[4].
+// Tab "Schiff" zum Wechseln zwischen den eigenen Schiffen [1]-[3], Tab
+// "Missionen" zum Annehmen einer Mini-Mission [1]-[3] (Tab-Taste bzw. LB/RB
+// wechselt den Tab). Werft: vier Aufrüstungen [1]-[4].
 // Raumschiffsverkäufer: Schiffe kaufen [1]-[4] oder mit Inzahlunggabe
 // [Umschalt+1]-[4]. Alle: Abdocken [F]/[ESC], am Controller Y oder B
 // (Knöpfe mit dem Controller-Zeiger und A).

@@ -65,6 +65,7 @@ constexpr int MAX_SHIPYARDS = 4;        // Handelsstationen + Werften passen auf
 // außerdem wird der Wert im Netzwerk als ein Byte übertragen.
 constexpr int MAX_PLAYERS_LIMIT = 64;
 constexpr int MAX_LIVES = 100;          // Obergrenze für "Leben pro Spieler" (im Netzwerk ein Byte)
+constexpr int MAX_MISSIONS = 10;        // Obergrenze für "Mini-Missionen gleichzeitig" (0 = keine Missionen)
 constexpr int MAX_SPECTATORS = 16;      // Zuschauer zusätzlich zu den Spielern (fest, nicht einstellbar)
 constexpr int MAX_SERVER_NAME = 40;     // in BYTES (UTF-8): ein "ü" zählt doppelt
 } // namespace limits
@@ -78,6 +79,7 @@ struct GameSettings {
     MoonColor moon = MoonColor::Grey;
     int maxPlayers = 16;       // gleichzeitig angemeldete Spieler (ohne Zuschauer)
     int lives = cfg::START_LIVES;   // Leben pro Spieler (1..limits::MAX_LIVES)
+    int missions = cfg::MISSION_SLOTS;   // Mini-Missionen gleichzeitig auf der Karte (0..limits::MAX_MISSIONS)
 };
 
 // Feindliche Schiffe für einen Schwierigkeitsgrad (bei Custom: customCount, begrenzt).
@@ -97,7 +99,7 @@ void Sanitize(GameSettings& s);
 // Mondfarbe: Clients übernehmen sie beim Verbinden (ServerInfo/Welcome);
 // laufende Clients erfahren eine Änderung nur über ein neues Welcome, und das
 // schickt der Server nach einem Neuaufbau an alle.
-// Gegnerzahl, Servername und maximale Spieler gelten dagegen sofort.
+// Gegnerzahl, Servername, maximale Spieler und Missionen gelten dagegen sofort.
 bool NeedsWorldRebuild(const GameSettings& a, const GameSettings& b);
 
 // Texte für Anzeige und Konfigurationsdateien

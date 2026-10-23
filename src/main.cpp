@@ -794,6 +794,7 @@ private:
             if (req.buy >= 0) world_.BuyUpgrade(req.buy);
             if (req.buyShip >= 0) world_.BuyShip(req.buyShip, req.tradeIn);
             if (req.switchShip >= 0) world_.SwitchShip(req.switchShip);
+            if (req.acceptMission >= 0) world_.AcceptMission(req.acceptMission);
             if (req.undock) {
                 world_.Undock();
                 if (world_.outcome == Outcome::None) SaveGame(world_);

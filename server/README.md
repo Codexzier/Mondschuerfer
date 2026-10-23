@@ -136,6 +136,7 @@ Startmeldung steht, woher die Werte kommen (`Einstellungen : aus settings.txt �
 | `SHIPYARDS` | `1` | Werften 1–4 (aufrüsten) |
 | `MOON_COLOR` | `grey` | `grey`/`grau`, `orange`, `blue`/`blau` |
 | `MAX_PLAYERS` | `16` | gleichzeitig angemeldete Spieler, 1–64 (plus bis zu 16 Zuschauer) |
+| `MISSIONS` | `3` | Mini-Missionen gleichzeitig auf der Karte, 0–10 (`0` = keine Missionen) |
 | `MAX_CONNECTIONS_PER_IP` | `8` | max. Verbindungen je öffentlicher IP-Adresse, `0` = unbegrenzt; Heimnetz-Adressen sind ausgenommen |
 | `WEB_PUBLISH_ADDRESS` | leer (= `127.0.0.1`) | Verwaltungsseite im Heimnetz freigeben, z. B. `0.0.0.0` (unverschlüsselt, siehe [Sicherheit](#die-verwaltungsseite)) |
 | `DOMAIN` | leer | nur für das Profil `online` (HTTPS mit Caddy), z. B. `mond.example.org` |

@@ -236,8 +236,51 @@ constexpr float ELITE_DAMAGE = 10.0f;      // auch Elite-Piraten: 10 Treffer = 1
 constexpr float STATION_SAFE_RADIUS = 34.0f; // Geschütztürme schützen die Stationen
 constexpr float TURRET_RANGE = 36.0f;
 
+// Mini-Missionen (Handelsstation, Tab "Missionen", World.cpp Abschnitt "Missionen")
+// So viele Missionen gibt es gleichzeitig auf der Karte (Angebote und
+// laufende zusammen). Einzelspieler fest, im Mehrspieler der Standard
+// (GameSettings::missions, einstellbar bis limits::MAX_MISSIONS).
+constexpr int MISSION_SLOTS = 3;
+constexpr float MISSION_RESPAWN = 20.0f;   // Sekunden nach einer erfüllten Mission bis zum neuen Angebot
+constexpr int MISSION_GOAL = 3;            // Personen, Piraten bzw. Frachter je Mission
+constexpr float CUE_TIME = 10.0f;          // so lange steht ein Funkspruch (Untertitel) unten rechts
+// Konvoi: Tempo und Schild der Frachter, Umweg über offenes Gelände (die
+// Stationen liegen nah beieinander und im Schutz der Geschütztürme) und
+// Startzeit der beiden Piratenwellen (Sekunden seit dem Abflug, je 2 Piraten).
+constexpr float CONVOY_SPEED = 8.5f;
+constexpr float CONVOY_HP = 150.0f;
+constexpr float CONVOY_DETOUR = 100.0f;
+constexpr float CONVOY_WAVES[2] = {8.0f, 22.0f};
+// Missionsarten. Index = MissionType (World.hpp); die Zahlenwerte gehen über
+// das Netzwerk (SnapMe): Reihenfolge nicht ändern. Funkspruch je Phase
+// (0 Start, 1 Ende, 2 Fehlschlag): Clip-Datei aus assets/clips und Untertitel.
+// Leerer Untertitel = kein Funkspruch in dieser Phase.
+struct MissionDef {
+    const char* name;
+    const char* text;      // Kurzbeschreibung im Stationsfenster
+    int reward;            // Punkte, sofort aufs Konto
+    const char* clip[3];
+    const char* subtitle[3];
+};
+constexpr int MISSION_TYPE_COUNT = 3;
+constexpr MissionDef MISSIONS[MISSION_TYPE_COUNT] = {
+    {"Personen einsammeln", "Drei verirrte Personen abholen [F] und zu einer Handelsstation bringen.", 2000,
+     {"clip_collectingpersonal_start.mpg", "clip_collectingpersonal_end.mpg", ""},
+     {"Im Sektor haben sich Personen verlaufen. Hole sie die Personen ab und bringen sie uns zur Station.",
+      "Danke das sie die Personen eingesammelt und gebracht haben.", ""}},
+    {"Piraten abschießen", "Drei unerlaubte Piraten im Sektor abschießen.", 2500,
+     {"clip_shotthem_start.mpg", "clip_shotthem_end.mpg", ""},
+     {"Im Sektor befinden sich unerlaubte Piraten. Sie können sich etwas dazu verdienen, in dem sie sie abschießen.",
+      "Danke, dass sie unsere Feinde erledigt haben. Sie können mit der Arbeit fortsetzen.", ""}},
+    {"Konvoi verteidigen", "Drei Frachter auf dem Weg zu einer anderen Station vor Piraten schützen.", 3500,
+     {"clip_convoi_start.mpg", "clip_convoi_end.mpg", "clip_convoi_fail.mpg"},
+     {"Wir müssen Ware an die nächsten Station bringen. Bitte verteidigen sie den Konvoi.",
+      "Die Ware ist sicher angekommen. Setzen sie nun ihre Aufgabe fort.",
+      "Sie haben versagt. Setzen sie ihre vorige Arbeit fort."}},
+};
+
 // Mehrspieler (nur Server)
-constexpr float MP_RESPAWN_TIME = 4.0f;       // Sekunden bis zum neuen Raumschiff nach einem Absturz
+constexpr float MP_RESPAWN_TIME = 4.0f;      // Sekunden bis zum neuen Raumschiff nach einem Absturz
 // Lagerstätten-Sollwert = DEPOSIT_COUNT + (Spieler - 1) * MP_DEPOSITS_PER_PLAYER,
 // höchstens MP_DEPOSITS_MAX (erreicht ab 25 Spielern). Die Obergrenze hält
 // die Karte übersichtlich und die Lagerstätten-Liste klein, die der Server
