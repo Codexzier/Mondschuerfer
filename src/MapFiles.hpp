@@ -9,10 +9,8 @@
 //   - src/Save.cpp: Der Spielstand merkt sich den Dateinamen der Karte und
 //     lädt sie beim Fortsetzen wieder.
 //
-// Dateiname: Aus dem Kartennamen wird ein "Stamm" nur aus Buchstaben a-z/A-Z,
-// Ziffern, '-' und '_' (Umlaute umschreiben, alles andere wird '_'), dazu die
-// Endung ".karte". Mit reinen ASCII-Namen gibt es auch unter Windows keine
-// Probleme mit Sonderzeichen im Pfad; der echte Name steht in der Datei.
+// Dateiname: Aus dem Kartennamen wird ein "Stamm" (MapFileStem, GameMap.hpp),
+// dazu die Endung ".karte". Der echte Name steht in der Datei.
 //
 // Abhängigkeiten: shared/GameMap.hpp, raylib (GetApplicationDirectory,
 // Ordner anlegen und auflisten).
@@ -27,7 +25,6 @@ struct MapFileInfo {
 };
 
 std::string MapDir();                                   // <Ordner der .exe>/karten/
-std::string MapFileStem(const std::string& name);       // Kartenname -> Dateistamm (nie leer)
 std::vector<MapFileInfo> ListMaps();                    // alle lesbaren Karten, nach Name sortiert
 bool MapFileExists(const std::string& stem);
 bool LoadMapFile(const std::string& stem, GameMap& out);

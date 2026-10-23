@@ -15,6 +15,8 @@
 //     Lagerstätten, Spielerliste und Bestenliste.
 //   - Verwaltet Anmeldung (Konto anlegen, Challenge-Response) und speichert
 //     den Fortschritt über Accounts (Datenordner).
+//   - Nimmt Karten aus dem Karteneditor an (MapUpload, nur mit Berechtigung)
+//     und schickt allen die aktive Karte (MapData).
 //   - Veröffentlicht jede Sekunde einen Statusbericht für die Webseite und
 //     übernimmt dort geänderte Einstellungen (SharedState).
 //
@@ -188,6 +190,9 @@ private:
     void ApplySettings(const GameSettings& s);
     void ApplyShipsRequest();
     void BroadcastSettings();   // geänderte Einstellungen ohne Neuaufbau an alle Clients (net::SettingsMsg)
+    void ApplyMapCommands();    // Bereich "Karten" der Webseite: aktivieren, löschen, Berechtigung
+    void UpdateMapData();       // mapData_ aus der aktiven Karte bauen
+    void MapNotice(const std::string& text, bool error = false);   // Ergebnis für die Webseite (und das Protokoll)
     void RemoveSurplusPirates();
     int NewPlayerId();
     void RestoreProgress(PlayerState& ps, const PlayerProgress& p);
@@ -212,6 +217,10 @@ private:
     void HandleRegister(Client& c, const net::RegisterMsg& m);
     void HandleLoginStart(Client& c, const net::LoginStartMsg& m);
     void HandleLoginProof(Client& c, const net::LoginProofMsg& m);
+    void HandleMapUpload(Client& c, const net::MapUploadMsg& m);
+    // Prüft den Beweis zur Nonce aus LoginStart (LoginProof, MapUpload). Liefert
+    // das Konto oder nullptr; dann ist die Fehlermeldung schon verschickt.
+    Account* CheckProof(Client& c, const net::Key32& proof, const char* what);
     void HandleInput(Client& c, const net::InputMsg& m);
     void HandleDockAction(Client& c, const net::DockActionMsg& m);
     void HandleLeave(Client& c);
@@ -269,6 +278,10 @@ private:
     GameSettings settings_;             // aktuell gültige Einstellungen
     World world_;
     net::ModelIds models_{};            // Modell-ID -> Variantennummer fürs Netz
+    std::vector<uint8_t> mapData_;      // aktive Karte als fertige MapData-Nachricht (nach jedem Welcome)
+    std::string mapNotice_;             // für den Status (ServerStatus::mapNotice)
+    int mapNoticeSeq_ = 0;
+    bool mapNoticeError_ = false;
 
     _ENetHost* host_ = nullptr;
     bool enetReady_ = false;

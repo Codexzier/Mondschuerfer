@@ -26,33 +26,6 @@ bool ReadFile(const std::string& path, std::string& text) {
 
 std::string MapDir() { return std::string(GetApplicationDirectory()) + "karten/"; }
 
-std::string MapFileStem(const std::string& name) {
-    std::string out;
-    for (size_t i = 0; i < name.size() && out.size() < 48; ++i) {
-        unsigned char c = static_cast<unsigned char>(name[i]);
-        // Umlaute und ß (UTF-8: zwei Bytes, erstes 0xC3) umschreiben
-        if (c == 0xC3 && i + 1 < name.size()) {
-            unsigned char d = static_cast<unsigned char>(name[i + 1]);
-            const char* r = nullptr;
-            switch (d) {
-                case 0xA4: r = "ae"; break;   // ä
-                case 0xB6: r = "oe"; break;   // ö
-                case 0xBC: r = "ue"; break;   // ü
-                case 0x84: r = "Ae"; break;   // Ä
-                case 0x96: r = "Oe"; break;   // Ö
-                case 0x9C: r = "Ue"; break;   // Ü
-                case 0x9F: r = "ss"; break;   // ß
-                default: break;
-            }
-            if (r) { out += r; ++i; continue; }
-        }
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') out += static_cast<char>(c);
-        else if (c < 0x80 || (c & 0xC0) == 0xC0) out += '_';   // Folgebytes eines UTF-8-Zeichens nicht noch einmal
-    }
-    if (out.empty()) out = "karte";
-    return out;
-}
-
 std::vector<MapFileInfo> ListMaps() {
     std::vector<MapFileInfo> list;
     if (!DirectoryExists(MapDir().c_str())) return list;

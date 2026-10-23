@@ -14,12 +14,16 @@
 // Wer benutzt sie?
 //   - src/MapEditor.cpp: Karteneditor (Segmente setzen, Zufall generieren)
 //   - src/MapFiles.cpp: Karten als Datei speichern und laden
+//   - shared/Protocol.cpp: Karten hochladen und die aktive Karte des Servers
+//     an die Clients schicken (MapUploadMsg, MapDataMsg)
+//   - server/src/Accounts.cpp: hochgeladene Karten im Datenordner
 //   - shared/WorldGen.cpp: World::ApplyMap ersetzt die Zufalls-Deko durch die Karte
 //   - src/Render.cpp: Züge auf geschlossenen Monorail-Kreisen (MonorailPoint)
 //
 // Dateiformat (Text, eine Angabe pro Zeile, siehe MapToText):
 //   MONDSCHUERFER_KARTE 1          Kennung und Formatversion
 //   name <Name bis Zeilenende>
+//   author <Spielername>           nur auf dem Server (wer sie hochgeladen hat)
 //   piece <Modell> <x> <z> <Drehung> <Größe>    (eine Zeile je Teil)
 //   end
 //
@@ -54,6 +58,7 @@ struct MapPiece {
 
 struct GameMap {
     std::string name;
+    std::string author;         // nur auf dem Server: Konto, das sie hochgeladen hat
     std::vector<MapPiece> pieces;
 };
 
@@ -78,6 +83,10 @@ const MapSegment* FindSegment(const std::string& model);   // nullptr = nicht er
 // übersprungen.
 std::string MapToText(const GameMap& m);
 bool MapFromText(const std::string& text, GameMap& out);
+// Kartenname -> Dateiname ohne Endung (nie leer): nur a-z, A-Z, 0-9, '-' und
+// '_', Umlaute umgeschrieben, alles andere wird '_'. Mit reinen ASCII-Namen
+// gibt es auch unter Windows keine Probleme mit Sonderzeichen im Pfad.
+std::string MapFileStem(const std::string& name);
 
 // Höhe, in der ein Teil steht: nichts ragt unter den Boden, flache Teile
 // (Straßen) liegen knapp darüber, sonst flimmern sie mit der Bodenplatte.

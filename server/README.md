@@ -131,6 +131,12 @@ zu 8 insgesamt), aber nicht entfernen, weil Spieler sie besitzen können. Gespei
 sofort, auch für Schiffe, die Spieler schon besitzen. Ohne `ships.txt` gelten die Standard-Schiffe aus
 `shared/Config.hpp` (wie im Einzelspieler).
 
+Im Bereich **„Karten“** stellt man ein, welche Spieler Karten aus dem Karteneditor hochladen dürfen
+(Spielername eintragen und „Erlauben“, „Entziehen“ nimmt es zurück; Standard: niemand). Hochgeladene
+Karten erscheinen in der Liste darüber und lassen sich dort **aktivieren** oder **löschen**. Die aktive
+Karte sehen alle Spieler sofort, ohne Neuaufbau der Welt; sie ist nur Kulisse. Höchstens 20 Karten, 5
+je Spieler; gespeichert in `/data/karten/`, die aktive Karte in `server.txt`.
+
 ### Umgebungsvariablen
 
 | Variable | Standard | Bedeutung |
@@ -413,6 +419,7 @@ Alles Wichtige liegt im Docker-Volume **`mondschuerfer-data`** (im Container `/d
 | `server.txt` | **Server-Salz** (ohne es passt kein gespeicherter Schlüssel mehr – niemand könnte sich anmelden!), Karten-Seed, insgesamt abgelieferte Ressourcen (Ausbaustufe der Stationen) |
 | `settings.txt` | nur vorhanden, wenn auf der Webseite Einstellungen gespeichert wurden |
 | `ships.txt` | nur vorhanden, wenn auf der Webseite Schiffe gespeichert wurden |
+| `karten/` | hochgeladene Karten aus dem Karteneditor (eine `.karte`-Datei je Karte) |
 | `*.defekt-…` | Kopien von Dateien, in denen beim Laden kaputte Zeilen übersprungen wurden |
 
 Die Dateien sind einfacher Text. Ansehen ja – **bearbeiten nur bei gestopptem Server**, sonst

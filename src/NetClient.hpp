@@ -21,8 +21,11 @@
 //         der Server bestimmt, was wirklich passiert.
 //   - Ereignisse (Töne, Explosionen, Meldungen, Ziel erreicht) an das Spiel
 //     weitergeben.
+//   - Die aktive Karte des Servers (MapData) in die Spiegelwelt setzen.
+//   - Karten hochladen (Karteneditor, UploadMap).
 //
-// Benutzt von: src/Multiplayer.cpp (Menüs, Anzeige). Abhängigkeiten: ENet,
+// Benutzt von: src/Multiplayer.cpp (Menüs, Anzeige), src/MapEditor.cpp
+// ("An Server senden"). Abhängigkeiten: ENet,
 // shared/Protocol.hpp, shared/Crypto.hpp, shared/World.hpp.
 // ---------------------------------------------------------------------------
 #include "Protocol.hpp"
@@ -63,6 +66,12 @@ public:
     void Register(const std::string& name, const std::string& password);
     void Login(const std::string& name, const std::string& password);
     void Spectate();
+    // Karte hochladen (Karteneditor): wie Login, aber statt anzumelden wird die
+    // Karte geschickt. Fehler (falsches Passwort ...) kommen über TakeError();
+    // die Antwort des Servers über TakeUploadResult. Danach Disconnect().
+    void UploadMap(const std::string& name, const std::string& password, const GameMap& map);
+    // true einmalig, wenn die Antwort auf UploadMap da ist
+    bool TakeUploadResult(bool& ok, std::string& text);
 
     // --- Jedes Frame ---------------------------------------------------------
     // held: gehaltene Tasten (Schub, Drehen, Feuer). scanPressed/interactPressed:

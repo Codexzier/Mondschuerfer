@@ -34,6 +34,7 @@
 //   ServerInfo kommt   -> Lobby: Name, Spielerzahl, Salz für den Schlüssel
 //   Register()/Login() -> LoggingIn: Schlüssel berechnen, senden
 //   Spectate()         -> LoggingIn
+//   UploadMap()        -> LoggingIn, nach MapUploadResult wieder Lobby
 //   Welcome kommt      -> Playing bzw. Spectating: Kulisse mit dem Seed des
 //                         Servers aufbauen (World::BuildMirror)
 //   jedes Frame (Update):
@@ -282,12 +283,16 @@ struct NetClient::Impl {
     double serviceErrorSince = -1.0;   // Now() beim ersten Socketfehler in Folge, -1 = keiner
 
     // --- Anmeldung -------------------------------------------------------------
-    enum class LoginKind { None, Register, Login, Spectate };
+    enum class LoginKind { None, Register, Login, Spectate, Upload };
     LoginKind loginKind = LoginKind::None;
     double loginStart = 0.0;
     std::string loginName;             // so, wie der Spieler ihn eingegeben hat (geprüft)
     net::Key32 loginKey{};             // nur zwischen Login() und LoginChallenge gespeichert
     bool haveKey = false;
+    GameMap uploadMap;                 // UploadMap(): wird mit der Challenge-Antwort geschickt
+    bool uploadDone = false;           // Antwort da (TakeUploadResult)
+    bool uploadOk = false;
+    std::string uploadText;
 
     // --- Welt -------------------------------------------------------------------
     World world;
@@ -300,6 +305,7 @@ struct NetClient::Impl {
     int myId = -1;                     // eigene Spieler-ID, -1 = Zuschauer/keine
     std::string myName;
     net::ModelIds models{};            // Variantennummer (Netz) -> Modell-ID
+    std::vector<Deco> baseDecos;       // Zufalls-Deko aus BuildMirror (für den Wechsel zurück zur Standardkarte)
 
     // --- Listen ---------------------------------------------------------------------
     std::vector<net::PlayerEntry> players;
@@ -376,6 +382,8 @@ struct NetClient::Impl {
     void HandlePlayers(const net::PlayersMsg& m);
     void HandleHighscores(const net::HighscoresMsg& m);
     void HandleSettings(const net::SettingsMsg& m);
+    void HandleMapUploadResult(const net::MapUploadResultMsg& m);
+    void HandleMapData(const net::MapDataMsg& m);
 
     void SyncTime(double serverTime);
     // Serverzeit in Sekunden aus dem Schrittzähler, gezählt ab dem ersten
@@ -430,6 +438,8 @@ void NetClient::Impl::ResetSession() {
     loginKind = LoginKind::None;
     loginName.clear();
     WipeKey();
+    uploadMap = GameMap{};
+    uploadDone = false;
     worldReady = false;
     worldRebuilt = false;
     welcome = net::WelcomeMsg{};
@@ -714,6 +724,16 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
             if (net::Decode(r, m)) HandleSettings(m);
             break;
         }
+        case net::MsgType::MapUploadResult: {
+            net::MapUploadResultMsg m;
+            if (net::Decode(r, m)) HandleMapUploadResult(m);
+            break;
+        }
+        case net::MsgType::MapData: {
+            net::MapDataMsg m;
+            if (net::Decode(r, m)) HandleMapData(m);
+            break;
+        }
         default:
             break;   // unbekannt (z. B. neuere Serverversion): ignorieren
     }
@@ -754,6 +774,7 @@ void NetClient::Impl::HandleError(const net::ErrorMsg& m) {
             case LoginKind::Register: text = "Konto anlegen fehlgeschlagen: " + text; break;
             case LoginKind::Login: text = "Anmeldung fehlgeschlagen: " + text; break;
             case LoginKind::Spectate: text = "Zuschauen nicht möglich: " + text; break;
+            case LoginKind::Upload: text = "Hochladen fehlgeschlagen: " + text; break;
             case LoginKind::None: break;
         }
     }
@@ -780,11 +801,43 @@ void NetClient::Impl::HandleError(const net::ErrorMsg& m) {
 // proof = HMAC(Schlüssel, Nonce + Name). Ein Mithörer kann mit dem Beweis
 // nichts anfangen, weil die nächste Anmeldung eine andere Nonce bekommt.
 void NetClient::Impl::HandleChallenge(const net::LoginChallengeMsg& m) {
-    if (state != NetState::LoggingIn || loginKind != LoginKind::Login || !haveKey) return;
-    net::LoginProofMsg proof;
-    proof.proof = crypto::LoginProof(loginKey, m.nonce, ToLowerAscii(loginName));
-    Send(net::Encode(proof), true);
+    if (state != NetState::LoggingIn || !haveKey) return;
+    if (loginKind == LoginKind::Login) {
+        net::LoginProofMsg proof;
+        proof.proof = crypto::LoginProof(loginKey, m.nonce, ToLowerAscii(loginName));
+        Send(net::Encode(proof), true);
+    } else if (loginKind == LoginKind::Upload) {
+        // Karte hochladen: derselbe Beweis, aber zusammen mit der Karte
+        net::MapUploadMsg up;
+        up.proof = crypto::LoginProof(loginKey, m.nonce, ToLowerAscii(loginName));
+        up.map = uploadMap;
+        Send(net::Encode(up), true);
+        uploadMap = GameMap{};
+    } else {
+        return;
+    }
     WipeKey();   // wird nicht mehr gebraucht (eine Nonce gilt nur für einen Versuch)
+}
+
+// Antwort auf UploadMap: zurück in die Lobby, das Ergebnis holt der Editor ab.
+void NetClient::Impl::HandleMapUploadResult(const net::MapUploadResultMsg& m) {
+    if (state != NetState::LoggingIn || loginKind != LoginKind::Upload) return;
+    uploadDone = true;
+    uploadOk = m.ok;
+    uploadText = m.text;
+    loginKind = LoginKind::None;
+    state = NetState::Lobby;
+}
+
+// Aktive Karte des Servers: kommt nach jedem Welcome und wenn der Betreiber
+// die Karte wechselt. Erst die Zufalls-Deko aus BuildMirror zurückholen, dann
+// die Karte darüberlegen (World::ApplyMap); die Standardkarte ist nur die
+// Zufalls-Deko.
+void NetClient::Impl::HandleMapData(const net::MapDataMsg& m) {
+    if (!worldReady) return;
+    world.decos = baseDecos;
+    world.monorails.clear();
+    if (m.custom) world.ApplyMap(m.map);
 }
 
 // Begrüßung: Anmeldung/Zuschauen hat geklappt, oder der Server hat die Welt
@@ -799,6 +852,7 @@ void NetClient::Impl::HandleWelcome(const net::WelcomeMsg& m) {
 
     welcome = m;
     world.BuildMirror(m.worldSeed, m.settings);
+    baseDecos = world.decos;
     if (rebuild) world.drawRange = keepDrawRange;
     world.totalDelivered = m.totalDelivered;
     world.lastStage = world.StationStage();
@@ -1652,6 +1706,26 @@ void NetClient::Spectate() {
     d.myName.clear();
     d.loginStart = d.Now();
     d.state = NetState::LoggingIn;
+}
+
+// Wie Login, nur mit LoginKind::Upload: HandleChallenge schickt dann die
+// Karte (MapUpload) statt LoginProof.
+void NetClient::UploadMap(const std::string& name, const std::string& password, const GameMap& map) {
+    Impl& d = *impl_;
+    Login(name, password);
+    if (d.state != NetState::LoggingIn) return;   // Eingabe ungültig (Grund in TakeError)
+    d.loginKind = Impl::LoginKind::Upload;
+    d.uploadMap = map;
+    d.uploadDone = false;
+}
+
+bool NetClient::TakeUploadResult(bool& ok, std::string& text) {
+    Impl& d = *impl_;
+    if (!d.uploadDone) return false;
+    d.uploadDone = false;
+    ok = d.uploadOk;
+    text = d.uploadText;
+    return true;
 }
 
 void NetClient::Update(float dt, const ShipInput& held, bool scanPressed, bool interactPressed) {

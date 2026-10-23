@@ -372,6 +372,7 @@ void GameServer::InitWorld() {
     // Für unbekannte Namen wird der Beweis gegen einen Zufallsschlüssel geprüft.
     // So dauert die Prüfung gleich lang und verrät nicht, ob es den Namen gibt.
     crypto::RandomBytes(dummyKey_.data(), dummyKey_.size());
+    UpdateMapData();
 }
 
 // Die Hauptschleife. Kein "Busy-Waiting": enet_host_service schläft im
@@ -469,6 +470,7 @@ void GameServer::Step() {
     // (docs/Mehrspieler.md Abschnitt 12), nie mitten in der Simulation.
     ApplySettingsRequest();
     ApplyShipsRequest();
+    ApplyMapCommands();
 
     for (auto& up : clients_)
         if (up->isBot) BotThink(*up);
@@ -1036,6 +1038,12 @@ void GameServer::OnReceive(Client& c, const uint8_t* data, size_t len) {
             else HandleLoginProof(c, m);
             break;
         }
+        case net::MsgType::MapUpload: {
+            net::MapUploadMsg m;
+            if (!net::Decode(r, m)) BadPacket(c, "MapUpload");
+            else HandleMapUpload(c, m);
+            break;
+        }
         case net::MsgType::Input: {
             net::InputMsg m;
             if (!net::Decode(r, m)) BadPacket(c, "Input");
@@ -1133,13 +1141,12 @@ void GameServer::FailLogin(Client& c, net::ErrorCode code) {
     SendError(c, code);
 }
 
-void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
-    if (c.role != Role::Lobby) return;
+Account* GameServer::CheckProof(Client& c, const net::Key32& proof, const char* what) {
     if (!c.challengePending) {
         // Beweis ohne vorherige Herausforderung (oder Nonce schon verbraucht)
         SendError(c, net::ErrorCode::BadRequest);
-        BadPacket(c, "LoginProof ohne LoginStart");
-        return;
+        BadPacket(c, what);
+        return nullptr;
     }
     c.challengePending = false;   // eine Nonce gilt nur für EINEN Versuch
     const std::string lower = ToLowerAscii(c.challengeName);
@@ -1150,7 +1157,7 @@ void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
         // Zu viele Fehlversuche in den letzten 10 Minuten (siehe LoginBlocked).
         // Den Beweis gar nicht erst prüfen.
         FailLogin(c, net::ErrorCode::TooManyAttempts);
-        return;
+        return nullptr;
     }
 
     Account* acc = validName ? accounts_.Find(lower) : nullptr;
@@ -1158,12 +1165,19 @@ void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
     // Rechenweg, gleiche Antwort ("Name oder Passwort falsch").
     const net::Key32& key = acc ? acc->key : dummyKey_;
     const crypto::Digest expected = crypto::LoginProof(key, c.nonce, lower);
-    const bool ok = crypto::ConstantTimeEqual(expected.data(), m.proof.data(), expected.size()) && acc != nullptr;
+    const bool ok = crypto::ConstantTimeEqual(expected.data(), proof.data(), expected.size()) && acc != nullptr;
     if (!ok) {
         RecordLoginFailure(lower, acc != nullptr, c, now);
         FailLogin(c, net::ErrorCode::WrongLogin);
-        return;
+        return nullptr;
     }
+    return acc;
+}
+
+void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
+    if (c.role != Role::Lobby) return;
+    Account* acc = CheckProof(c, m.proof, "LoginProof ohne LoginStart");
+    if (!acc) return;
     // Richtiges Passwort. Jetzt erst prüfen, ob der Spieler schon online ist
     // (z. B. alte Verbindung noch nicht abgelaufen) oder der Server voll ist.
     for (const auto& o : clients_) {
@@ -1190,6 +1204,40 @@ void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
         break;
     }
     LoginPlayer(c, acc, acc->name);
+}
+
+// Karte aus dem Karteneditor ("An Server senden"). Anmeldedaten wie bei
+// LoginProof prüfen, dann Berechtigung (Verwaltungsseite) und Obergrenzen
+// (Accounts::StoreMap). Angemeldet wird dabei nicht: Der Client bleibt in der
+// Lobby und trennt nach der Antwort selbst.
+void GameServer::HandleMapUpload(Client& c, const net::MapUploadMsg& m) {
+    if (c.role != Role::Lobby) return;
+    Account* acc = CheckProof(c, m.proof, "MapUpload ohne LoginStart");
+    if (!acc) return;
+    net::MapUploadResultMsg res;
+    GameMap map = m.map;
+    const size_t first = map.name.find_first_not_of(' ');   // Leerzeichen am Rand weg
+    map.name = first == std::string::npos ? std::string() : map.name.substr(first, map.name.find_last_not_of(' ') - first + 1);
+    map.author = acc->name;
+    std::string file, error;
+    if (!acc->mapUpload) {
+        res.text = "Du darfst auf diesem Server keine Karten hochladen. Der Betreiber kann es auf der Verwaltungsseite erlauben.";
+    } else if (map.name.empty()) {
+        res.text = "Die Karte braucht einen Namen.";
+    } else if (!accounts_.StoreMap(map, file, error)) {
+        res.text = error;
+    } else {
+        res.ok = true;
+        res.text = "Karte \"" + map.name + "\" hochgeladen. Der Betreiber kann sie auf der Verwaltungsseite aktivieren.";
+        Log(Fmt("%s hat die Karte \"%s\" hochgeladen (%d Teile, Datei %s)", acc->name.c_str(), map.name.c_str(),
+                static_cast<int>(map.pieces.size()), file.c_str()));
+        if (file == accounts_.ActiveMap()) {
+            // Neue Fassung der gerade aktiven Karte: sofort an alle
+            UpdateMapData();
+            SendToAllInGame(mapData_);
+        }
+    }
+    Send(c, net::Encode(res), true);
 }
 
 // Eingaben nur in die Warteschlange legen; angewendet werden sie in ApplyInputs.
@@ -1431,6 +1479,7 @@ void GameServer::SendWelcome(Client& c) {
     m.serverTime = ClientTime(c);
     m.tick = static_cast<uint32_t>(tick_);
     Send(c, net::Encode(m), true);
+    Send(c, mapData_, true);   // Kulisse: aktive Karte (gleicher Kanal, kommt also nach dem Welcome an)
 }
 
 void GameServer::SendDepositsNow(Client& c) {
@@ -1942,6 +1991,72 @@ void GameServer::ApplyShipsRequest() {
     BroadcastSettings();
 }
 
+// Bereich "Karten" der Webseite. Eine Karte ist nur Kulisse (keine
+// Kollision), deshalb ändert sich an der Welt des Servers nichts: Die Clients
+// bekommen die neue Karte (MapData) und tauschen ihre Deko aus.
+void GameServer::ApplyMapCommands() {
+    std::vector<MapCommand> cmds;
+    if (!shared_ || !shared_->TakeMapCommands(cmds)) return;
+    for (const MapCommand& cmd : cmds) {
+        switch (cmd.kind) {
+            case MapCommand::Kind::Activate:
+            case MapCommand::Kind::Delete: {
+                const ServerMap* sm = cmd.arg.empty() ? nullptr : accounts_.FindMap(cmd.arg);
+                if (!cmd.arg.empty() && !sm) {
+                    MapNotice("Diese Karte gibt es nicht mehr.", true);
+                    break;
+                }
+                const std::string name = sm ? sm->map.name : std::string("Standardkarte");
+                const bool wasActive = cmd.arg == accounts_.ActiveMap();
+                if (cmd.kind == MapCommand::Kind::Delete) {
+                    if (!sm) break;   // die Standardkarte lässt sich nicht löschen
+                    accounts_.RemoveMap(cmd.arg);
+                    MapNotice("Karte \"" + name + "\" gelöscht." + (wasActive ? " Es gilt wieder die Standardkarte." : ""));
+                    if (!wasActive) break;
+                    accounts_.SetActiveMap(std::string());
+                } else {
+                    if (wasActive) break;
+                    accounts_.SetActiveMap(cmd.arg);
+                    MapNotice("Karte \"" + name + "\" ist jetzt aktiv.");
+                }
+                accounts_.SaveServerData();
+                UpdateMapData();
+                SendToAllInGame(mapData_);
+                break;
+            }
+            case MapCommand::Kind::Allow:
+            case MapCommand::Kind::Deny: {
+                Account* acc = accounts_.Find(cmd.arg);
+                if (!acc) {
+                    MapNotice("Es gibt kein Konto \"" + cmd.arg + "\".", true);
+                    break;
+                }
+                acc->mapUpload = cmd.kind == MapCommand::Kind::Allow;
+                accounts_.SaveAccounts();
+                MapNotice(acc->name + (acc->mapUpload ? " darf jetzt Karten hochladen." : " darf keine Karten mehr hochladen."));
+                break;
+            }
+        }
+    }
+}
+
+void GameServer::UpdateMapData() {
+    net::MapDataMsg m;
+    if (const ServerMap* sm = accounts_.FindMap(accounts_.ActiveMap())) {
+        m.custom = true;
+        m.map = sm->map;
+        m.map.author.clear();
+    }
+    mapData_ = net::Encode(m);
+}
+
+void GameServer::MapNotice(const std::string& text, bool error) {
+    mapNotice_ = text;
+    mapNoticeError_ = error;
+    ++mapNoticeSeq_;
+    Log("Karten: " + text);
+}
+
 void GameServer::BroadcastSettings() {
     net::SettingsMsg m;
     m.settings = settings_;
@@ -2163,6 +2278,13 @@ void GameServer::PublishStatus() {
     st.settings = settings_;
     st.defaults = config_.defaults;
     st.shipModels = ShipModelNames();   // Auswahl im Bereich "Schiffe" (der Web-Thread kennt Models.hpp nicht)
+    for (const ServerMap& sm : accounts_.Maps())
+        st.maps.push_back({sm.file, sm.map.name, sm.map.author, static_cast<int>(sm.map.pieces.size()), sm.loops});
+    st.activeMap = accounts_.ActiveMap();
+    st.mapUploaders = accounts_.MapUploaders();
+    st.mapNotice = mapNotice_;
+    st.mapNoticeSeq = mapNoticeSeq_;
+    st.mapNoticeError = mapNoticeError_;
     shared_->PublishStatus(st);
 }
 

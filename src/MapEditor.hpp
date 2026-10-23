@@ -10,8 +10,11 @@
 //        Knöpfe "Karte laden" (wenn eine gewählt ist), "Neu" (leere Karte)
 //        und "Zurück".
 //     2. Bearbeiten: links das Werkzeugfenster mit "Zufall generieren" und
-//        den Segmenten (Reiter je Gruppe), oben Name, "Speichern" und
-//        "Zurück", in der Mitte die Karte von schräg oben.
+//        den Segmenten (Reiter je Gruppe), oben Name, "An Server senden",
+//        "Speichern" und "Zurück", in der Mitte die Karte von schräg oben.
+//   "An Server senden" schickt die Karte an einen Mehrspieler-Server (Anmeldung
+//   mit Spielername und Passwort; der Betreiber muss es auf der
+//   Verwaltungsseite erlauben). Dort kann er sie als aktive Karte wählen.
 //   Bildet die Monorail einen geschlossenen Kreis, fährt darauf ein Zug aus
 //   monorail_trainFront, monorail_trainPassenger und monorail_trainEnd –
 //   schon im Editor und später im Spiel (Render.cpp).
@@ -30,13 +33,16 @@
 //
 // Abhängigkeiten: shared/World.hpp (Kulisse zeichnen: Boden, Stationen,
 // Teile der Karte), shared/GameMap.hpp, MapFiles.hpp, Ui.hpp, Audio.hpp,
-// Assets.hpp, raylib/rlgl.
+// Assets.hpp, NetClient.hpp (Hochladen), ClientConfig.hpp, raylib/rlgl.
 // ---------------------------------------------------------------------------
 #include "MapFiles.hpp"
 #include "Ui.hpp"
 #include "World.hpp"
+#include <memory>
 #include <string>
 #include <vector>
+
+class NetClient;
 
 // Liste der gespeicherten Karten mit Auswahl (Klick, Pfeiltasten) und
 // Mausrad-Bildlauf. Doppelklick oder Enter "öffnet" den gewählten Eintrag.
@@ -66,6 +72,7 @@ private:
 class MapEditorScreen {
 public:
     MapEditorScreen();
+    ~MapEditorScreen();      // bricht ein laufendes Hochladen ab
     void Update(float dt);   // Kamera, Zeit der Welt (Zug fährt)
     void Draw();             // zwischen BeginDrawing/ClearBackground und EndDrawing
     bool WantsMenu() const { return wantsMenu_; }
@@ -93,10 +100,19 @@ private:
     void Back();
     void Message(const std::string& text, Color c);
 
+    // "An Server senden": Fenster mit Server, Spielername und Passwort. Eine
+    // eigene Verbindung (NetClient) nur für das Hochladen, danach getrennt.
+    void OpenUpload();
+    void CloseUpload();
+    void StartUpload();
+    void UpdateUpload(float dt);
+    void FinishUpload(const std::string& text, bool ok);
+
     void DrawList();
     void DrawEdit();
     void DrawScene();                     // 3D: Welt, Raster, Vorschau
     void DrawToolPanel(Rectangle r, float s);
+    void DrawUpload(float s);
 
     Mode mode_ = Mode::List;
     MapListView list_;
@@ -125,4 +141,12 @@ private:
     float msgT_ = 0.0f;
     float backArmed_ = 0.0f;   // > 0: "Zurück" trotz ungespeicherter Änderungen ein zweites Mal drücken
     bool wantsMenu_ = false;
+
+    bool uploadOpen_ = false;
+    std::unique_ptr<NetClient> uploadNet_;   // != nullptr: Hochladen läuft
+    bool uploadSent_ = false;                // Karte schon abgeschickt, warte auf Antwort
+    GameMap uploadMap_;                      // Stand beim Klick auf "Senden"
+    ui::TextField serverField_, playerField_, passField_;
+    std::string uploadMsg_;
+    Color uploadMsgColor_ = WHITE;
 };

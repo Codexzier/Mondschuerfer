@@ -221,6 +221,9 @@ bisher oder eine Karte aus dem Karteneditor. Der Spielstand merkt sich die Karte
   Felsen und Fundstücken (Straßen, Monorail und Gebäude bleiben stehen). Bilden die
   Monorail-Schienen einen geschlossenen Kreis, fährt darauf ein Zug, im Editor und im Spiel.
   Gespeichert wird im Ordner `karten` neben der ausführbaren Datei.
+  *An Server senden* schickt die Karte an einen Mehrspieler-Server (Anmeldung mit Spielername und
+  Passwort). Das geht nur, wenn der Betreiber es dem Spieler auf der Verwaltungsseite erlaubt hat;
+  dort wählt er auch, welche Karte alle Spieler sehen.
 
   | Eingabe | Wirkung |
   |---|---|

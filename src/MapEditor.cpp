@@ -22,8 +22,10 @@
 #include "MapEditor.hpp"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "ClientConfig.hpp"
 #include "ControlsMath.hpp"
 #include "Models.hpp"
+#include "NetClient.hpp"
 #include "raymath.h"
 #include <algorithm>
 #include <cmath>
@@ -48,6 +50,45 @@ void BuildBackdrop(World& w, unsigned int seed) {
 std::string Trim(const std::string& t) {
     size_t a = t.find_first_not_of(' '), b = t.find_last_not_of(' ');
     return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+}
+
+// Eingabefilter wie im Mehrspieler-Menü (Multiplayer.cpp)
+bool NameChar(int cp) {
+    return (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z') || (cp >= '0' && cp <= '9') || cp == '_' || cp == '-';
+}
+bool AddressChar(int cp) { return cp > 32 && cp < 127; }
+
+void WipeText(std::string& t) {   // Passwort nicht länger als nötig im Speicher
+    std::fill(t.begin(), t.end(), '\0');
+    t.clear();
+}
+
+// Mehrzeiligen Text mit Umbruch an Leerzeichen zeichnen (wie TextBlock in
+// Multiplayer.cpp); liefert die belegte Höhe
+float TextBlock(const std::string& text, float x, float y, float size, float maxW, Color c) {
+    float yy = y;
+    std::string line, word;
+    auto flush = [&](bool last) {
+        const std::string candidate = line.empty() ? word : line + " " + word;
+        if (!line.empty() && Width(candidate, size) > maxW) {
+            Text(line, x, yy, size, c);
+            yy += size * 1.3f;
+            line = word;
+        } else {
+            line = candidate;
+        }
+        word.clear();
+        if (last && !line.empty()) {
+            Text(line, x, yy, size, c);
+            yy += size * 1.3f;
+        }
+    };
+    for (char ch : text) {
+        if (ch == ' ') flush(false);
+        else word.push_back(ch);
+    }
+    flush(true);
+    return yy - y;
 }
 
 // Rechteck am Boden (Belegung eines Segments), knapp über dem Raster
@@ -135,11 +176,26 @@ MapEditorScreen::MapEditorScreen() {
     BuildBackdrop(world_, static_cast<unsigned int>(std::time(nullptr)));
     nameField_.maxChars = mapgrid::MAX_NAME;
     nameField_.placeholder = "Name der Karte";
+    serverField_.placeholder = "z. B. localhost:7777";
+    serverField_.maxChars = 120;
+    serverField_.accept = AddressChar;
+    playerField_.placeholder = "Spielername";
+    playerField_.maxChars = net::MAX_NAME;
+    playerField_.accept = NameChar;
+    passField_.placeholder = "Passwort";
+    passField_.maxChars = 64;
+    passField_.password = true;
     list_.Refresh();
+}
+
+MapEditorScreen::~MapEditorScreen() {
+    if (uploadNet_) uploadNet_->Disconnect();
+    WipeText(passField_.text);
 }
 
 void MapEditorScreen::Update(float dt) {
     world_.time += dt;   // Zug fährt (Render.cpp), Stationen drehen ihre Antennen
+    if (uploadNet_) UpdateUpload(dt);
     if (msgT_ > 0.0f) msgT_ -= dt;
     if (backArmed_ > 0.0f) backArmed_ -= dt;
 
@@ -150,7 +206,7 @@ void MapEditorScreen::Update(float dt) {
     } else {
         // Verschieben mit der Tastatur, schneller, je weiter die Kamera weg ist.
         // Nicht während im Namensfeld getippt wird (dann sind WASD/R Buchstaben).
-        if (!TextInputActive()) {
+        if (!TextInputActive() && !uploadOpen_) {
             const float v = camHeight_ * 1.2f * dt;
             if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) camTarget_.z -= v;
             if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) camTarget_.z += v;
@@ -185,7 +241,7 @@ void MapEditorScreen::Update(float dt) {
 void MapEditorScreen::Draw() {
     groundOk_ = controls::RayToGround(GetScreenToWorldRay(PointerPos(), cam_), &ground_);
 
-    if (mode_ == Mode::Edit) {
+    if (mode_ == Mode::Edit && !uploadOpen_) {
         // Setzen und Löschen vor dem Zeichnen, damit das Bild gleich den
         // neuen Stand zeigt. Ein Klick zählt nur, wenn er nicht auf einem
         // Fenster landet; danach wird gemalt bzw. radiert, solange die Taste
@@ -391,6 +447,97 @@ void MapEditorScreen::Message(const std::string& text, Color c) {
 }
 
 // ---------------------------------------------------------------------------
+// An Server senden
+// ---------------------------------------------------------------------------
+void MapEditorScreen::OpenUpload() {
+    if (Trim(nameField_.text).empty()) {
+        Message("Bitte zuerst einen Namen eingeben.", BAD);
+        g_audio.Play(Sfx::Denied);
+        return;
+    }
+    uploadOpen_ = true;
+    nameField_.focused = false;
+    if (serverField_.text.empty()) serverField_.text = g_clientConfig.server;
+    if (playerField_.text.empty()) playerField_.text = g_clientConfig.name;   // zuletzt benutzter Spielername
+    serverField_.focused = false;
+    playerField_.focused = playerField_.text.empty();
+    passField_.focused = !playerField_.focused;
+    uploadMsg_.clear();
+    g_audio.Play(Sfx::UiConfirm);
+}
+
+void MapEditorScreen::CloseUpload() {
+    if (uploadNet_) {
+        uploadNet_->Disconnect();
+        uploadNet_.reset();
+    }
+    WipeText(passField_.text);
+    uploadOpen_ = false;
+    g_audio.Play(Sfx::UiBack);
+}
+
+void MapEditorScreen::StartUpload() {
+    if (uploadNet_) return;
+    const std::string addr = Trim(serverField_.text), player = Trim(playerField_.text);
+    std::string error;
+    if (addr.empty()) error = "Bitte die Serveradresse eingeben.";
+    else if (!net::ValidPlayerName(player)) error = net::ErrorText(net::ErrorCode::NameInvalid);
+    else if (Utf8Length(passField_.text) < net::MIN_PASSWORD) error = Fmt("Das Passwort hat mindestens %d Zeichen.", net::MIN_PASSWORD);
+    if (!error.empty()) {
+        uploadMsg_ = error;
+        uploadMsgColor_ = BAD;
+        g_audio.Play(Sfx::Denied);
+        return;
+    }
+    uploadMap_ = map_;
+    uploadMap_.name = Trim(nameField_.text);
+    uploadNet_ = std::make_unique<NetClient>();
+    uploadSent_ = false;
+    if (!uploadNet_->Connect(addr)) {
+        FinishUpload(uploadNet_->TakeError(), false);
+        return;
+    }
+    uploadMsg_ = "Verbinde mit " + addr + " ...";
+    uploadMsgColor_ = MUTED;
+}
+
+// Jedes Frame, solange die Verbindung besteht: Sobald die Lobby erreicht ist
+// (ServerInfo mit dem Salz für den Schlüssel), Karte schicken (UploadMap),
+// dann auf die Antwort warten.
+void MapEditorScreen::UpdateUpload(float dt) {
+    NetClient& n = *uploadNet_;
+    n.Update(dt, ShipInput{}, false, false);
+    const std::string err = n.TakeError();
+    bool ok = false;
+    std::string text;
+    if (!err.empty()) {
+        FinishUpload(err, false);
+    } else if (n.TakeUploadResult(ok, text)) {
+        if (ok) {
+            g_clientConfig.server = Trim(serverField_.text);
+            g_clientConfig.name = Trim(playerField_.text);
+            g_clientConfig.Save();
+        }
+        FinishUpload(text, ok);
+    } else if (!uploadSent_ && n.State() == NetState::Lobby && n.HasInfo()) {
+        n.UploadMap(Trim(playerField_.text), passField_.text, uploadMap_);
+        WipeText(passField_.text);
+        uploadSent_ = true;
+        uploadMsg_ = Fmt("Sende Karte (%d Teile) ...", static_cast<int>(uploadMap_.pieces.size()));
+    }
+}
+
+void MapEditorScreen::FinishUpload(const std::string& text, bool ok) {
+    uploadMsg_ = text;
+    uploadMsgColor_ = ok ? GOOD : BAD;
+    if (uploadNet_) {
+        uploadNet_->Disconnect();
+        uploadNet_.reset();
+    }
+    g_audio.Play(ok ? Sfx::UiConfirm : Sfx::Denied);
+}
+
+// ---------------------------------------------------------------------------
 // Zeichnen
 // ---------------------------------------------------------------------------
 void MapEditorScreen::DrawScene() {
@@ -517,6 +664,43 @@ void MapEditorScreen::DrawToolPanel(Rectangle r, float s) {
     if (segment_ < 0) Text("Segment wählen, dann auf die Karte klicken", x, by - 48 * s, 15 * s, MUTED);
 }
 
+// Fenster "An Server senden" in der Bildmitte
+void MapEditorScreen::DrawUpload(float s) {
+    const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+    const float pw = 640 * s, ph = 560 * s;
+    const Rectangle r{(W - pw) * 0.5f, (H - ph) * 0.5f, pw, ph};
+    Panel(r, Color{18, 22, 30, 245});
+    const bool busy = uploadNet_ != nullptr;
+    const float x = r.x + 28 * s, fw = pw - 56 * s, fh = 46 * s;
+    float y = r.y + 22 * s;
+    Text("KARTE AN SERVER SENDEN", x, y, 30 * s, ACCENT);
+    y += 42 * s;
+    Text(Fmt("\"%s\"  ·  %d Teile", Trim(nameField_.text).c_str(), static_cast<int>(map_.pieces.size())), x, y, 20 * s, TEXT);
+    y += 34 * s;
+
+    CycleFocus({&serverField_, &playerField_, &passField_});   // Tab wechselt das Feld
+    bool submit = false;
+    const char* labels[3] = {"Server", "Spielername", "Passwort"};
+    TextField* fields[3] = {&serverField_, &playerField_, &passField_};
+    for (int i = 0; i < 3; ++i) {
+        Text(labels[i], x, y, 18 * s, MUTED);
+        y += 22 * s;
+        submit = fields[i]->Draw({x, y, fw, fh}, 22 * s, !busy) || submit;
+        y += fh + 10 * s;
+    }
+    y += TextBlock("Anmeldung wie im Mehrspieler. Der Betreiber muss dir das Hochladen auf der Verwaltungsseite erlauben und "
+                   "kann die Karte dort für alle aktivieren. Gleicher Kartenname ersetzt deine ältere Fassung.",
+                   x, y, 16 * s, fw, MUTED);
+    y += 8 * s;
+    if (!uploadMsg_.empty()) TextBlock(uploadMsg_, x, y, 18 * s, fw, uploadMsgColor_);
+
+    const float bw = 200 * s, bh = 48 * s, by = r.y + ph - bh - 20 * s;
+    const bool send = Button({x, by, bw, bh}, busy ? "Sende ..." : "Senden", 22 * s, false, !busy);
+    const bool close = Button({r.x + pw - 28 * s - bw, by, bw, bh}, busy ? "Abbrechen" : "Schließen", 22 * s, false);
+    if ((send || submit) && !busy) StartUpload();
+    else if (close) CloseUpload();
+}
+
 void MapEditorScreen::DrawEdit() {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
@@ -536,17 +720,19 @@ void MapEditorScreen::DrawEdit() {
     const Rectangle bar{bx, m, W - bx - m, 66 * s};
     Panel(bar);
     const float fh = 42 * s, fy = bar.y + (bar.height - fh) * 0.5f;
-    const float backW = 140 * s, saveW = 170 * s, gap = 12 * s;
+    const float backW = 140 * s, saveW = 170 * s, sendW = 230 * s, gap = 12 * s;
     const float rx = bar.x + bar.width - 16 * s;
     Text("Name", bar.x + 16 * s, fy + 10 * s, 22 * s, MUTED);
     const float fx = bar.x + 86 * s;
-    const float fw = std::max(120 * s, std::min(360 * s, rx - backW - gap - saveW - gap - fx));
-    if (nameField_.Draw({fx, fy, fw, fh}, 22 * s)) nameField_.focused = false;   // Enter beendet die Eingabe
+    const float fw = std::max(120 * s, std::min(360 * s, rx - backW - gap - saveW - gap - sendW - gap - fx));
+    if (nameField_.Draw({fx, fy, fw, fh}, 22 * s, !uploadOpen_)) nameField_.focused = false;   // Enter beendet die Eingabe
     const bool dirty = Dirty();
-    const bool back = Button({rx - backW, fy, backW, fh}, "Zurück", 22 * s, false);
-    const bool save = Button({rx - backW - gap - saveW, fy, saveW, fh}, dirty ? "Speichern *" : "Speichern", 22 * s, dirty);
+    const bool back = Button({rx - backW, fy, backW, fh}, "Zurück", 22 * s, false, !uploadOpen_);
+    const bool save = Button({rx - backW - gap - saveW, fy, saveW, fh}, dirty ? "Speichern *" : "Speichern", 22 * s, dirty, !uploadOpen_);
+    const bool send = Button({rx - backW - gap - saveW - gap - sendW, fy, sendW, fh}, "An Server senden", 22 * s, false, !uploadOpen_);
     const bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-    if (save || (ctrl && IsKeyPressed(KEY_S))) Save();
+    if (save || (ctrl && IsKeyPressed(KEY_S) && !uploadOpen_)) Save();
+    if (send) OpenUpload();
 
     if (msgT_ > 0.0f) {
         Color c = msgColor_;
@@ -572,9 +758,13 @@ void MapEditorScreen::DrawEdit() {
          "Mausrad zoomen  ·  Strg+S speichern",
          bx, ty, 16 * s, MUTED);
 
-    // ESC: erst die Eingabe bzw. Auswahl beenden, dann zurück zur Kartenliste
+    if (uploadOpen_) DrawUpload(s);
+
+    // ESC: erst das Fenster "An Server senden" schließen bzw. die Eingabe oder
+    // Auswahl beenden, dann zurück zur Kartenliste
     if (BackPressed()) {
-        if (nameField_.focused) nameField_.focused = false;
+        if (uploadOpen_) CloseUpload();
+        else if (nameField_.focused) nameField_.focused = false;
         else if (segment_ >= 0) segment_ = -1;
         else Back();
     } else if (back) {

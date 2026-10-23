@@ -34,7 +34,12 @@
 //      Deposits (wenn sich die sichtbaren Lagerstätten ändern),
 //      Players (1/s), Highscores (bei Änderung) und Settings (wenn der
 //      Betreiber Einstellungen ohne Neuaufbau der Welt ändert, z. B. Schiffe).
+//      Nach jedem Welcome und beim Kartenwechsel: MapData (aktive Karte).
+//   Karte hochladen (Karteneditor): wie 3b LoginStart -> LoginChallenge, dann
+//   MapUpload statt LoginProof -> Server antwortet MapUploadResult. Das meldet
+//   nicht im Spiel an; der Client trennt danach die Verbindung.
 // ---------------------------------------------------------------------------
+#include "GameMap.hpp"
 #include "GameSettings.hpp"
 #include "SoundEvents.hpp"
 #include "raylib.h"
@@ -55,7 +60,8 @@ namespace net {
 //            DockAction AcceptMission, GameSettings::missions, ShipKind::Convoy).
 // Version 6: Schiffstypen vom Server (GameSettings::ships, Nachricht Settings),
 //            Kanonen bis 5, Modellvariante craft_racer.
-constexpr uint16_t PROTOCOL_VERSION = 6;
+// Version 7: Karten aus dem Karteneditor (MapUpload, MapUploadResult, MapData).
+constexpr uint16_t PROTOCOL_VERSION = 7;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -95,6 +101,7 @@ enum class MsgType : uint8_t {
     Input = 5,
     DockAction = 6,
     Leave = 7,
+    MapUpload = 8,
     // Server -> Client
     ServerInfo = 100,
     Error = 101,
@@ -106,6 +113,8 @@ enum class MsgType : uint8_t {
     Players = 107,
     Highscores = 108,
     Settings = 109,
+    MapUploadResult = 110,
+    MapData = 111,
 };
 
 enum class ErrorCode : uint8_t {
@@ -229,6 +238,16 @@ struct DockActionMsg {
     // cfg::ShipTypeId), Bit 7 = altes Schiff in Zahlung geben. SwitchShip: Schiffstyp.
     // AcceptMission: Missionsart (MissionType).
     uint8_t param = 0;
+};
+
+// Karte hochladen (Karteneditor "An Server senden"). Kommt statt LoginProof
+// nach LoginChallenge: Der Beweis gilt nur für dieses Hochladen, angemeldet
+// wird nicht. Die Karte wird kompakt übertragen (Segment-Nummer statt
+// Modellname, Position in cm), höchstens mapgrid::MAX_PIECES Teile = gut
+// 54 KB, also unter der Paketgrenze des Servers (64 KB).
+struct MapUploadMsg {
+    Key32 proof{};                // wie LoginProofMsg::proof
+    GameMap map;                  // ohne author (den setzt der Server)
 };
 
 // ---------------------------------------------------------------------------
@@ -455,6 +474,20 @@ struct SettingsMsg {
     GameSettings settings;
 };
 
+// Antwort auf MapUpload
+struct MapUploadResultMsg {
+    bool ok = false;
+    std::string text;             // Meldung für den Spieler (Erfolg oder Grund der Ablehnung)
+};
+
+// Aktive Karte des Servers (auf der Verwaltungsseite gewählt). Nur Kulisse:
+// Der Client setzt sie mit World::ApplyMap in seine Spiegelwelt.
+// custom = false: Standardkarte (Zufalls-Deko aus dem Seed).
+struct MapDataMsg {
+    bool custom = false;
+    GameMap map;                  // ohne author
+};
+
 // ---------------------------------------------------------------------------
 // Kodieren (inkl. Typ-Byte) und Dekodieren (Typ-Byte bereits gelesen)
 // ---------------------------------------------------------------------------
@@ -463,6 +496,7 @@ std::vector<uint8_t> Encode(const LoginStartMsg& m);
 std::vector<uint8_t> Encode(const LoginProofMsg& m);
 std::vector<uint8_t> Encode(const InputMsg& m);
 std::vector<uint8_t> Encode(const DockActionMsg& m);
+std::vector<uint8_t> Encode(const MapUploadMsg& m);
 std::vector<uint8_t> EncodeSimple(MsgType t);   // Nachrichten ohne Inhalt (Spectate, Leave)
 std::vector<uint8_t> Encode(const ServerInfoMsg& m);
 std::vector<uint8_t> Encode(const ErrorMsg& m);
@@ -474,12 +508,15 @@ std::vector<uint8_t> Encode(const EventsMsg& m);
 std::vector<uint8_t> Encode(const PlayersMsg& m);
 std::vector<uint8_t> Encode(const HighscoresMsg& m);
 std::vector<uint8_t> Encode(const SettingsMsg& m);
+std::vector<uint8_t> Encode(const MapUploadResultMsg& m);
+std::vector<uint8_t> Encode(const MapDataMsg& m);
 
 bool Decode(Reader& r, RegisterMsg& m);
 bool Decode(Reader& r, LoginStartMsg& m);
 bool Decode(Reader& r, LoginProofMsg& m);
 bool Decode(Reader& r, InputMsg& m);
 bool Decode(Reader& r, DockActionMsg& m);
+bool Decode(Reader& r, MapUploadMsg& m);
 bool Decode(Reader& r, ServerInfoMsg& m);
 bool Decode(Reader& r, ErrorMsg& m);
 bool Decode(Reader& r, LoginChallengeMsg& m);
@@ -490,6 +527,8 @@ bool Decode(Reader& r, EventsMsg& m);
 bool Decode(Reader& r, PlayersMsg& m);
 bool Decode(Reader& r, HighscoresMsg& m);
 bool Decode(Reader& r, SettingsMsg& m);
+bool Decode(Reader& r, MapUploadResultMsg& m);
+bool Decode(Reader& r, MapDataMsg& m);
 
 // ---------------------------------------------------------------------------
 // Modellvarianten: über das Netz werden kleine Nummern statt Modell-IDs geschickt
