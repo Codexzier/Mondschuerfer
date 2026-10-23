@@ -364,7 +364,7 @@ struct PlayerState {
 
     int mission = -1;            // Mission::id der laufenden Mini-Mission, -1 = keine
     std::vector<MissionMarker> markers;   // Ziele dieser Mission für die Minikarte (World::UpdateMissions)
-    // Funkspruch unten rechts (Untertitel, später Clip): Missionstyp * 3 +
+    // Funkspruch unten rechts (Clip und Untertitel): Missionstyp * 3 +
     // Phase (0 Start, 1 Ende, 2 Fehlschlag), -1 = keiner. cueT = Restzeit;
     // sie läuft nur, solange der Spieler nicht angedockt ist.
     int cue = -1;

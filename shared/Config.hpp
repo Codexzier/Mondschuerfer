@@ -243,7 +243,7 @@ constexpr float TURRET_RANGE = 36.0f;
 constexpr int MISSION_SLOTS = 3;
 constexpr float MISSION_RESPAWN = 20.0f;   // Sekunden nach einer erfüllten Mission bis zum neuen Angebot
 constexpr int MISSION_GOAL = 3;            // Personen, Piraten bzw. Frachter je Mission
-constexpr float CUE_TIME = 10.0f;          // so lange steht ein Funkspruch (Untertitel) unten rechts
+constexpr float CUE_TIME = 10.0f;          // so lange steht ein Funkspruch (Clip, Untertitel) unten rechts; länger als jeder Clip
 // Konvoi: Tempo und Schild der Frachter, Umweg über offenes Gelände (die
 // Stationen liegen nah beieinander und im Schutz der Geschütztürme) und
 // Startzeit der beiden Piratenwellen (Sekunden seit dem Abflug, je 2 Piraten).
@@ -253,7 +253,8 @@ constexpr float CONVOY_DETOUR = 100.0f;
 constexpr float CONVOY_WAVES[2] = {8.0f, 22.0f};
 // Missionsarten. Index = MissionType (World.hpp); die Zahlenwerte gehen über
 // das Netzwerk (SnapMe): Reihenfolge nicht ändern. Funkspruch je Phase
-// (0 Start, 1 Ende, 2 Fehlschlag): Clip-Datei aus assets/clips und Untertitel.
+// (0 Start, 1 Ende, 2 Fehlschlag): Clip-Datei aus assets/clips (MPEG-1 mit
+// MP2-Ton, abgespielt von src/ClipPlayer.cpp) und Untertitel.
 // Leerer Untertitel = kein Funkspruch in dieser Phase.
 struct MissionDef {
     const char* name;

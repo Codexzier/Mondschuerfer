@@ -49,6 +49,7 @@
 #include "Hud.hpp"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "ClipPlayer.hpp"
 #include "Controls.hpp"
 #include "Ui.hpp"
 #include <algorithm>
@@ -563,21 +564,32 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     }
 
     // --- Funkspruch der Mission unten rechts --------------------------------------------
-    // Untertitel zum Clip (Start, Ende, Fehlschlag; Texte in cfg::MISSIONS).
-    // Die Restzeit läuft nur außerhalb der Station (World::UpdateMissions),
-    // angedockt wird er nicht gezeigt. Die letzten 0,6 s blendet er aus.
+    // Avatar-Clip (links, abgespielt von ClipPlayer) mit Untertitel (Start,
+    // Ende, Fehlschlag; Dateien und Texte in cfg::MISSIONS). Fehlt der Clip,
+    // steht nur der Untertitel da. Die Restzeit läuft nur außerhalb der
+    // Station (World::UpdateMissions), angedockt wird er nicht gezeigt. Die
+    // letzten 0,6 s blendet er aus.
     if (me.cue >= 0 && me.cue < cfg::MISSION_TYPE_COUNT * 3 && me.cueT > 0.0f && me.dockedAt < 0) {
         const cfg::MissionDef& def = cfg::MISSIONS[me.cue / 3];
         const float a = std::clamp(me.cueT / 0.6f, 0.0f, 1.0f);
-        const float bw2 = 430 * s;
-        const std::vector<std::string> lines = WrapLines(def.subtitle[me.cue % 3], bw2 - 32 * s, 20 * s);
-        const float bh = 52 * s + static_cast<float>(lines.size()) * 26 * s;
+        const Texture2D* clip = g_clip.Frame(me.cue);
+        const float vs = clip ? 160 * s : 0.0f;              // Kantenlänge des Clipbilds
+        const float tx = clip ? vs + 32 * s : 16 * s;       // Textspalte, vom linken Rand
+        const float bw2 = 430 * s + tx - 16 * s;
+        const std::vector<std::string> lines = WrapLines(def.subtitle[me.cue % 3], 430 * s - 32 * s, 20 * s);
+        const float bh = std::max(52 * s + static_cast<float>(lines.size()) * 26 * s, clip ? vs + 32 * s : 0.0f);
         const Rectangle cr{W - bw2 - 16 * s, H - bh - 16 * s, bw2, bh};
         DrawRectangleRec(cr, Color{15, 18, 26, static_cast<unsigned char>(210 * a)});
         DrawRectangleLinesEx(cr, 1.0f, Fade(Color{255, 230, 120, 255}, 0.6f * a));
-        Text(std::string("FUNKSPRUCH  ") + def.name, cr.x + 16 * s, cr.y + 12 * s, 16 * s, Fade(Color{255, 230, 120, 255}, a));
+        if (clip) {
+            const Rectangle vr{cr.x + 16 * s, cr.y + 16 * s, vs, vs};
+            DrawTexturePro(*clip, Rectangle{0, 0, static_cast<float>(clip->width), static_cast<float>(clip->height)}, vr,
+                           Vector2{0, 0}, 0.0f, Fade(WHITE, a));
+            DrawRectangleLinesEx(vr, 1.0f, Fade(Color{255, 230, 120, 255}, 0.4f * a));
+        }
+        Text(std::string("FUNKSPRUCH  ") + def.name, cr.x + tx, cr.y + 12 * s, 16 * s, Fade(Color{255, 230, 120, 255}, a));
         for (size_t i = 0; i < lines.size(); ++i)
-            Text(lines[i], cr.x + 16 * s, cr.y + 40 * s + static_cast<float>(i) * 26 * s, 20 * s, Fade(TEXT, a));
+            Text(lines[i], cr.x + tx, cr.y + 40 * s + static_cast<float>(i) * 26 * s, 20 * s, Fade(TEXT, a));
     }
 
     // Tastenhilfe: in den ersten 90 s mit einem Schiff ganz, danach nur ein

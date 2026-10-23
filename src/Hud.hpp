@@ -20,6 +20,7 @@
 //   - shared/World.hpp (nur lesend, "const World&": das HUD ändert nie die
 //     Spielwelt; Aktionen gehen als DockRequest an den Aufrufer zurück).
 //   - Ui.hpp (Texte, Panels, Balken, Knöpfe), Audio.hpp (Ton "Abgelehnt").
+//   - ClipPlayer.hpp (Bild des Funkspruch-Clips einer Mission).
 //   - raylib: 2D-Zeichenfunktionen und GetWorldToScreen.
 //
 // Aufrufzeitpunkt:

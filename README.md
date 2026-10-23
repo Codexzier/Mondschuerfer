@@ -191,7 +191,7 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
   Die Prozente beziehen sich auf die Grundwerte (Scanner 34 m, Tempo 16, Schaden 10).
 - **Mini-Missionen:** An der Handelsstation im Tab „Missionen“ nimmst du eine Mission an (immer
   nur eine gleichzeitig). Die Belohnung kommt sofort aufs Konto. Ziele stehen pulsierend auf
-  dem Radar, der Fortschritt oben in der Mitte, der Funkspruch unten rechts.
+  dem Radar, der Fortschritt oben in der Mitte, der Funkspruch (Videoclip mit Untertitel) unten rechts.
   - *Personen einsammeln* (2.000 Punkte): drei Personen (gelb) mit F abholen und an einer
     Handelsstation abliefern.
   - *Piraten abschießen* (2.500 Punkte): drei Missionspiraten (rot) abschießen.
@@ -397,6 +397,7 @@ Mondschuerfer/
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
 │   ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Musik, Zuordnung Ereignis -> Datei
+│   ├── ClipPlayer.cpp/.hpp Funkspruch-Clips der Missionen (assets/clips, MPEG-1)
 │   ├── MusicMix.hpp      Überblenden der Musik (reine Rechnung, ohne raylib)
 │   ├── Save.cpp/.hpp     Spielstand
 │   ├── NetClient.*       Mehrspieler: Verbindung, Anmeldung, Vorhersage, Interpolation
@@ -410,6 +411,7 @@ Mondschuerfer/
 ├── third_party/          Fremde Bibliotheken im Projekt (siehe third_party/README.md)
 │   ├── enet/             ENet 1.3.18 (Netzwerk über UDP)
 │   ├── httplib/          cpp-httplib 0.22.0 (Webserver der Verwaltungsseite)
+│   ├── pl_mpeg/          pl_mpeg (Videoclips abspielen, nur das Spiel)
 │   └── raylib/           nur raylib.h und raymath.h 5.5 (für den Server)
 └── docs/
     ├── Mehrspieler.md    Wie der Mehrspieler funktioniert (zum Lernen aus dem Code)
@@ -496,5 +498,6 @@ Phase, Spieler, Kontostand …).
 - Im Projekt mitgeliefert unter `third_party/` (Einzelheiten in `third_party/README.md`):
   - **ENet** 1.3.18 von Lee Salzman, MIT-Lizenz (`third_party/enet/LICENSE`) – Netzwerk für Spiel und Server
   - **cpp-httplib** 0.22.0 von yhirose, MIT-Lizenz (`third_party/httplib/LICENSE`) – Webserver der Verwaltungsseite
+  - **pl_mpeg** von Dominic Szablewski, MIT-Lizenz (im Kopf von `third_party/pl_mpeg/pl_mpeg.h`) – Videoclips der Missionen
   - **raylib**-Header `raylib.h` und `raymath.h` (5.5), zlib-Lizenz (`third_party/raylib/LICENSE`) – Datentypen
     und Vektor-Mathe für den Server

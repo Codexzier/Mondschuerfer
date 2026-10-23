@@ -28,6 +28,7 @@
 #include "Multiplayer.hpp"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "ClipPlayer.hpp"
 #include "Hud.hpp"
 #include "TiltShift.hpp"
 #include "raylib.h"
@@ -839,6 +840,8 @@ void MultiplayerScreen::FireworkBurst(Vector3 center, float spread, int strength
 // ===========================================================================
 void MultiplayerScreen::UpdateAudio(float dt) {
     LoopState loops;   // alles aus, wenn nicht gespielt wird
+    int cue = -1;      // Funkspruch-Clip der Mission (ClipPlayer), -1 = keiner
+    bool showClip = false;
     // Immer abholen, auch wenn nichts abgespielt wird – sonst sammeln sie sich an
     std::vector<SoundEvent> sounds = net_.TakeSounds();
     if (phase_ == Phase::Playing && net_.WorldReady()) {
@@ -849,6 +852,9 @@ void MultiplayerScreen::UpdateAudio(float dt) {
         const World& w = net_.GetWorld();
         const Ship& p = w.Player();
         const PlayerState& me = w.Me();
+        // Die Welt läuft im Mehrspieler auch in der Pause weiter, der Clip auch.
+        if (me.cueT > 0.0f) cue = me.cue;
+        showClip = me.dockedAt < 0;
         if (!paused_ && w.PlayerAlive() && !p.hidden && me.dockedAt < 0) {
             loops.engine = 1.0f;
             loops.enginePitch = 0.9f + 0.25f * Vector3Length(p.vel) / std::max(1.0f, p.maxSpeed);
@@ -871,6 +877,7 @@ void MultiplayerScreen::UpdateAudio(float dt) {
     const bool inGame = phase_ == Phase::Playing || phase_ == Phase::Spectating;
     g_audio.SetMusicTrack(inGame ? MusicTrack::Game : MusicTrack::Menu);
     g_audio.Update(dt, loops);
+    g_clip.Update(dt, cue, showClip);
 }
 
 void MultiplayerScreen::OnMuteToggled(bool muted) {
