@@ -1189,6 +1189,7 @@ int main(int argc, char** argv) {
     g_clientConfig.Load();
     g_audio.Init(g_assets.AssetDir()); // ohne Audiogerät läuft das Spiel stumm weiter
     g_clip.Init(g_assets.AssetDir());  // Funkspruch-Clips der Missionen (assets/clips)
+    g_clip.SetVolume(g_clientConfig.clipVolume);
     // Musik-Einstellungen aus der Datei übernehmen. Auch ohne Audiogerät,
     // damit die Optionen die richtigen Werte anzeigen.
     g_audio.SetMusicEnabled(g_clientConfig.musicEnabled);

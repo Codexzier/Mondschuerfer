@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Musik" (an/aus,
-// Lautstärke), "Grafik" (Tilt-Shift, Kantenglättung, FXAA) und "Steuerung"
+// Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Ton" (Musik
+// an/aus, Musik- und Clip-Lautstärke), "Grafik" (Tilt-Shift, Kantenglättung, FXAA) und "Steuerung"
 // (Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
@@ -10,6 +10,7 @@
 //   - Ui.hpp: Panel, Button, Slider, Toggle, Texte, Farben, Scale()
 //   - Audio.hpp: g_audio (Musik an/aus und Lautstärke wirken sofort; Töne
 //     beim Bedienen)
+//   - ClipPlayer.hpp: g_clip (Lautstärke der Missions-Clips, wirkt sofort)
 //   - ClientConfig.hpp: g_clientConfig (Werte in der Einstellungsdatei)
 //   - Controls.hpp: Tastennamen für die Hilfezeile unten (Tastatur oder
 //     Controller)
@@ -23,7 +24,7 @@
 //      zurück.
 //   3. Karteireiter zeichnen; Klick wechselt die Seite.
 //   4. Inhalt der gewählten Seite:
-//      "Musik":     Umschalter und Schieberegler (Maus wird dabei ausgewertet)
+//      "Ton":       Umschalter und zwei Schieberegler (Maus wird dabei ausgewertet)
 //      "Grafik":    Schieberegler für Tilt-Shift, Kantenglättung (MSAA) und
 //                   FXAA (alle umgesetzt in TiltShift.cpp)
 //      "Steuerung": feste Tabelle (kControls unten)
@@ -31,7 +32,8 @@
 // Das Fenster ist immer so hoch wie die längste Seite, damit es beim
 // Wechseln der Seite nicht springt.
 // Wo sich ein Wert ändert, laufen alle Wege (Maus, Tastatur, Testoption)
-// über SetMusicOn bzw. SetVolume: Dort wird der Wert an g_audio gegeben,
+// über SetMusicOn, SetVolume bzw. SetClipVolume: Dort wird der Wert an g_audio
+// bzw. g_clip gegeben,
 // in g_clientConfig eingetragen und gespeichert.
 //
 // Alles läuft im Spiel-Thread.
@@ -39,6 +41,7 @@
 #include "Options.hpp"
 #include "Audio.hpp"
 #include "ClientConfig.hpp"
+#include "ClipPlayer.hpp"
 #include "Controls.hpp"
 #include "TiltShift.hpp"
 #include "Ui.hpp"
@@ -100,7 +103,7 @@ constexpr float kColumn[4] = {0.0f, 0.29f, 0.60f, 0.79f};
 // ===========================================================================
 constexpr float kPanelW = 1080.0f;   // Fensterbreite
 constexpr float kPad = 40.0f;        // Innenabstand links/rechts
-constexpr float kRowH = 52.0f;       // Höhe der wählbaren Zeilen (Musik, Lautstärke, Grafik)
+constexpr float kRowH = 52.0f;       // Höhe der wählbaren Zeilen (Ton, Grafik)
 constexpr float kRowGap = 8.0f;      // Abstand unter jeder wählbaren Zeile
 constexpr float kTabW = 220.0f;      // Breite eines Karteireiters
 constexpr float kTabH = 46.0f;       // Höhe der Karteireiter
@@ -110,17 +113,17 @@ constexpr float kTableText = 18.0f;  // Schriftgröße der Tabelle
 constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Höhe des Inhalts der einzelnen Seiten (in derselben Reihenfolge wie in Draw):
-//   Musik:     zwei Zeilen, Hinweiszeile 42
+//   Ton:       drei Zeilen, Hinweiszeile 42
 //   Grafik:    drei Zeilen, Hinweiszeile 42
 //   Steuerung: Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
-float MusicHeight() { return 2.0f * (kRowH + kRowGap) + 42.0f; }
+float SoundHeight() { return 3.0f * (kRowH + kRowGap) + 42.0f; }
 float GraphicsHeight() { return 3.0f * (kRowH + kRowGap) + 42.0f; }
 float ControlsHeight() { return 30.0f + 30.0f + kControlCount * kTableRowH; }
 
 // Gesamthöhe des Fensters: Rand 24, Überschrift 64, Karteireiter, Abstand 20,
 // die längste Seite, Abstand 16, Knopf, Rand 24.
 float PanelHeight() {
-    const float content = std::max(MusicHeight(), std::max(GraphicsHeight(), ControlsHeight()));
+    const float content = std::max(SoundHeight(), std::max(GraphicsHeight(), ControlsHeight()));
     return 24.0f + 64.0f + kTabH + 20.0f + content + 16.0f + kButtonH + 24.0f;
 }
 
@@ -149,10 +152,11 @@ bool MouseMoved() { return PointerMoved(); }
 // Öffnen, Schließen, Aktionen
 // ===========================================================================
 void OptionsScreen::Open() {
-    tab_ = TAB_MUSIC;
+    tab_ = TAB_SOUND;
     sel_ = ROW_MUSIC;
     frames_ = 0;
     dragging_ = false;
+    draggingClip_ = false;
     draggingTilt_ = false;
     draggingMsaa_ = false;
     draggingFxaa_ = false;
@@ -160,6 +164,7 @@ void OptionsScreen::Open() {
 
 void OptionsScreen::Close() {
     dragging_ = false;
+    draggingClip_ = false;
     draggingTilt_ = false;
     draggingMsaa_ = false;
     draggingFxaa_ = false;
@@ -188,6 +193,17 @@ void OptionsScreen::SetVolume(float v, bool save) {
     if (v > 1.0f) v = 1.0f;
     g_audio.SetMusicVolume(v);
     g_clientConfig.musicVolume = v;
+    if (save) g_clientConfig.Save();
+    else g_clientConfig.unsaved = true;
+}
+
+// Wie SetVolume, für die Missions-Clips (ClipPlayer).
+void OptionsScreen::SetClipVolume(float v, bool save) {
+    v = std::round(v * 20.0f) / 20.0f;
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    g_clip.SetVolume(v);
+    g_clientConfig.clipVolume = v;
     if (save) g_clientConfig.Save();
     else g_clientConfig.unsaved = true;
 }
@@ -237,9 +253,10 @@ void OptionsScreen::SetFxaa(float v, bool save) {
 int OptionsScreen::RowsOf(int tab, int* rows) {
     int n = 0;
     rows[n++] = ROW_TABS;
-    if (tab == TAB_MUSIC) {
+    if (tab == TAB_SOUND) {
         rows[n++] = ROW_MUSIC;
         rows[n++] = ROW_VOLUME;
+        rows[n++] = ROW_CLIPS;
     } else if (tab == TAB_GRAPHICS) {
         rows[n++] = ROW_TILT;
         rows[n++] = ROW_MSAA;
@@ -254,7 +271,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
 // sonst springt sie auf die erste Zeile der neuen Seite (Tab, LB/RB).
 void OptionsScreen::SetTab(int tab, bool keepTabsRow) {
     tab_ = (tab + TAB_COUNT) % TAB_COUNT;
-    dragging_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = false;
+    dragging_ = draggingClip_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = false;
     g_clientConfig.SaveIfChanged();
     int rows[5];
     RowsOf(tab_, rows);
@@ -295,7 +312,7 @@ bool OptionsScreen::Draw() {
     // auf den Karteireitern auch Pfeil links/rechts.
     const bool keys = frames_ > 1;
     bool toggle = false, close = false;
-    float volStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
+    float volStep = 0.0f, clipStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
     int msaaStep = 0;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
     if (keys) {
@@ -322,6 +339,7 @@ bool OptionsScreen::Draw() {
             dir = -1;
         if (sel_ == ROW_TABS && dir != 0) SetTab(tab_ + dir, true);
         if (sel_ == ROW_VOLUME) volStep = 0.05f * dir;
+        if (sel_ == ROW_CLIPS) clipStep = 0.05f * dir;
         if (sel_ == ROW_TILT) tiltStep = 0.1f * dir;
         if (sel_ == ROW_MSAA) msaaStep = dir;
         if (sel_ == ROW_FXAA) fxaaStep = 0.1f * dir;
@@ -337,7 +355,7 @@ bool OptionsScreen::Draw() {
     // Stehen die Pfeiltasten auf den Karteireitern, hat der gewählte einen
     // hellen Rahmen; unter der Maus wird ein Reiter aufgehellt.
     const Vector2 mouse = PointerPos();
-    const char* tabNames[TAB_COUNT] = {"Musik", "Grafik", "Steuerung"};
+    const char* tabNames[TAB_COUNT] = {"Ton", "Grafik", "Steuerung"};
     bool overTabs = false;
     for (int t = 0; t < TAB_COUNT; ++t) {
         const Rectangle r{x + t * (kTabW + 10.0f) * s, y, kTabW * s, kTabH * s};
@@ -365,7 +383,7 @@ bool OptionsScreen::Draw() {
     const float labelY = (kRowH * s - label) * 0.5f;   // senkrecht mittig in der Zeile
     bool overRow = false;                         // Zeiger auf einer Zeile (für Controller-A)
 
-    if (tab_ == TAB_MUSIC) {
+    if (tab_ == TAB_SOUND) {
         // Zeile "Musik": Klick auf den Schalter ODER irgendwo in die Zeile schaltet um.
         const Rectangle rowMusic{x, y, iw, kRowH * s};
         const bool overMusic = CheckCollisionPointRec(mouse, rowMusic);
@@ -387,7 +405,7 @@ bool OptionsScreen::Draw() {
         const bool overVol = CheckCollisionPointRec(mouse, rowVol);
         if (overVol && MouseMoved()) sel_ = ROW_VOLUME;
         DrawRow(rowVol, sel_ == ROW_VOLUME || dragging_);
-        Text("Lautstärke", x + 22 * s, y + labelY, label, TEXT);
+        Text("Musiklautstärke", x + 22 * s, y + labelY, label, TEXT);
         const Rectangle slider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
         float vol = g_audio.MusicVolume();
         const bool wasDragging = dragging_;
@@ -405,13 +423,33 @@ bool OptionsScreen::Draw() {
             Text("(Musik ist aus)", slider.x + slider.width + 120 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
         y += (kRowH + kRowGap) * s;
 
+        // Zeile "Clip-Lautstärke": wie die Musiklautstärke, für die
+        // Funksprüche der Missionen (ClipPlayer).
+        const Rectangle rowClip{x, y, iw, kRowH * s};
+        const bool overClip = CheckCollisionPointRec(mouse, rowClip);
+        if (overClip && MouseMoved()) sel_ = ROW_CLIPS;
+        DrawRow(rowClip, sel_ == ROW_CLIPS || draggingClip_);
+        Text("Clip-Lautstärke", x + 22 * s, y + labelY, label, TEXT);
+        const Rectangle clipSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+        float clipVol = g_clientConfig.clipVolume;
+        const bool wasDraggingClip = draggingClip_;
+        if (Slider(clipSlider, clipVol, draggingClip_, sel_ == ROW_CLIPS)) {
+            SetClipVolume(clipVol, false);
+            g_audio.Play(Sfx::UiMove, 0.6f);
+        }
+        if (draggingClip_) sel_ = ROW_CLIPS;
+        if (wasDraggingClip && !draggingClip_) g_clientConfig.SaveIfChanged();
+        Text(std::to_string(std::lround(g_clientConfig.clipVolume * 100.0f)) + " %", clipSlider.x + clipSlider.width + 30 * s,
+             y + labelY, label, TEXT);
+        y += (kRowH + kRowGap) * s;
+
         // Hinweis zur Taste M; ist der Ton gerade stumm, auffälliger in Orange –
         // sonst wundert man sich, warum der Regler nichts bewirkt.
         if (g_audio.Muted())
             Text("Der Ton ist gerade stumm geschaltet. Taste M schaltet ihn wieder ein.", x, y + 4 * s, 17 * s, ACCENT);
         else
-            Text("Taste M schaltet jederzeit den ganzen Ton stumm (Effekte und Musik).", x, y + 4 * s, 17 * s, MUTED);
-        overRow = overMusic || overVol;
+            Text("Taste M schaltet jederzeit den ganzen Ton stumm (Effekte, Musik und Clips).", x, y + 4 * s, 17 * s, MUTED);
+        overRow = overMusic || overVol || overClip;
     } else if (tab_ == TAB_GRAPHICS) {
         // Zeile "Tilt-Shift": Schieberegler plus Prozentanzeige (0 = "Aus").
         const Rectangle rowTilt{x, y, iw, kRowH * s};
@@ -507,7 +545,7 @@ bool OptionsScreen::Draw() {
         }
     }
     // Knopf immer an derselben Stelle, unter der längsten Seite
-    y = contentY + std::max(MusicHeight(), std::max(GraphicsHeight(), ControlsHeight())) * s + 16 * s;
+    y = contentY + std::max(SoundHeight(), std::max(GraphicsHeight(), ControlsHeight())) * s + 16 * s;
 
     // --- 5. Zurück ------------------------------------------------------------------
     // Links daneben eine kurze Tastenhilfe für die Optionen selbst.
@@ -532,6 +570,10 @@ bool OptionsScreen::Draw() {
     }
     if (volStep != 0.0f) {
         SetVolume(g_audio.MusicVolume() + volStep, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (clipStep != 0.0f) {
+        SetClipVolume(g_clientConfig.clipVolume + clipStep, false);
         g_audio.Play(Sfx::UiMove, 0.6f);
     }
     if (tiltStep != 0.0f) {

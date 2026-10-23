@@ -5,7 +5,8 @@
 // Ablauf eines Clips:
 //   1. Open(): Die Datei wird zweimal geöffnet. Der erste Decoder liest nur
 //      den Ton und entpackt ihn sofort ganz (die Clips sind wenige Sekunden
-//      lang, 32 kHz: etwa 2 MB) in einen raylib-Sound. Der zweite liest nur
+//      lang, 32 kHz: etwa 2 MB), bringt ihn auf volle Aussteuerung und
+//      legt ihn in einen raylib-Sound. Der zweite liest nur
 //      das Bild und bleibt offen. So braucht der Ton keinen Stream, der
 //      jedes Frame nachgefüllt werden müsste.
 //   2. Update(): Sound starten, eigene Uhr t_ weiterzählen und so viele
@@ -17,11 +18,18 @@
 // ---------------------------------------------------------------------------
 #include "ClipPlayer.hpp"
 #include "Config.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>   // vor pl_mpeg.h: es braucht size_t und FILE
 #include "pl_mpeg.h"
 
 ClipPlayer g_clip;
+
+void ClipPlayer::SetVolume(float v) {
+    volume_ = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+    if (hasSound_) SetSoundVolume(sound_, volume_);
+}
 
 void ClipPlayer::Update(float dt, int cue, bool show) {
     if (cue != cue_) {
@@ -84,10 +92,17 @@ void ClipPlayer::Open(const std::string& file) {
                 pcm.clear();
             }
             plm_destroy(a);
+            // Lauter machen: höchsten Ausschlag auf 0,95 bringen (die Clips
+            // sind sehr unterschiedlich und oft nur halb ausgesteuert).
+            float peak = 0.0f;
+            for (float v : pcm) peak = std::max(peak, std::fabs(v));
+            if (peak > 0.01f)
+                for (float& v : pcm) v *= 0.95f / peak;
             if (rate > 0 && !pcm.empty()) {
                 Wave wave{static_cast<unsigned int>(pcm.size() / 2), static_cast<unsigned int>(rate), 32, 2, pcm.data()};
                 sound_ = LoadSoundFromWave(wave);   // kopiert die Daten
                 hasSound_ = IsSoundValid(sound_);
+                if (hasSound_) SetSoundVolume(sound_, volume_);
             }
         }
     }

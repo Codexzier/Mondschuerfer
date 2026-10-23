@@ -5,9 +5,9 @@
 // Wofür ist die Datei da?
 //   Die Optionen zeigen ein Fenster mittig über dem Bild mit drei
 //   Karteireitern (Seiten) und darunter dem Knopf "Zurück":
-//   Seite "Musik":
-//     - Musik an/aus (Umschalter) und Musiklautstärke (Schieberegler in
-//       5-%-Schritten).
+//   Seite "Ton":
+//     - Musik an/aus (Umschalter), Musiklautstärke und Lautstärke der
+//       Missions-Clips (Schieberegler in 5-%-Schritten).
 //   Seite "Grafik":
 //     - der Stärke des Kameraeffekts Tilt-Shift (Schieberegler in
 //       10-%-Schritten, 0 = aus; siehe TiltShift.hpp),
@@ -31,7 +31,8 @@
 //   g_audio (wirkt sofort) und g_clientConfig (wird gespeichert).
 //
 // Abhängigkeiten: Ui.hpp (Panel, Knopf, Schieberegler, Umschalter, Texte),
-// Audio.hpp (g_audio: Musikwerte, Bedientöne), ClientConfig.hpp
+// Audio.hpp (g_audio: Musikwerte, Bedientöne), ClipPlayer.hpp (g_clip:
+// Clip-Lautstärke), ClientConfig.hpp
 // (g_clientConfig: Speichern), raylib (Tastatur, Maus, Zeichnen).
 //
 // Ablauf:
@@ -73,13 +74,15 @@ public:
     //               beim Schließen der Optionen.
     void SetMusicOn(bool on);
     void SetVolume(float v, bool save);
+    // Lautstärke der Missions-Clips 0..1, sonst wie SetVolume.
+    void SetClipVolume(float v, bool save);
 
 private:
     // Karteireiter (Seiten) der Optionen
-    enum Tab { TAB_MUSIC, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
+    enum Tab { TAB_SOUND, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
     // Wählbare Zeilen (Tastatursteuerung); welche davon zu sehen sind, hängt
     // von der Seite ab (RowsOf). ROW_TABS = die Karteireiter selbst.
-    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_BACK };
+    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_BACK };
 
     // Wählbare Zeilen der Seite tab von oben nach unten; liefert die Anzahl
     // (rows braucht Platz für 5).
@@ -99,10 +102,11 @@ private:
     void SetMsaaLevel(int level, bool save);
     void SetFxaa(float v, bool save);
 
-    int tab_ = TAB_MUSIC;    // gewählte Seite
+    int tab_ = TAB_SOUND;    // gewählte Seite
     int sel_ = ROW_MUSIC;    // per Tastatur ausgewählte Zeile
     int frames_ = 0;         // Frames seit Open() (Tasten erst ab dem 2. Frame, siehe Draw)
     bool dragging_ = false;  // Lautstärkeregler wird gerade mit der Maus gezogen (siehe ui::Slider)
+    bool draggingClip_ = false;   // dasselbe für den Clip-Lautstärkeregler
     bool draggingTilt_ = false;   // dasselbe für den Tilt-Shift-Regler
     bool draggingMsaa_ = false;   // ... den Kantenglättungs-Regler
     bool draggingFxaa_ = false;   // ... den FXAA-Regler

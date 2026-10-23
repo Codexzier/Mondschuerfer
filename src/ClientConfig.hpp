@@ -29,6 +29,7 @@
 //     name Anna
 //     music 1
 //     music_volume 0.50
+//     clip_volume 1.00
 //     tilt_shift 0.50
 //     msaa 4
 //     fxaa 0.00
@@ -50,6 +51,7 @@ struct ClientConfig {
     std::string name;                         // zuletzt erfolgreich angemeldeter Spielername
     bool musicEnabled = true;                 // Optionen: Musik an/aus           (Zeile "music 1|0")
     float musicVolume = 0.5f;                 // Optionen: Musiklautstärke 0..1   (Zeile "music_volume 0.50")
+    float clipVolume = 1.0f;                  // Optionen: Lautstärke der Missions-Clips 0..1 (Zeile "clip_volume 1.00")
     float tiltShift = 0.5f;                   // Optionen: Tilt-Shift-Stärke 0..1, 0 = aus (Zeile "tilt_shift 0.50")
     int msaa = 4;                             // Optionen: Kantenglättung 0/2/4/8/16-fach, 0 = aus (Zeile "msaa 4")
     float fxaa = 0.0f;                        // Optionen: FXAA-Stärke 0..1, 0 = aus (Zeile "fxaa 0.00")

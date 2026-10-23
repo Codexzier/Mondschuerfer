@@ -15,6 +15,8 @@
 //     in App::UpdateAudio.
 //   - src/Multiplayer.cpp: Update() in MultiplayerScreen::UpdateAudio.
 //   - src/Hud.cpp: Frame() zeichnet das Bild im Funkspruch-Kasten.
+//   - src/Options.cpp: SetVolume() (Seite "Ton", Clip-Lautstärke); beim
+//     Start setzt main.cpp den Wert aus der Einstellungsdatei.
 //
 // Abhängigkeiten:
 //   - raylib (Textur, Sound), third_party/pl_mpeg (MPEG-1-Video, MP2-Ton).
@@ -38,6 +40,10 @@ public:
     void Init(const std::string& assetDir) { dir_ = assetDir + "clips/"; }
     // Laufenden Clip freigeben (vor dem Schließen von Audiogerät und Fenster).
     void Shutdown() { Stop(); }
+    // Optionen, Seite "Ton": Lautstärke der Clips 0..1, wirkt sofort (auch auf
+    // einen laufenden Clip). Der Ton jedes Clips ist schon beim Laden auf
+    // volle Aussteuerung gebracht (Open), 1 = so laut wie möglich.
+    void SetVolume(float v);
 
     // Einmal pro Frame. cue = Funkspruch (Missionstyp * 3 + Phase, wie
     // PlayerState::cue), -1 = keiner. Ein neuer Wert beendet den alten Clip.
@@ -69,6 +75,7 @@ private:
     Sound sound_{};
     bool hasSound_ = false;
     bool paused_ = false;
+    float volume_ = 1.0f;
 };
 
 // Das einzige Clip-Objekt (definiert in ClipPlayer.cpp).

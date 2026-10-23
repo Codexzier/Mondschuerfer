@@ -307,10 +307,12 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
 
 **Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*) mit drei Karteireitern:
 
-*Musik*
+*Ton*
 - **Musik: An / Aus** – Umschalter (Mausklick, oder Zeile wählen und Enter).
-- **Lautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
+- **Musiklautstärke** – Schieberegler in 5-%-Schritten (mit der Maus ziehen oder ← / → drücken).
   Die Änderung ist sofort zu hören.
+- **Clip-Lautstärke** – Lautstärke der Funkspruch-Clips der Missionen, ebenfalls in 5-%-Schritten
+  (Standard 100 %; der Ton jedes Clips wird beim Laden auf volle Lautstärke gebracht).
 
 *Grafik* (wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf)
 - **Tilt-Shift** – Kameraeffekt, der die Welt wie ein Miniaturmodell wirken lässt: Die Bildmitte
@@ -334,7 +336,7 @@ Bedienung:
 - Controller: **LB / RB** (PlayStation: L1 / R1) wechselt die Seite, Zeiger mit dem linken Stick,
   A klickt (Regler: A halten und ziehen), Steuerkreuz wie die Pfeiltasten, B zurück.
 
-Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte und Musik); die
+Die Taste **M** schaltet weiterhin jederzeit den *ganzen* Ton stumm (Effekte, Musik und Clips); die
 Einstellungen in den Optionen bleiben dabei erhalten.
 
 Die Einstellungen stehen zusammen mit Serveradresse und Spielername in
@@ -345,14 +347,15 @@ server localhost:7777
 name Anna
 music 1
 music_volume 0.50
+clip_volume 1.00
 tilt_shift 0.50
 msaa 4
 fxaa 0.00
 ```
 
-`music` ist `1` (an) oder `0` (aus), `music_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
+`music` ist `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
 (Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`. Fehlt die Datei
-oder eine Zeile, gelten die Standardwerte (Musik an, Lautstärke 50 %, Tilt-Shift 50 %,
+oder eine Zeile, gelten die Standardwerte (Musik an, Musiklautstärke 50 %, Clip-Lautstärke 100 %, Tilt-Shift 50 %,
 Kantenglättung 4x, FXAA aus).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
@@ -391,7 +394,7 @@ Mondschuerfer/
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
-│   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Musik, Grafik, Steuerung)
+│   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Ton, Grafik, Steuerung)
 │   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA (Werte aus den Optionen)
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
