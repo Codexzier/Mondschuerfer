@@ -1278,7 +1278,8 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
 
     const bool returning = account && (account->progress.balance > 0 || account->progress.round > 1 ||
                                        account->progress.upgrades[0] + account->progress.upgrades[1] +
-                                               account->progress.upgrades[2] + account->progress.upgrades[3] > 0 ||
+                                               account->progress.upgrades[2] + account->progress.upgrades[3] +
+                                               account->progress.upgrades[4] > 0 ||
                                        account->progress.shipType != 0 || !account->progress.hangar.empty());
     if (account) account->lastLogin = UnixNow();
     if (!c.isBot) {
@@ -1305,8 +1306,9 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
 bool GameServer::CrashOnLogout(PlayerState& ps) {
     Ship* s = world_.PlayerShip(ps);
     if (!s || !s->crashing) return false;
-    world_.ResetProgress(ps);
     ++ps.deaths;
+    if (ps.lives > 1) --ps.lives;   // noch Leben übrig: Fortschritt bleibt
+    else world_.ResetProgress(ps);
     s->cargo = 0;
     return true;
 }
@@ -1338,7 +1340,7 @@ void GameServer::LogoutPlayer(Client& c, const char* reason, bool saveNow, bool 
     }
     if (saveNow) accounts_.SaveAccounts();
     Log(c.name + " abgemeldet (" + reason + ", Sitzung " + FormatDuration(Now() - c.sessionStart) + ")" +
-        (crashed ? " – während des Absturzes: Fortschritt zurückgesetzt" : "") +
+        (crashed ? " – während des Absturzes: als Absturz gewertet" : "") +
         (lingers ? " – Schiff bleibt noch 10 s im All" : ""));
     c.role = Role::Lobby;
     c.playerId = -1;
@@ -1500,7 +1502,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         for (const OwnedShip& o : ps->hangar) {
             net::SnapMe::Parked h;
             h.type = static_cast<uint8_t>(std::clamp(o.type, 0, cfg::SHIP_TYPE_COUNT - 1));
-            for (int u = 0; u < cfg::UP_COUNT; ++u) h.upgrades[u] = static_cast<uint8_t>(std::clamp(o.upgrades[u], 0, cfg::UPGRADE_LEVELS));
+            for (int u = 0; u < cfg::UP_COUNT; ++u) h.upgrades[u] = static_cast<uint8_t>(std::clamp(o.upgrades[u], 0, cfg::UPGRADE_MAX[u]));
             e.hangar.push_back(h);
         }
         e.scanEnergy = ps->scanEnergy;
@@ -1517,6 +1519,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         e.round = ClampU16(ps->round);
         e.kills = ClampU16(ps->kills);
         e.respawnT = ps->respawnT;
+        e.lives = static_cast<uint8_t>(std::clamp(ps->lives, 0, limits::MAX_LIVES));
     }
 
     // --- andere Schiffe ---
@@ -1648,6 +1651,7 @@ net::PlayersMsg GameServer::MakePlayers() const {
         e.roundTime = ps.roundTime;
         for (int u = 0; u < cfg::UP_COUNT; ++u)
             e.upgrades[u] = static_cast<uint8_t>(std::clamp(ps.upgrades[u], 0, cfg::UPGRADE_LEVELS));
+        e.lives = static_cast<uint8_t>(std::clamp(ps.lives, 0, limits::MAX_LIVES));
         e.alive = world_.PlayerAlive(ps);
         e.docked = ps.dockedAt >= 0;
         e.kills = ClampU16(ps.kills);
@@ -1785,7 +1789,8 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     // bearbeitet worden sein, und Upgrade-Stufen dienen als Array-Index.
     ps.balance = std::max(0LL, p.balance);
     ps.delivered = std::max(0LL, p.delivered);
-    for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = std::clamp(p.upgrades[u], 0, cfg::UPGRADE_LEVELS);
+    for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = std::clamp(p.upgrades[u], 0, cfg::UPGRADE_MAX[u]);
+    ps.lives = p.lives > 0 ? std::clamp(p.lives, 1, limits::MAX_LIVES) : settings_.lives;
     // Schiffstyp und geparkte Schiffe; je Typ höchstens ein Schiff
     ps.shipType = std::clamp(p.shipType, 0, cfg::SHIP_TYPE_COUNT - 1);
     ps.hangar.clear();
@@ -1794,7 +1799,7 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
         if (world_.OwnsShipType(ps, t)) continue;
         OwnedShip o;
         o.type = t;
-        for (int u = 0; u < cfg::UP_COUNT; ++u) o.upgrades[u] = std::clamp(h.upgrades[u], 0, cfg::UPGRADE_LEVELS);
+        for (int u = 0; u < cfg::UP_COUNT; ++u) o.upgrades[u] = std::clamp(h.upgrades[u], 0, cfg::UPGRADE_MAX[u]);
         o.hp = h.hp;
         ps.hangar.push_back(o);
     }
@@ -1833,6 +1838,7 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
         h.hp = o.hp;
         p.hangar.push_back(h);
     }
+    p.lives = ps.lives;
     const Ship* s = world_.PlayerShip(ps);
     if (s && !s->crashing) {
         p.cargo = s->cargo;
@@ -1875,9 +1881,9 @@ void GameServer::ApplySettings(const GameSettings& s) {
     const GameSettings old = settings_;
     settings_ = s;
     const bool rebuild = NeedsWorldRebuild(old, s);
-    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler%s",
+    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben%s",
             s.serverName.c_str(), DifficultyName(s.difficulty), s.enemyShips, s.tradeStations, s.shipyards,
-            MoonColorName(s.moon), s.maxPlayers, rebuild ? " – Karte wird neu aufgebaut" : ""));
+            MoonColorName(s.moon), s.maxPlayers, s.lives, rebuild ? " – Karte wird neu aufgebaut" : ""));
     if (rebuild) {
         RebuildWorld();
     } else {
@@ -2071,6 +2077,7 @@ void GameServer::PublishStatus() {
         p.balance = ps->balance;
         p.round = ps->round;
         for (int u = 0; u < cfg::UP_COUNT; ++u) p.upgrades[u] = ps->upgrades[u];
+        p.lives = ps->lives;
         p.shipTime = ps->playTime;
         p.sessionSeconds = now - c.sessionStart;
         // Gesamtzeit = im Konto verbucht + seit der letzten Verbuchung

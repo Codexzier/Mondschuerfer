@@ -49,7 +49,8 @@ namespace net {
 // ---------------------------------------------------------------------------
 // Version 2: Welcome enthält den Simulationsschritt (tick), siehe WelcomeMsg.
 // Version 3: Schiffstypen (SnapMe::shipType/hangar, DockAction BuyShip/SwitchShip).
-constexpr uint16_t PROTOCOL_VERSION = 3;
+// Version 4: Upgrade Kanonen (5 Stufenwerte), Leben (SnapMe/PlayerEntry::lives, GameSettings::lives).
+constexpr uint16_t PROTOCOL_VERSION = 4;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -277,11 +278,11 @@ struct SnapMe {
     bool crashing = false;
     int32_t cargo = 0, cargoMax = 0;
     int64_t balance = 0;
-    uint8_t upgrades[4] = {0, 0, 0, 0};
+    uint8_t upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};
     uint8_t shipType = 0;         // Typ des geflogenen Schiffs (cfg::ShipTypeId)
     struct Parked {
         uint8_t type = 0;
-        uint8_t upgrades[4] = {0, 0, 0, 0};
+        uint8_t upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};
     };
     std::vector<Parked> hangar;   // geparkte eigene Schiffe (Tab "Schiff"), höchstens MAX_HANGAR
     float scanEnergy = 0;
@@ -298,6 +299,7 @@ struct SnapMe {
     uint16_t round = 1;
     uint16_t kills = 0;
     float respawnT = 0;
+    uint8_t lives = 0;            // verbleibende Leben
 };
 
 struct SnapShip {
@@ -396,11 +398,12 @@ struct PlayerEntry {
     uint16_t round = 1;
     float shipTime = 0;
     float roundTime = 0;
-    uint8_t upgrades[4] = {0, 0, 0, 0};
+    uint8_t upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};
     bool alive = false;
     bool docked = false;
     uint16_t kills = 0;
     uint16_t goals = 0;
+    uint8_t lives = 0;
 };
 
 // Alle angemeldeten Spieler (für Namen über den Schiffen, Top 3 im HUD,

@@ -318,6 +318,7 @@ void WriteSettings(JsonWriter& w, const GameSettings& g) {
     w.Key("shipyards").Int(g.shipyards);
     w.Key("moon").String(MoonColorKey(g.moon));
     w.Key("maxPlayers").Int(g.maxPlayers);
+    w.Key("lives").Int(g.lives);
     w.EndObject();
 }
 
@@ -363,6 +364,7 @@ std::string BuildStatusJson(const ServerStatus& s) {
         w.Key("shipTime").Number(p.shipTime, 1);
         w.Key("session").Number(p.sessionSeconds, 1);
         w.Key("totalLogin").Number(p.totalLoginSeconds, 1);
+        w.Key("lives").Int(p.lives);
         w.Key("kills").Int(p.kills);
         w.Key("deaths").Int(p.deaths);
         w.Key("goals").Int(p.goals);
@@ -394,6 +396,7 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("maxTradeStations").Int(limits::MAX_TRADE_STATIONS);
     w.Key("maxShipyards").Int(limits::MAX_SHIPYARDS);
     w.Key("maxPlayersLimit").Int(limits::MAX_PLAYERS_LIMIT);
+    w.Key("maxLives").Int(limits::MAX_LIVES);
     w.EndObject();
 
     w.EndObject();
@@ -803,7 +806,7 @@ bool ParseIntInRange(const std::string& text, int minValue, int maxValue, int& o
 // fehlende Felder bleiben also unverändert). false + error bei ungültigen Werten.
 bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& next, std::string& error) {
     static const char* const kKnown[] = {"serverName", "difficulty", "enemyShips", "tradeStations",
-                                         "shipyards",  "moon",       "maxPlayers"};
+                                         "shipyards",  "moon",       "maxPlayers", "lives"};
     for (const auto& kv : fields) {
         const bool known = std::any_of(std::begin(kKnown), std::end(kKnown), [&](const char* k) { return kv.first == k; });
         if (!known) {
@@ -872,13 +875,19 @@ bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& n
             return false;
         }
     }
+    if (const std::string* v = field("lives")) {
+        if (!ParseIntInRange(*v, 1, limits::MAX_LIVES, next.lives)) {
+            error = "Leben pro Spieler: bitte eine ganze Zahl von 1 bis " + std::to_string(limits::MAX_LIVES) + ".";
+            return false;
+        }
+    }
     return true;
 }
 
 bool SameSettings(const GameSettings& a, const GameSettings& b) {
     return a.serverName == b.serverName && a.difficulty == b.difficulty && a.enemyShips == b.enemyShips &&
            a.tradeStations == b.tradeStations && a.shipyards == b.shipyards && a.moon == b.moon &&
-           a.maxPlayers == b.maxPlayers;
+           a.maxPlayers == b.maxPlayers && a.lives == b.lives;
 }
 
 // Erfolgsantwort für beide Einstellungs-Routen.

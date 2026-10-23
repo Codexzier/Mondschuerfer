@@ -902,12 +902,13 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     ps.balance = me.balance;
     for (int u = 0; u < cfg::UP_COUNT; ++u)
         ps.upgrades[u] = std::min<int>(me.upgrades[u], cfg::UPGRADE_LEVELS);   // Schutz für Tabellenzugriffe
+    ps.lives = me.lives;
     ps.shipType = std::min<int>(me.shipType, cfg::SHIP_TYPE_COUNT - 1);
     ps.hangar.clear();
     for (const auto& h : me.hangar) {
         OwnedShip o;
         o.type = std::min<int>(h.type, cfg::SHIP_TYPE_COUNT - 1);
-        for (int u = 0; u < cfg::UP_COUNT; ++u) o.upgrades[u] = std::min<int>(h.upgrades[u], cfg::UPGRADE_LEVELS);
+        for (int u = 0; u < cfg::UP_COUNT; ++u) o.upgrades[u] = std::min<int>(h.upgrades[u], cfg::UPGRADE_MAX[u]);
         ps.hangar.push_back(o);
     }
     ps.scanEnergy = me.scanEnergy;

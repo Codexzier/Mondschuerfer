@@ -886,9 +886,9 @@ private:
             const Ship& p = world_.Player();
             int pirates = 0;
             for (const auto& sh : world_.ships) if (sh.faction == Faction::Pirate && !sh.dead) ++pirates;
-            fprintf(stderr, "REPORT t=%.0f play=%.0f bal=%lld deliv=%lld stage=%d upg=%d%d%d%d hp=%.0f/%.0f cargo=%d/%d kills=%d pirates=%d deps=%d revealed=%d wrecks=%d outcome=%d\n",
+            fprintf(stderr, "REPORT t=%.0f play=%.0f bal=%lld deliv=%lld stage=%d upg=%d%d%d%d%d hp=%.0f/%.0f cargo=%d/%d kills=%d pirates=%d deps=%d revealed=%d wrecks=%d outcome=%d\n",
                      elapsed_, world_.Me().playTime, world_.Me().balance, world_.totalDelivered, world_.StationStage(),
-                     world_.Me().upgrades[0], world_.Me().upgrades[1], world_.Me().upgrades[2], world_.Me().upgrades[3], p.hp,
+                     world_.Me().upgrades[0], world_.Me().upgrades[1], world_.Me().upgrades[2], world_.Me().upgrades[3], world_.Me().upgrades[4], p.hp,
                      p.maxHp, p.cargo, p.cargoMax, world_.Me().kills, pirates, static_cast<int>(world_.deposits.size()),
                      static_cast<int>(std::count_if(world_.deposits.begin(), world_.deposits.end(), [](const Deposit& d) { return d.revealed; })),
                      static_cast<int>(world_.wrecks.size()), static_cast<int>(world_.outcome));

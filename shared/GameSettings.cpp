@@ -52,6 +52,7 @@ void Sanitize(GameSettings& s) {
     s.tradeStations = std::clamp(s.tradeStations, 1, limits::MAX_TRADE_STATIONS);
     s.shipyards = std::clamp(s.shipyards, 1, limits::MAX_SHIPYARDS);
     s.maxPlayers = std::clamp(s.maxPlayers, 1, limits::MAX_PLAYERS_LIMIT);
+    s.lives = std::clamp(s.lives, 1, limits::MAX_LIVES);
 
     // Servername: nur druckbare Zeichen, nicht zu lang (wird auf der Webseite
     // und im Spiel angezeigt). Steuerzeichen werden entfernt.

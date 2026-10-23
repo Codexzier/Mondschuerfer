@@ -887,9 +887,9 @@ std::string MultiplayerScreen::Report() const {
         const World& w = net_.GetWorld();
         const PlayerState& me = w.Me();
         const Ship& p = w.Player();
-        r += Fmt(" name=%s bal=%lld round=%d shipTime=%.0f upg=%d%d%d%d hp=%.0f/%.0f cargo=%d alive=%d docked=%d ships=%d deps=%d ping=%.0f",
+        r += Fmt(" name=%s bal=%lld round=%d shipTime=%.0f upg=%d%d%d%d%d hp=%.0f/%.0f cargo=%d alive=%d docked=%d ships=%d deps=%d ping=%.0f",
                  net_.MyName().c_str(), me.balance, me.round, me.playTime, me.upgrades[0], me.upgrades[1], me.upgrades[2],
-                 me.upgrades[3], p.hp, p.maxHp, p.cargo, (!p.dead && !p.hidden) ? 1 : 0, me.dockedAt >= 0 ? 1 : 0,
+                 me.upgrades[3], me.upgrades[4], p.hp, p.maxHp, p.cargo, (!p.dead && !p.hidden) ? 1 : 0, me.dockedAt >= 0 ? 1 : 0,
                  static_cast<int>(w.ships.size()), static_cast<int>(w.deposits.size()), net_.PingMs());
     } else if (net_.WorldReady() && phase_ == Phase::Spectating) {
         const World& w = net_.GetWorld();

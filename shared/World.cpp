@@ -313,6 +313,7 @@ PlayerState& World::AddPlayer(int playerId, const std::string& name) {
     PlayerState ps;
     ps.id = playerId;
     ps.name = name;
+    ps.lives = settings.lives;
     players.push_back(ps);
     // Referenz erst NACH push_back holen: push_back kann den Vektor in neuen
     // Speicher umziehen lassen, alte Referenzen wären dann ungültig.
@@ -384,6 +385,7 @@ void World::ResetProgress(PlayerState& ps) {
     ps.playTime = 0.0f;
     ps.roundTime = 0.0f;
     ps.round = 1;
+    ps.lives = settings.lives;
 }
 
 bool World::PlayerAlive(const PlayerState& ps) const {
@@ -478,9 +480,26 @@ void World::Update(float dt) {
             Explosion({s.pos.x, 0.8f, s.pos.z}, s.kind == ShipKind::Player ? 2.0f : 1.4f);
             SoundAt(Sfx::CrashBoom, s.pos, s.kind == ShipKind::Player ? 1.0f : 0.8f);
             s.dead = true;
-            if (s.kind == ShipKind::Player && !isServer) {
+            PlayerState* sp = s.kind == ShipKind::Player && !isServer ? FindPlayer(s.playerId) : nullptr;
+            if (sp && sp->lives > 1) {
+                // Einzelspieler mit Leben übrig: neues Schiff am Startpunkt an
+                // ships[0]; Kontostand und Aufrüstungen bleiben, die Ladung nicht.
+                --sp->lives;
+                ++sp->deaths;
+                sp->mining = false;
+                sp->scanOn = false;
+                sp->dockedAt = -1;
+                Ship n = MakeShip(ShipKind::Player, {0.0f, cfg::SHIP_ALTITUDE, 24.0f});
+                n.yaw = PI;
+                n.playerId = sp->id;
+                s = n;
+                sp->shipId = n.id;
+                ApplyUpgrades(*sp, true);
+                Notify(*sp, Fmt("Leben verloren! Noch %d übrig.", sp->lives), Color{255, 170, 120, 255});
+            } else if (s.kind == ShipKind::Player && !isServer) {
                 // Einzelspieler: Spiel verloren. Kein Wrack; das Schiff bleibt
                 // (unsichtbar) an ships[0], damit Player() gültig bleibt.
+                if (sp) sp->lives = 0;
                 s.hidden = true;
                 outcome = Outcome::Dead;
                 outcomeT = 0.0f;
@@ -619,7 +638,7 @@ void World::Update(float dt) {
             ps.respawnT -= dt;
             if (ps.respawnT <= 0.0f) {
                 SpawnPlayerShip(ps);
-                Notify(ps, "Neues Raumschiff! Dein Fortschritt beginnt von vorn.", Color{200, 220, 255, 255});
+                Notify(ps, Fmt("Neues Raumschiff! Verbleibende Leben: %d", ps.lives), Color{200, 220, 255, 255});
             }
         }
     }
@@ -1171,7 +1190,7 @@ bool World::Repair(PlayerState& ps) {
 
 int World::UpgradeCost(const PlayerState& ps, int type) const {
     if (type < 0 || type >= cfg::UP_COUNT) return -1;
-    if (ps.upgrades[type] >= cfg::UPGRADE_LEVELS) return -1;
+    if (ps.upgrades[type] >= cfg::UPGRADE_MAX[type]) return -1;
     return cfg::UPGRADE_COST[type][ps.upgrades[type]];
 }
 
@@ -1183,8 +1202,8 @@ bool World::BuyUpgrade(PlayerState& ps, int type) {
     ApplyUpgrades(ps, false);
     if (const Ship* p = PlayerShip(ps)) SoundAt(Sfx::Upgrade, p->pos, 1.0f, 0.0f, ps.id);
     if (!simulation) {
-        // Reihenfolge wie cfg::Upgrade (UP_SPEED, UP_ARMOR, UP_WEAPON, UP_CARGO)
-        static const char* names[cfg::UP_COUNT] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager"};
+        // Reihenfolge wie cfg::Upgrade (UP_SPEED, UP_ARMOR, UP_WEAPON, UP_CARGO, UP_GUNS)
+        static const char* names[cfg::UP_COUNT] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager", "Kanonen"};
         Notify(ps, Fmt("%s auf Stufe %d verbessert!", names[type], ps.upgrades[type]), Color{110, 240, 170, 255});
     }
     return true;
@@ -1209,6 +1228,7 @@ void World::ApplyUpgrades(PlayerState& ps, bool refill) {
     p.maxHp = cfg::ShipArmor(t, ps.upgrades[cfg::UP_ARMOR]);
     p.damage = cfg::ShipDamage(t, ps.upgrades[cfg::UP_WEAPON]);
     p.fireInterval = cfg::WEAPON_RATE[ps.upgrades[cfg::UP_WEAPON]];
+    p.guns = cfg::GUN_COUNT[ps.upgrades[cfg::UP_GUNS]];
     p.cargoMax = cfg::ShipCargo(t, ps.upgrades[cfg::UP_CARGO]);
     if (refill) p.hp = p.maxHp;
     else if (p.maxHp > oldMax) p.hp += p.maxHp - oldMax;
@@ -1279,7 +1299,7 @@ bool World::SwitchShip(PlayerState& ps, int type) {
     for (int u = 0; u < cfg::UP_COUNT; ++u) it->upgrades[u] = ps.upgrades[u];
     it->hp = sp->hp;
     ps.shipType = next.type;
-    for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = std::clamp(next.upgrades[u], 0, cfg::UPGRADE_LEVELS);
+    for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = std::clamp(next.upgrades[u], 0, cfg::UPGRADE_MAX[u]);
     ApplyUpgrades(ps, true);
     if (next.hp > 0.0f) sp->hp = std::min(next.hp, sp->maxHp);
     sp->cargo = std::min(sp->cargo, sp->cargoMax);
@@ -1306,8 +1326,18 @@ void World::PlayerShipLost(Ship& s) {
     // Zeit ein neues Schiff und fängt mit seinem Fortschritt von vorne an.
     PlayerState* ps = FindPlayer(s.playerId);
     if (!ps) return;
-    ResetProgress(*ps);
     ++ps->deaths;
+    if (ps->lives > 1) {
+        // Noch Leben übrig: Kontostand und Aufrüstungen bleiben.
+        --ps->lives;
+        ps->mining = false;
+        ps->scanOn = false;
+        ps->dockedAt = -1;
+        Notify(*ps, Fmt("Leben verloren! Noch %d übrig.", ps->lives), Color{255, 170, 120, 255});
+    } else {
+        ResetProgress(*ps);   // setzt auch die Leben zurück
+        Notify(*ps, "Alle Leben verbraucht: Dein Fortschritt beginnt von vorn.", Color{255, 110, 90, 255});
+    }
     ps->respawnT = cfg::MP_RESPAWN_TIME;
     ps->shipId = -1;
 }
@@ -1323,24 +1353,32 @@ void World::PlayerShipLost(Ship& s) {
 void World::FireBullet(Ship& s) {
     Vector3 fwd = ForwardFromYaw(s.yaw);
     float spread = s.kind == ShipKind::Player ? 0.0f : Rand(-0.045f, 0.045f);
-    Vector3 dir = ForwardFromYaw(s.yaw + spread);
     Vector3 side{fwd.z, 0.0f, -fwd.x};
     // Links/rechts im Wechsel. Achtung: static = EIN Zähler für alle Schiffe
     // und alle World-Objekte, der auch über NewGame hinweg weiterläuft. Bei
     // mehreren Schiffen wechseln die Seiten daher nicht streng pro Schiff.
     static int toggle = 0;
     toggle ^= 1;
-    Bullet b;
-    b.pos = Vector3Add(s.pos, Vector3Add(Vector3Scale(fwd, 1.5f), Vector3Scale(side, toggle ? 0.55f : -0.55f)));
-    b.pos.y = s.pos.y + 0.25f;
-    b.vel = Vector3Add(Vector3Scale(dir, cfg::BULLET_SPEED), Vector3Scale(s.vel, 0.4f));
-    b.vel.y = 0.0f;
-    b.life = cfg::BULLET_LIFE;
-    b.damage = s.damage;
-    b.faction = s.faction;
-    b.ownerId = s.id;
-    b.ownerPlayer = s.playerId;
-    bullets.push_back(b);
+    // Mehrere Kanonen (Upgrade): alle schießen gleichzeitig. 2 Schüsse aus
+    // beiden Kanonen, 3 Schüsse zusätzlich einer in der Mitte, jeweils im
+    // Fächer (cfg::GUN_SPREAD). Mit einer Kanone wie bisher abwechselnd.
+    const int n = std::max(1, s.guns);
+    for (int i = 0; i < n; ++i) {
+        const float k = n == 1 ? 0.0f : static_cast<float>(i) - 0.5f * static_cast<float>(n - 1);   // -1..1 um die Mitte
+        const float sideOffset = n == 1 ? (toggle ? 0.55f : -0.55f) : k * (n == 2 ? 1.1f : 0.55f);
+        Vector3 dir = ForwardFromYaw(s.yaw + spread + k * cfg::GUN_SPREAD);
+        Bullet b;
+        b.pos = Vector3Add(s.pos, Vector3Add(Vector3Scale(fwd, 1.5f), Vector3Scale(side, sideOffset)));
+        b.pos.y = s.pos.y + 0.25f;
+        b.vel = Vector3Add(Vector3Scale(dir, cfg::BULLET_SPEED), Vector3Scale(s.vel, 0.4f));
+        b.vel.y = 0.0f;
+        b.life = cfg::BULLET_LIFE;
+        b.damage = s.damage;
+        b.faction = s.faction;
+        b.ownerId = s.id;
+        b.ownerPlayer = s.playerId;
+        bullets.push_back(b);
+    }
     // sourceShip = s.id: Der Server schickt den Ton eines Spielerschusses
     // nicht an den Schützen selbst; dessen Client spielt ihn schon beim
     // Tastendruck ab (Vorhersage).

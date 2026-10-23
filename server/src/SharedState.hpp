@@ -29,7 +29,8 @@ struct PlayerStatus {
     double progressPercent = 0.0;   // Kontostand / Ziel * 100
     long long balance = 0;
     int round = 1;                  // Zielrunde mit diesem Schiff
-    int upgrades[4] = {0, 0, 0, 0};
+    int upgrades[cfg::UP_COUNT] = {0, 0, 0, 0, 0};
+    int lives = 0;
     double shipTime = 0.0;          // Sekunden mit dem aktuellen Schiff
     double sessionSeconds = 0.0;    // Sekunden seit dieser Anmeldung
     double totalLoginSeconds = 0.0; // Sekunden insgesamt angemeldet (alle Sitzungen)
