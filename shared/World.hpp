@@ -56,6 +56,7 @@
 #include "raylib.h"
 #include "raymath.h"
 #include "Config.hpp"
+#include "GameMap.hpp"
 #include "GameSettings.hpp"
 #include "SoundEvents.hpp"
 #include "Util.hpp"
@@ -380,6 +381,10 @@ public:
     void NewGame(unsigned int seed, bool simulation);              // Einzelspieler
     void NewServerWorld(unsigned int seed, const GameSettings& s); // Server (noch ohne Spieler)
     void BuildMirror(unsigned int seed, const GameSettings& s);    // Mehrspieler-Client: nur Kulisse
+    // Eigene Karte aus dem Karteneditor: ersetzt die Zufalls-Deko im Spielfeld
+    // (der Felswall am Rand bleibt) und sucht die Monorail-Kreise. Nach
+    // NewGame/BuildMirror aufrufen; zieht keine Zufallszahlen (WorldGen.cpp).
+    void ApplyMap(const GameMap& m);
     // Ein Zeitschritt der Spielregeln (Einzelspieler: einmal pro Bild mit dem
     // dt des Bildes; Server: fest 1/30 s). Danach liegen in sounds, fx, goals
     // und PlayerState::outbox neue Ereignisse, die der Aufrufer abarbeitet
@@ -512,6 +517,8 @@ public:
     std::vector<Bullet> bullets;
     std::vector<Particle> particles;
     std::vector<Deco> decos;
+    std::vector<MonorailLoop> monorails;   // geschlossene Monorail-Kreise der eigenen Karte (Render.cpp: Züge)
+    std::string mapFile;                   // Einzelspieler: Datei der eigenen Karte (leer = Zufallskarte), für den Spielstand
     std::vector<Station> stations;   // erst alle Bauplätze in fester Reihenfolge (siehe WorldGen.cpp)
     std::vector<Mission> missions;   // Angebote und laufende Mini-Missionen
     std::vector<Person> persons;     // verirrte Personen (Mission "Personen einsammeln")

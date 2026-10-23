@@ -48,7 +48,7 @@
 //      b) Basic-Auth korrekt?    -> weiter zu 3. (POST ohne Content-Length -> 411)
 //      c) sonst                  -> 401 (Browser zeigt Anmeldedialog),
 //                                   falsche Daten zählen als Fehlversuch.
-//   3. Routing auf genau acht feste Pfade (drei Dateien, Status, Einstellungen, Schiffe).
+//   3. Routing auf genau neun feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten).
 //      Alles andere ergibt 404. Es gibt KEIN allgemeines Ausliefern eines
 //      Ordners, daher kann niemand mit "/../" andere Dateien lesen.
 //   4. Jede Antwort bekommt Sicherheits-Header (set_default_headers).
@@ -419,6 +419,25 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("shipModels").BeginArray();
     for (const std::string& m : s.shipModels) w.String(m);
     w.EndArray();
+
+    w.Key("maps").BeginArray();
+    for (const MapStatus& m : s.maps) {
+        w.BeginObject();
+        w.Key("file").String(m.file);
+        w.Key("name").String(m.name);
+        w.Key("author").String(m.author);
+        w.Key("pieces").Int(m.pieces);
+        w.Key("loops").Int(m.loops);
+        w.EndObject();
+    }
+    w.EndArray();
+    w.Key("activeMap").String(s.activeMap);
+    w.Key("mapUploaders").BeginArray();
+    for (const std::string& n : s.mapUploaders) w.String(n);
+    w.EndArray();
+    w.Key("mapNotice").String(s.mapNotice);
+    w.Key("mapNoticeSeq").Int(s.mapNoticeSeq);
+    w.Key("mapNoticeError").Bool(s.mapNoticeError);
 
     w.Key("limits").BeginObject();
     w.Key("maxEnemyShips").Int(limits::MAX_ENEMY_SHIPS);
@@ -1272,6 +1291,65 @@ public:
         res.set_content(w.Result(), kJsonType);
     }
 
+    // --- POST /api/maps ------------------------------------------------------------
+    // Bereich "Karten": action = activate | delete (file = Karte, bei activate
+    // "" = Standardkarte) oder allow | deny (name = Spieler). Der Spiel-Thread
+    // führt den Auftrag im nächsten Schritt aus (TakeMapCommands); ob es
+    // geklappt hat (z. B. ob es das Konto gibt), steht danach als mapNotice im Status.
+    void HandleMaps(const httplib::Request& req, httplib::Response& res) {
+        if (!CheckSameOriginPost(req, res)) return;
+        if (LowerAscii(req.get_header_value("Content-Type")).rfind("application/x-www-form-urlencoded", 0) != 0) {
+            SendJsonError(res, 400, "Formulardaten (application/x-www-form-urlencoded) erwartet.");
+            return;
+        }
+        ServerStatus status;
+        if (!ReadStatus(status, res)) return;
+        std::map<std::string, std::string> fields;
+        std::string error;
+        if (!ParseFormBody(req.body, fields, error)) {
+            SendJsonError(res, 400, error);
+            return;
+        }
+        const std::string action = fields.count("action") ? fields["action"] : std::string();
+        MapCommand cmd;
+        if (action == "activate" || action == "delete") {
+            cmd.kind = action == "activate" ? MapCommand::Kind::Activate : MapCommand::Kind::Delete;
+            cmd.arg = fields.count("file") ? fields["file"] : std::string();
+            const bool known = std::any_of(status.maps.begin(), status.maps.end(),
+                                           [&](const MapStatus& m) { return m.file == cmd.arg; });
+            if (!known && !(cmd.arg.empty() && cmd.kind == MapCommand::Kind::Activate)) {
+                SendJsonError(res, 400, "Diese Karte gibt es nicht (mehr).");
+                return;
+            }
+        } else if (action == "allow" || action == "deny") {
+            cmd.kind = action == "allow" ? MapCommand::Kind::Allow : MapCommand::Kind::Deny;
+            cmd.arg = TrimSpaces(fields.count("name") ? fields["name"] : std::string());
+            // Spielernamen: 3–16 Zeichen A-Z a-z 0-9 _ - (net::ValidPlayerName)
+            const bool valid = cmd.arg.size() >= 3 && cmd.arg.size() <= 16 &&
+                               std::all_of(cmd.arg.begin(), cmd.arg.end(), [](char c) {
+                                   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                                          c == '_' || c == '-';
+                               });
+            if (!valid) {
+                SendJsonError(res, 400, "Ungültiger Spielername (3–16 Zeichen: Buchstaben, Ziffern, _ und -).");
+                return;
+            }
+        } else {
+            SendJsonError(res, 400, "Unbekannte Aktion.");
+            return;
+        }
+        bool queued = false;
+        if (!WithShared(res, [&](SharedState& s) { queued = s.RequestMapCommand(cmd); })) return;
+        if (!queued) {
+            SendJsonError(res, 503, "Der Server ist gerade beschäftigt. Bitte gleich noch einmal versuchen.");
+            return;
+        }
+        JsonWriter w;
+        w.BeginObject().Key("ok").Bool(true).Key("message").String("Wird übernommen …").EndObject();
+        res.status = 200;
+        res.set_content(w.Result(), kJsonType);
+    }
+
     // --- POST /api/settings/reset -----------------------------------------------
     // Zurück auf die Werte aus docker-compose.yml (Umgebungsvariablen). Welche
     // das sind, weiß nur der Spiel-Thread; er veröffentlicht sie in status.defaults.
@@ -1487,6 +1565,7 @@ void ConfigureServer(httplib::Server& svr, const std::shared_ptr<WebContext>& ct
     svr.Post(R"(/api/settings/reset)",
              [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleReset(req, res); });
     svr.Post(R"(/api/ships)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleShips(req, res); });
+    svr.Post(R"(/api/maps)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleMaps(req, res); });
 
     // Fehlerantworten ohne eigenen Text (z. B. 404 von httplib) bekommen
     // einen kurzen deutschen Text. Eigene Texte bleiben unverändert.

@@ -11,12 +11,15 @@
 //   accounts.txt    Spielerkonten: Name, Anmeldeschlüssel, Zeiten, Fortschritt
 //   highscores.txt  Bestenliste: jede erreichte Zielrunde eine Zeile
 //   server.txt      Server-Salz (für die Anmeldeschlüssel), Welt-Seed,
-//                   insgesamt abgelieferte Ressourcen (Ausbaustufe der Stationen)
+//                   insgesamt abgelieferte Ressourcen (Ausbaustufe der Stationen),
+//                   aktive Karte
 //   settings.txt    nur vorhanden, wenn die Einstellungen auf der Webseite
 //                   geändert wurden; überschreibt dann die Werte aus
 //                   docker-compose.yml (Umgebungsvariablen)
 //   ships.txt       nur vorhanden, wenn die Schiffe auf der Webseite geändert
 //                   wurden; sonst gelten die Standard-Schiffe (cfg::SHIP_TYPES)
+//   karten/         hochgeladene Karten aus dem Karteneditor, je Karte eine
+//                   Datei <besitzer>-<stamm>.karte (Format: shared/GameMap.hpp)
 //
 // Format: einfacher Text, eine Angabe pro Zeile bzw. pro Konto, "name=wert".
 // So kann man die Dateien zur Not mit einem Texteditor ansehen (bei
@@ -48,6 +51,7 @@
 // umbenennen, Dateirechte).
 // ---------------------------------------------------------------------------
 #include "Config.hpp"
+#include "GameMap.hpp"
 #include "GameSettings.hpp"
 #include "Protocol.hpp"
 #include <condition_variable>
@@ -99,7 +103,15 @@ struct Account {
     int64_t created = 0;              // Unix-Zeit (Sekunden seit 1.1.1970)
     int64_t lastLogin = 0;            // Unix-Zeit der letzten Anmeldung
     double totalLoginSeconds = 0.0;   // Summe aller Sitzungen
+    bool mapUpload = false;           // darf Karten hochladen (Verwaltungsseite, Bereich "Karten")
     PlayerProgress progress;
+};
+
+// Eine hochgeladene Karte (Karteneditor "An Server senden")
+struct ServerMap {
+    std::string file;       // Dateiname ohne Endung: <besitzer in Kleinbuchstaben>-<MapFileStem(Name)>
+    GameMap map;            // map.author = Konto, das sie hochgeladen hat
+    int loops = 0;          // geschlossene Monorail-Kreise (für die Webseite)
 };
 
 // Ein Eintrag der Bestenliste: ein Spieler hat das Ziel (cfg::GOAL_POINTS)
@@ -174,6 +186,24 @@ public:
     bool LoadShips(std::vector<ShipType>& out) const;
     void SaveShips(const std::vector<ShipType>& ships);
 
+    // --- Karten ----------------------------------------------------------------------
+    // Alle Karten werden beim Start gelesen und bleiben im Speicher (eine
+    // große Karte braucht etwa 0,5 MB); deshalb gibt es Obergrenzen.
+    static constexpr int MAX_MAPS = 20;
+    static constexpr int MAX_MAPS_PER_PLAYER = 5;
+    const std::vector<ServerMap>& Maps() const { return maps_; }
+    const ServerMap* FindMap(const std::string& file) const;
+    // Speichert eine hochgeladene Karte (m.author muss gesetzt sein). Gleicher
+    // Name vom selben Spieler ersetzt die alte Fassung. Liefert den Dateinamen
+    // in file, oder false + Grund in error (Obergrenze erreicht).
+    bool StoreMap(const GameMap& m, std::string& file, std::string& error);
+    bool RemoveMap(const std::string& file);
+    // Aktive Karte für alle Spieler ("" = Standardkarte aus dem Seed). Steht in
+    // server.txt; SetActiveMap speichert NICHT automatisch (SaveServerData).
+    const std::string& ActiveMap() const { return activeMap_; }
+    void SetActiveMap(const std::string& file) { activeMap_ = file; }
+    std::vector<std::string> MapUploaders() const;   // Konten mit Account::mapUpload, nach Name sortiert
+
     // Wartet, bis der Schreib-Thread alle Aufträge erledigt hat (beim Start
     // und beim Beenden). false, wenn seit dem letzten Flush etwas nicht
     // geschrieben werden konnte (Meldung steht dann schon auf stderr).
@@ -181,6 +211,7 @@ public:
 
 private:
     std::string PathOf(const char* file) const;
+    std::string MapPath(const std::string& file) const;   // karten/<file>.karte
     // Auftrag an den Schreib-Thread. remove = true: Datei löschen statt schreiben.
     void QueueWrite(const std::string& path, std::string content, bool remove, const char* what);
     void WriterLoop();
@@ -206,4 +237,6 @@ private:
     uint32_t worldSeed_ = 0;
     bool hasWorldSeed_ = false;
     long long totalDelivered_ = 0;
+    std::vector<ServerMap> maps_;           // nach Kartenname sortiert
+    std::string activeMap_;
 };

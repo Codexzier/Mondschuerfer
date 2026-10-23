@@ -9,6 +9,8 @@
         /api/settings bzw. /api/settings/reset.
      3. Der Bereich "Schiffe" schickt die ganze Schiffsliste per POST an
         /api/ships (eigenes Speichern, unabhängig von den Spielparametern).
+     4. Der Bereich "Karten" schickt jede Aktion (Karte aktivieren/löschen,
+        Hochladen erlauben/entziehen) einzeln per POST an /api/maps.
 
    WOHER KOMMEN DIE DATEN?
      Der Spiel-Thread des Servers legt einmal pro Sekunde eine Kopie seines
@@ -74,6 +76,9 @@
         shipsPending: null,    // { ships, until }: wie savedPending, für den Bereich "Schiffe"
         shipsSaving: false,
         shipModels: [],        // wählbare Modelle (aus /api/status)
+        mapsKey: '',           // Vergleichswert für den Bereich "Karten"
+        mapsBusy: false,       // läuft gerade ein POST /api/maps?
+        mapNoticeSeq: null,    // zuletzt gezeigte Meldung des Spiel-Threads (null = noch keine Abfrage)
         playersKey: '',        // Vergleichswert, um die Tabelle nur bei Änderungen neu zu bauen
         highscoreKey: '',
     };
@@ -229,6 +234,7 @@
         renderHighscores(d);
         syncForm(d);
         syncShips(d);
+        renderMaps(d);
     }
 
     function renderHeader(d) {
@@ -938,6 +944,128 @@
     }
 
     // =========================================================================
+    // Bereich "Karten"
+    // Der Spiel-Thread führt jeden Auftrag im nächsten Schritt aus. Ob es
+    // geklappt hat (z. B. ob es das Konto gibt), meldet er mit dem nächsten
+    // Status (mapNotice, mapNoticeSeq zählt bei jeder Meldung hoch).
+    // =========================================================================
+    function mapButton(label, className, onClick) {
+        const b = el('button', className, label);
+        b.type = 'button';
+        b.disabled = state.mapsBusy;
+        b.addEventListener('click', onClick);
+        return b;
+    }
+
+    function mapRow(m, active) {
+        const tr = document.createElement('tr');
+        tr.appendChild(cell('Karte', 'name', m.name));
+        tr.appendChild(cell('Hochgeladen von', '', m.author || '–'));
+        tr.appendChild(cell('Teile', 'num', m.file ? nf0.format(m.pieces || 0) : '–'));
+        tr.appendChild(cell('Monorail-Kreise', 'num', m.file ? String(m.loops || 0) : '–'));
+        tr.appendChild(cell('Status', '', active ? el('span', 'chip chip-fly', 'aktiv') : ''));
+        const actions = el('div', 'actions');
+        if (!active) actions.appendChild(mapButton('Aktivieren', 'btn', () => postMaps({ action: 'activate', file: m.file })));
+        if (m.file) actions.appendChild(mapButton('Löschen', 'btn btn-ghost', () => onMapDelete(m, active)));
+        tr.appendChild(cell('Aktion', '', actions));
+        return tr;
+    }
+
+    function renderMaps(d) {
+        const maps = Array.isArray(d.maps) ? d.maps : [];
+        const uploaders = Array.isArray(d.mapUploaders) ? d.mapUploaders : [];
+        const active = d.activeMap || '';
+        const key = JSON.stringify([maps, uploaders, active, state.mapsBusy]);
+        if (key !== state.mapsKey) {
+            state.mapsKey = key;
+            const rows = document.createDocumentFragment();
+            // Die Standardkarte (Zufall aus dem Seed) steht immer oben und lässt sich nicht löschen.
+            rows.appendChild(mapRow({ file: '', name: 'Standardkarte (Zufall)' }, active === ''));
+            maps.forEach((m) => rows.appendChild(mapRow(m, m.file === active)));
+            $('maps-body').replaceChildren(rows);
+            setText('maps-count', maps.length === 1 ? '1 Karte hochgeladen' : `${maps.length} Karten hochgeladen`);
+
+            const list = document.createDocumentFragment();
+            uploaders.forEach((n) => {
+                const tr = document.createElement('tr');
+                tr.appendChild(cell('Spieler', 'name', n));
+                tr.appendChild(cell('Aktion', '', mapButton('Entziehen', 'btn btn-ghost', () => postMaps({ action: 'deny', name: n }))));
+                list.appendChild(tr);
+            });
+            $('uploaders-body').replaceChildren(list);
+            $('uploaders-empty').hidden = uploaders.length > 0;
+            $('uploaders-body').closest('table').hidden = uploaders.length === 0;
+            $('btn-uploader-add').disabled = state.mapsBusy;
+        }
+        // Nur neue Meldungen zeigen; nach einem Neustart des Servers zählt er wieder ab 0.
+        const seq = Number(d.mapNoticeSeq) || 0;
+        if (state.mapNoticeSeq !== null && seq > state.mapNoticeSeq && d.mapNotice) {
+            showMapsMessage(d.mapNotice, d.mapNoticeError ? 'error' : 'ok');
+        }
+        state.mapNoticeSeq = seq;
+    }
+
+    function showMapsMessage(text, kind) {
+        const box = $('maps-msg');
+        box.textContent = text;
+        box.className = `note ${kind === 'ok' ? 'note-ok' : 'note-error'}`;
+        box.hidden = false;
+    }
+
+    async function onMapDelete(m, active) {
+        const text = [`Die Karte „${m.name}“ von ${m.author} wird vom Server gelöscht.`];
+        if (active) text.push('Sie ist gerade aktiv. Alle Spieler sehen danach wieder die Standardkarte.');
+        if (await confirmDialog('Karte löschen?', text, 'Löschen')) postMaps({ action: 'delete', file: m.file });
+    }
+
+    async function postMaps(fields) {
+        if (state.mapsBusy) return;
+        state.mapsBusy = true;
+        if (state.status) renderMaps(state.status);
+        try {
+            const res = await fetch('/api/maps', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'X-Requested-With': 'mondschuerfer',   // CSRF-Schutz wie bei den Spielparametern
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    Accept: 'application/json',
+                },
+                body: new URLSearchParams(fields).toString(),
+            });
+            let data = null;
+            try { data = await res.json(); } catch (e) { data = null; }
+            if (res.ok && data && data.ok) {
+                showMapsMessage(data.message || 'Wird übernommen …', 'ok');
+                setTimeout(poll, 1200);   // der Status mit dem Ergebnis kommt spätestens nach einer Sekunde
+            } else if (res.status === 401) {
+                showMapsMessage('Nicht angemeldet – bitte die Seite neu laden.', 'error');
+            } else {
+                showMapsMessage((data && data.error) || `Fehlgeschlagen (HTTP ${res.status}).`, 'error');
+            }
+        } catch (e) {
+            showMapsMessage('Fehlgeschlagen: keine Verbindung zum Server.', 'error');
+        } finally {
+            state.mapsBusy = false;
+            if (state.status) renderMaps(state.status);
+        }
+    }
+
+    function onUploaderAdd(ev) {
+        ev.preventDefault();
+        const input = $('uploader-name');
+        const name = input.value.trim();
+        if (!/^[A-Za-z0-9_-]{3,16}$/.test(name)) {
+            showMapsMessage('Bitte einen gültigen Spielernamen eingeben (3–16 Zeichen: Buchstaben, Ziffern, _ und -).', 'error');
+            input.focus();
+            return;
+        }
+        input.value = '';
+        postMaps({ action: 'allow', name });
+    }
+
+    // =========================================================================
     // Start: Ereignisse verbinden, erste Abfrage
     // =========================================================================
     function init() {
@@ -963,6 +1091,8 @@
         $('btn-ships-discard').addEventListener('click', onShipsDiscard);
         $('btn-ships-add').addEventListener('click', onShipsAdd);
         updateShipsUi();
+
+        $('uploader-form').addEventListener('submit', onUploaderAdd);
 
         // Tab wieder sichtbar: sofort aktualisieren statt bis zu 10 s zu warten
         document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });

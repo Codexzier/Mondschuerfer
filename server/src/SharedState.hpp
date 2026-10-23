@@ -13,9 +13,9 @@
 //   - Der Spiel-Thread veröffentlicht einmal pro Sekunde eine KOPIE seines
 //     Zustands (PublishStatus). Die Webseite liest nur diese Kopie.
 //   - Die Webseite legt geänderte Einstellungen hier ab (RequestSettings,
-//     Schiffe getrennt mit RequestShips); der Spiel-Thread holt sie zu Beginn
-//     des nächsten Schritts ab und wendet sie an (TakeSettingsRequest,
-//     TakeShipsRequest).
+//     Schiffe getrennt mit RequestShips, Karten mit RequestMapCommand); der
+//     Spiel-Thread holt sie zu Beginn des nächsten Schritts ab und wendet sie
+//     an (TakeSettingsRequest, TakeShipsRequest, TakeMapCommands).
 // So greift der Web-Thread nie direkt auf die Spielwelt zu.
 // ---------------------------------------------------------------------------
 #include "GameSettings.hpp"
@@ -50,6 +50,22 @@ struct HighscoreStatus {
     int64_t when = 0;               // Unix-Zeit
 };
 
+// Eine hochgeladene Karte (Bereich "Karten" der Webseite)
+struct MapStatus {
+    std::string file;               // Kennung (Dateiname ohne Endung)
+    std::string name;
+    std::string author;
+    int pieces = 0;
+    int loops = 0;                  // geschlossene Monorail-Kreise
+};
+
+// Auftrag der Webseite für den Bereich "Karten"
+struct MapCommand {
+    enum class Kind { Activate, Delete, Allow, Deny };
+    Kind kind = Kind::Activate;
+    std::string arg;                // Activate/Delete: Datei ("" = Standardkarte), Allow/Deny: Spielername
+};
+
 struct ServerStatus {
     std::string serverName;
     double uptimeSeconds = 0.0;
@@ -77,6 +93,12 @@ struct ServerStatus {
     GameSettings settings;          // aktuell gültig
     GameSettings defaults;          // aus docker-compose.yml / Umgebungsvariablen
     std::vector<std::string> shipModels;   // wählbare Schiffsmodelle (ShipModelNames, Models.hpp)
+    std::vector<MapStatus> maps;
+    std::string activeMap;          // Datei der aktiven Karte, "" = Standardkarte
+    std::vector<std::string> mapUploaders;   // Spieler, die Karten hochladen dürfen
+    std::string mapNotice;          // Ergebnis des letzten Karten-Auftrags (z. B. "Konto nicht gefunden")
+    int mapNoticeSeq = 0;           // zählt bei jeder neuen Meldung hoch
+    bool mapNoticeError = false;    // Meldung ist ein Fehler (rot anzeigen)
 };
 
 class SharedState {
@@ -108,6 +130,15 @@ public:
         return true;
     }
 
+    // Holt alle Aufträge für den Bereich "Karten" (älteste zuerst).
+    bool TakeMapCommands(std::vector<MapCommand>& out) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (mapCommands_.empty()) return false;
+        out.swap(mapCommands_);
+        mapCommands_.clear();
+        return true;
+    }
+
     // --- Web-Thread -------------------------------------------------------------
     bool GetStatus(ServerStatus& out) const {
         std::lock_guard<std::mutex> lock(m_);
@@ -132,6 +163,14 @@ public:
         pendingShips_ = true;
     }
 
+    // false, wenn schon zu viele Aufträge warten (der Spiel-Thread hängt)
+    bool RequestMapCommand(const MapCommand& c) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (mapCommands_.size() >= 32) return false;
+        mapCommands_.push_back(c);
+        return true;
+    }
+
 private:
     mutable std::mutex m_;
     ServerStatus status_;
@@ -141,4 +180,5 @@ private:
     bool pendingReset_ = false;
     std::vector<ShipType> pendingShipList_;
     bool pendingShips_ = false;
+    std::vector<MapCommand> mapCommands_;
 };

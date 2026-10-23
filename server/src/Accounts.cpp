@@ -7,7 +7,7 @@
 //      (ein deutsches System würde sonst "3,5" statt "3.5" schreiben und die
 //      Datei wäre auf einem anderen System nicht mehr lesbar).
 //   3. Die Klasse Accounts: Laden, Konten, Bestenliste, Serverdaten,
-//      Einstellungen.
+//      Einstellungen, Karten.
 //
 // Threads: Alle öffentlichen Funktionen laufen im Spiel-Thread. Nur das
 // eigentliche Schreiben der Dateien (WriteFileAtomic, inkl. fsync) erledigt
@@ -49,6 +49,8 @@ constexpr const char* HIGHSCORES_FILE = "highscores.txt";
 constexpr const char* SERVER_FILE = "server.txt";
 constexpr const char* SETTINGS_FILE = "settings.txt";
 constexpr const char* SHIPS_FILE = "ships.txt";
+constexpr const char* MAPS_DIR = "karten";
+constexpr const char* MAP_EXT = ".karte";
 
 // Pfad als Text für Meldungen (UTF-8; in C++17 liefert u8string() einen std::string)
 std::string PathText(const fs::path& p) { return p.u8string(); }
@@ -328,6 +330,8 @@ bool Accounts::Flush() {
 
 std::string Accounts::PathOf(const char* file) const { return (fs::path(dir_) / file).string(); }
 
+std::string Accounts::MapPath(const std::string& file) const { return (fs::path(dir_) / MAPS_DIR / (file + MAP_EXT)).string(); }
+
 bool Accounts::Load(std::string& error) {
     if (dir_.empty()) return true;   // nur im Arbeitsspeicher
 
@@ -367,6 +371,8 @@ bool Accounts::Load(std::string& error) {
             SetWorldSeed(static_cast<uint32_t>(v));
         } else if (key == "totalDelivered" && ParseI64(value, v)) {
             SetTotalDelivered(v);
+        } else if (key == "activeMap") {
+            activeMap_ = value;   // wird unten gegen die vorhandenen Karten geprüft
         }
     }
     if (!haveSalt) crypto::RandomBytes(realmSalt_.data(), realmSalt_.size());
@@ -388,6 +394,7 @@ bool Accounts::Load(std::string& error) {
             else if (k == "created" && ParseI64(v, i)) a.created = i;
             else if (k == "lastLogin" && ParseI64(v, i)) a.lastLogin = i;
             else if (k == "totalLogin" && ParseDouble(v, d)) a.totalLoginSeconds = ClampSeconds(d);
+            else if (k == "maps") a.mapUpload = v == "1";
             else if (k == "balance" && ParseI64(v, i)) p.balance = std::max(0LL, i);
             else if (k == "delivered" && ParseI64(v, i)) p.delivered = std::max(0LL, i);
             else if (k == "cargo") ParseInt(v, p.cargo, 0, 1000000);
@@ -489,6 +496,34 @@ bool Accounts::Load(std::string& error) {
     std::stable_sort(highscores_.begin(), highscores_.end(), HighscoreLess);
     if (highscores_.size() > MAX_HIGHSCORES_STORED) highscores_.resize(MAX_HIGHSCORES_STORED);
 
+    // --- karten/: hochgeladene Karten ------------------------------------------------
+    const fs::path mapDir = dir / MAPS_DIR;
+    fs::create_directories(mapDir, ec);
+    if (ec) {
+        error = "Kartenordner kann nicht angelegt werden (" + ec.message() + "): " + PathText(mapDir);
+        return false;
+    }
+    for (const auto& entry : fs::directory_iterator(mapDir, ec)) {
+        if (!entry.is_regular_file(ec) || entry.path().extension() != MAP_EXT) continue;
+        if (static_cast<int>(maps_.size()) >= MAX_MAPS) break;
+        std::ifstream in(entry.path(), std::ios::binary);
+        std::ostringstream text;
+        text << in.rdbuf();
+        ServerMap sm;
+        sm.file = entry.path().stem().u8string();
+        if (!in || !MapFromText(text.str(), sm.map) || sm.map.author.empty()) {
+            std::cerr << "Warnung: Karte " << PathText(entry.path()) << " ist beschädigt und wird übersprungen\n";
+            continue;
+        }
+        sm.loops = static_cast<int>(FindMonorailLoops(sm.map.pieces).size());
+        maps_.push_back(std::move(sm));
+    }
+    std::sort(maps_.begin(), maps_.end(), [](const ServerMap& a, const ServerMap& b) { return a.map.name < b.map.name; });
+    if (!activeMap_.empty() && !FindMap(activeMap_)) {
+        std::cerr << "Warnung: aktive Karte \"" << activeMap_ << "\" fehlt, verwende die Standardkarte\n";
+        activeMap_.clear();
+    }
+
     // server.txt immer einmal schreiben: legt beim ersten Start das Salz ab und
     // prüft gleich, ob der Ordner beschreibbar ist (sonst lieber gar nicht starten,
     // als stundenlang zu spielen und dann nichts speichern zu können).
@@ -542,6 +577,7 @@ void Accounts::SaveAccounts() {
         out += " created=" + std::to_string(a.created);
         out += " lastLogin=" + std::to_string(a.lastLogin);
         out += " totalLogin=" + NumText(a.totalLoginSeconds);
+        if (a.mapUpload) out += " maps=1";
         out += " balance=" + std::to_string(p.balance);
         out += " delivered=" + std::to_string(p.delivered);
         out += " upgrades=";
@@ -609,6 +645,7 @@ void Accounts::SaveServerData() {
     out += "realmSalt=" + crypto::ToHex(realmSalt_.data(), realmSalt_.size()) + "\n";
     if (hasWorldSeed_) out += "worldSeed=" + std::to_string(worldSeed_) + "\n";
     out += "totalDelivered=" + std::to_string(totalDelivered_) + "\n";
+    if (!activeMap_.empty()) out += "activeMap=" + activeMap_ + "\n";
     QueueWrite(PathOf(SERVER_FILE), std::move(out), false, "Serverdaten");
 }
 
@@ -728,4 +765,59 @@ void Accounts::RemoveSettings() {
     // Schreibauftrag für settings.txt in der Warteschlange, würde er die
     // Datei sonst nach dem Löschen wieder anlegen.
     QueueWrite(PathOf(SETTINGS_FILE), std::string(), true, "Einstellungen");
+}
+
+// ---------------------------------------------------------------------------
+// Karten
+// ---------------------------------------------------------------------------
+const ServerMap* Accounts::FindMap(const std::string& file) const {
+    for (const ServerMap& m : maps_)
+        if (m.file == file) return &m;
+    return nullptr;
+}
+
+bool Accounts::StoreMap(const GameMap& m, std::string& file, std::string& error) {
+    // Besitzer im Dateinamen: Zwei Spieler dürfen Karten mit gleichem Namen
+    // haben, ohne sich gegenseitig zu überschreiben.
+    file = ToLowerAscii(m.author) + "-" + MapFileStem(m.name);
+    ServerMap* existing = nullptr;
+    int own = 0;
+    for (ServerMap& sm : maps_) {
+        if (sm.file == file) existing = &sm;
+        if (ToLowerAscii(sm.map.author) == ToLowerAscii(m.author)) ++own;
+    }
+    if (!existing) {
+        if (own >= MAX_MAPS_PER_PLAYER) {
+            error = "Du hast schon " + std::to_string(MAX_MAPS_PER_PLAYER) +
+                    " Karten auf dem Server. Lade eine davon mit gleichem Namen neu hoch oder bitte den Betreiber, eine zu löschen.";
+            return false;
+        }
+        if (static_cast<int>(maps_.size()) >= MAX_MAPS) {
+            error = "Auf dem Server ist kein Platz für weitere Karten (höchstens " + std::to_string(MAX_MAPS) + ").";
+            return false;
+        }
+        maps_.push_back(ServerMap{});
+        existing = &maps_.back();
+    }
+    existing->file = file;
+    existing->map = m;
+    existing->loops = static_cast<int>(FindMonorailLoops(m.pieces).size());
+    std::sort(maps_.begin(), maps_.end(), [](const ServerMap& a, const ServerMap& b) { return a.map.name < b.map.name; });
+    if (!dir_.empty()) QueueWrite(MapPath(file), MapToText(m), false, "Karte");
+    return true;
+}
+
+bool Accounts::RemoveMap(const std::string& file) {
+    auto it = std::find_if(maps_.begin(), maps_.end(), [&](const ServerMap& m) { return m.file == file; });
+    if (it == maps_.end()) return false;
+    maps_.erase(it);
+    if (!dir_.empty()) QueueWrite(MapPath(file), std::string(), true, "Karte");
+    return true;
+}
+
+std::vector<std::string> Accounts::MapUploaders() const {
+    std::vector<std::string> out;
+    for (const auto& entry : accounts_)   // std::map: schon nach (kleingeschriebenem) Namen sortiert
+        if (entry.second.mapUpload) out.push_back(entry.second.name);
+    return out;
 }

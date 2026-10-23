@@ -197,6 +197,26 @@ void World::Draw(const Camera3D& cam) const {
         }
     }
 
+    // --- Monorail-Züge (eigene Karte, shared/GameMap.hpp) ------------------------
+    // Auf jedem geschlossenen Schienenkreis fährt ein Zug aus Triebwagen,
+    // Personenwagen und Schlusswagen. Die Lage ergibt sich nur aus der
+    // Weltzeit, es muss also nichts weitergerechnet oder gespeichert werden.
+    // Die Wagen schauen wie die Schiffe mit der Nase nach -z (YawTowards).
+    static int trainCars[3] = {-1, -1, -1};
+    if (trainCars[0] < 0) {
+        trainCars[0] = g_assets.Id("monorail_trainFront");
+        trainCars[1] = g_assets.Id("monorail_trainPassenger");
+        trainCars[2] = g_assets.Id("monorail_trainEnd");
+    }
+    for (const MonorailLoop& loop : monorails) {
+        for (int c = 0; c < 3; ++c) {
+            Vector3 dir;
+            const Vector3 p = MonorailPoint(loop, time * mapgrid::TRAIN_SPEED - c * mapgrid::TRAIN_CAR_GAP, &dir);
+            if (Dist2D(p, focus) > cullR + 5.0f) continue;
+            g_assets.Draw(trainCars[c], p, YawTowards({0, 0, 0}, dir), mapgrid::CELL);
+        }
+    }
+
     // --- Stationen ------------------------------------------------------------
     // Eine Station besteht aus vielen Kit-Teilen (parts) und Geschütztürmen.
     // Ihre Teile reichen weit um den Mittelpunkt herum, daher +30 m beim

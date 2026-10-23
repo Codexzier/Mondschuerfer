@@ -363,6 +363,55 @@
             <div id="ships-msg" class="note" role="status" aria-live="polite" hidden></div>
         </form>
     </section>
+
+    <!-- ============================== Karten ============================== -->
+    <section class="panel" aria-labelledby="maps-title">
+        <div class="panel-head">
+            <h2 id="maps-title">Karten (Karteneditor)</h2>
+            <span class="muted small" id="maps-count">–</span>
+        </div>
+        <div class="settings">
+            <p class="muted small ships-help">
+                Spieler mit Berechtigung schicken Karten aus dem Karteneditor des Spiels („An Server senden“). Die aktive
+                Karte sehen alle Spieler sofort. Sie ist nur Kulisse: Stationen, Kristalle und Piraten bleiben, wie sie sind.
+                Jeder geschlossene Monorail-Kreis bekommt einen Zug.
+            </p>
+            <div class="table-wrap">
+                <table class="data-table maps-table">
+                    <thead>
+                    <tr>
+                        <th scope="col">Karte</th>
+                        <th scope="col">Hochgeladen von</th>
+                        <th scope="col" class="num">Teile</th>
+                        <th scope="col" class="num">Monorail-Kreise</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Aktion</th>
+                    </tr>
+                    </thead>
+                    <tbody id="maps-body"></tbody>
+                </table>
+            </div>
+
+            <div class="table-wrap">
+                <table class="data-table uploaders-table">
+                    <thead>
+                    <tr>
+                        <th scope="col">Dürfen Karten hochladen</th>
+                        <th scope="col">Aktion</th>
+                    </tr>
+                    </thead>
+                    <tbody id="uploaders-body"></tbody>
+                </table>
+            </div>
+            <p id="uploaders-empty" class="empty" hidden>Noch darf niemand Karten hochladen.</p>
+            <form id="uploader-form" class="actions" novalidate>
+                <input id="uploader-name" type="text" maxlength="16" placeholder="Spielername" autocomplete="off"
+                       spellcheck="false" aria-label="Spielername, der Karten hochladen darf">
+                <button type="submit" id="btn-uploader-add" class="btn btn-primary">Erlauben</button>
+            </form>
+            <div id="maps-msg" class="note" role="status" aria-live="polite" hidden></div>
+        </div>
+    </section>
 </main>
 
 <footer class="footer muted small">

@@ -34,7 +34,8 @@
 // bei den Funktionen QPos, QAngle usw. und bei den Ereignissen unten;
 // docs/Mehrspieler.md (Abschnitt 7) rechnet ein Beispiel durch.
 //
-// Abhängigkeiten: Protocol.hpp, Models.hpp (Modell-IDs für die Varianten).
+// Abhängigkeiten: Protocol.hpp, Models.hpp (Modell-IDs für die Varianten),
+// GameMap.hpp (Segmentliste für Karten).
 // ---------------------------------------------------------------------------
 #include "Protocol.hpp"
 #include "Models.hpp"
@@ -291,6 +292,52 @@ void ReadSettings(Reader& r, GameSettings& s) {
     Sanitize(s);   // ungültige Werte (z. B. von einem fremden Server) auf erlaubte Grenzen bringen
 }
 
+// Karte (GameMap ohne author): Name, Anzahl, je Teil 9 Bytes:
+//   Segment-Nummer (Stelle in MapSegments(), dort nur hinten anfügen!),
+//   x/z in cm (QPos), Drehung (QAngle), Größe in Tausendsteln.
+void WriteMap(Writer& w, const GameMap& m) {
+    w.Str(m.name);
+    const size_t n = std::min<size_t>(m.pieces.size(), mapgrid::MAX_PIECES);
+    w.U16(static_cast<uint16_t>(n));
+    const std::vector<MapSegment>& segs = MapSegments();
+    for (size_t i = 0; i < n; ++i) {
+        const MapPiece& p = m.pieces[i];
+        size_t seg = 0;
+        while (seg < segs.size() && p.model != segs[seg].model) ++seg;
+        w.U8(static_cast<uint8_t>(seg));   // unbekannt = segs.size(): der Empfänger verwirft die Karte
+        w.I16(QPos(p.x));
+        w.I16(QPos(p.z));
+        w.U16(QAngle(p.yaw));
+        w.U16(ClampRound<uint16_t>(p.scale * 1000.0f, 0.0f, 65535.0f));
+    }
+}
+
+// Gleiche Grenzen wie MapFromText: bekanntes Segment, innerhalb der Karte,
+// Größe 0,2..20. Sonst ist die ganze Nachricht ungültig.
+bool ReadMap(Reader& r, GameMap& m) {
+    m = GameMap{};
+    m.name = r.Str();
+    for (char& ch : m.name)   // keine Zeilenumbrüche: der Name steht in der Kartendatei auf einer Zeile
+        if (static_cast<unsigned char>(ch) < 0x20 || ch == 0x7F) ch = ' ';
+    const uint16_t n = r.U16();
+    if (n > mapgrid::MAX_PIECES) return false;
+    const std::vector<MapSegment>& segs = MapSegments();
+    m.pieces.reserve(n);
+    for (uint16_t i = 0; i < n && r.ok(); ++i) {
+        MapPiece p;
+        const uint8_t seg = r.U8();
+        if (seg >= segs.size()) return false;
+        p.model = segs[seg].model;
+        p.x = DPos(r.I16());
+        p.z = DPos(r.I16());
+        p.yaw = DAngle(r.U16());
+        p.scale = static_cast<float>(r.U16()) / 1000.0f;
+        if (fabsf(p.x) > cfg::WORLD_HALF || fabsf(p.z) > cfg::WORLD_HALF || p.scale < 0.2f || p.scale > 20.0f) return false;
+        m.pieces.push_back(p);
+    }
+    return r.ok();
+}
+
 void WriteColor(Writer& w, Color c) {
     w.U8(c.r);
     w.U8(c.g);
@@ -409,6 +456,19 @@ bool Decode(Reader& r, DockActionMsg& m) {
     m.action = static_cast<DockActionType>(a);
     m.param = r.U8();
     return r.ok();
+}
+
+std::vector<uint8_t> Encode(const MapUploadMsg& m) {
+    Writer w;
+    Start(MsgType::MapUpload, w);
+    w.Bytes(m.proof.data(), m.proof.size());
+    WriteMap(w, m.map);
+    return w.buf;
+}
+
+bool Decode(Reader& r, MapUploadMsg& m) {
+    r.Bytes(m.proof.data(), m.proof.size());
+    return ReadMap(r, m.map);
 }
 
 // ===========================================================================
@@ -1008,6 +1068,33 @@ std::vector<uint8_t> Encode(const SettingsMsg& m) {
 bool Decode(Reader& r, SettingsMsg& m) {
     ReadSettings(r, m.settings);
     return r.ok();
+}
+
+std::vector<uint8_t> Encode(const MapUploadResultMsg& m) {
+    Writer w;
+    Start(MsgType::MapUploadResult, w);
+    w.U8(m.ok ? 1 : 0);
+    w.Str(m.text);
+    return w.buf;
+}
+
+bool Decode(Reader& r, MapUploadResultMsg& m) {
+    m.ok = r.U8() != 0;
+    m.text = r.Str();
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const MapDataMsg& m) {
+    Writer w;
+    Start(MsgType::MapData, w);
+    w.U8(m.custom ? 1 : 0);
+    WriteMap(w, m.map);
+    return w.buf;
+}
+
+bool Decode(Reader& r, MapDataMsg& m) {
+    m.custom = r.U8() != 0;
+    return ReadMap(r, m.map);
 }
 
 // ===========================================================================

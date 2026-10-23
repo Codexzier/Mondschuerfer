@@ -165,6 +165,13 @@ Der ganze Ablauf als Sequenzdiagramm. `--->` heißt zuverlässig, `~~~>` unzuver
         |------------------------- LoginProof(proof) --------------------->|  in konstanter Zeit vergleichen
         |<-------------- Welcome(role=Player, ...) oder Error -------------|
         |                                                                  |
+        |  (d) KARTE HOCHLADEN (Karteneditor, ohne Anmeldung im Spiel)     |
+        |------------------------- LoginStart(name) ---------------------->|
+        |<------------------------ LoginChallenge(nonce) ------------------|
+        |------------------------- MapUpload(proof, Karte) --------------->|  Beweis wie (c), Berechtigung?
+        |<------------------------ MapUploadResult(ok, Text) --------------|  danach trennt das Spiel
+        |                                                                  |
+        |<------------------ MapData (nach jedem Welcome) -----------------|  aktive Karte (Kulisse)
         |<------------------ Deposits, Players, Highscores ----------------|  Startpaket
         |                                                                  |
         |  IM SPIEL                                                        |
@@ -755,6 +762,7 @@ Die Webseite besteht aus drei statischen Dateien ([server/web/](../server/web/):
 | `POST /api/settings` | Einstellungen ändern (Formularfelder) |
 | `POST /api/settings/reset` | zurück auf die Standardwerte aus `docker-compose.yml` |
 | `POST /api/ships` | Schiffe des Raumschiffsverkäufers ändern oder hinzufügen (gespeichert in `ships.txt`) |
+| `POST /api/maps` | Bereich „Karten“: Karte aktivieren/löschen, Hochladen für einen Spieler erlauben/entziehen |
 
 Der Browser lädt die Seite einmal und fragt danach alle 2 Sekunden `/api/status` ab. Der Spiel-Thread
 wird dabei nie berührt (Abschnitt 5).

@@ -10,6 +10,7 @@
 // Aufbau der Datei (eine Angabe pro Zeile, Werte durch Leerzeichen getrennt):
 //   MONDSCHUERFER_SAVE 1                  Kennung und Formatversion
 //   seed <Zahl>                           Startwert des Zufallsgenerators
+//   map <Dateistamm>                      eigene Karte (src/MapFiles.hpp); fehlt bei der Zufallskarte
 //   balance <Kontostand>
 //   delivered <insgesamt abgeliefert>     bestimmt die Ausbaustufe der Stationen
 //   upgrades <Tempo> <Panzerung> <Waffe> <Laderaum> <Kanonen>   Stufen 0..5 (Kanonen 0..2; fehlt in alten Spielständen)
@@ -25,7 +26,8 @@
 // Was wird NICHT gespeichert und warum?
 //   - Mondoberfläche, Stationen, Deko: entstehen aus dem Seed jedes Mal gleich
 //     (World::NewGame -> BuildStations/GenerateTerrain). Deshalb liest
-//     LoadGame zuerst den Seed und baut damit die Kulisse neu auf.
+//     LoadGame zuerst den Seed und baut damit die Kulisse neu auf. Eine
+//     eigene Karte wird nur über ihren Dateinamen gemerkt und neu geladen.
 //   - Geschosse, Partikel, Meldungen, Spawn-Timer, KI-Zwischenstände:
 //     kurzlebig, starten nach dem Laden einfach neu.
 //   - Höhe (y) und Geschwindigkeit: Schiffe fliegen immer in derselben Höhe
@@ -35,12 +37,14 @@
 //     nach jedem Andocken gespeichert wird).
 //
 // Abhängigkeiten: shared/World.hpp (Spielzustand, NewGame, MakeShip,
-// ApplyUpgrades), raylib (GetApplicationDirectory). Assets.hpp wird nicht
+// ApplyUpgrades, ApplyMap), MapFiles.hpp (eigene Karte laden), raylib
+// (GetApplicationDirectory). Assets.hpp wird nicht
 // wirklich gebraucht, bringt aber raylib.h/raymath.h mit.
 // Alles läuft im Haupt-Thread (Aufrufe aus main.cpp).
 // ---------------------------------------------------------------------------
 #include "Save.hpp"
 #include "Assets.hpp"
+#include "MapFiles.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
@@ -118,6 +122,7 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     const PlayerState& me = w.Me();
     f << kMagic << ' ' << kVersion << '\n';
     f << "seed " << w.seed << '\n';
+    if (!w.mapFile.empty()) f << "map " << w.mapFile << '\n';
     f << "balance " << me.balance << '\n';
     f << "delivered " << w.totalDelivered << '\n';
     f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << ' ' << me.upgrades[4] << '\n';
@@ -224,17 +229,27 @@ bool LoadGame(World& w) {
     std::string line;
     std::getline(f, line);
     unsigned int seed = 1;
-    // Erst den Seed lesen, damit die Mondoberfläche identisch erzeugt wird
+    std::string mapFile;
+    // Erst Seed und Karte lesen, damit die Mondoberfläche identisch erzeugt wird
     std::streampos start = f.tellg();
     while (std::getline(f, line)) {
         std::istringstream ls(line);
         std::string key;
         ls >> key;
-        if (key == "seed") { ls >> seed; break; }
+        if (key == "seed") ls >> seed;
+        else if (key == "map") ls >> mapFile;
     }
     // Ab hier wird w verändert. NewGame setzt die Welt komplett zurück
     // (*this = World{}), also sind auch Wracks und Geschosse leer.
     w.NewGame(seed, false);
+    // Eigene Karte wieder einsetzen. Wurde die Datei inzwischen gelöscht,
+    // geht es mit der Zufallskarte weiter (die Kulisse hat keinen Einfluss
+    // aufs Spiel).
+    GameMap map;
+    if (!mapFile.empty() && LoadMapFile(mapFile, map)) {
+        w.ApplyMap(map);
+        w.mapFile = mapFile;
+    }
     w.deposits.clear();
     w.ships.resize(1);
     w.Me().notices.clear();

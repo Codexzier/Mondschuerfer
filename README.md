@@ -161,7 +161,10 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 
 ## Spielregeln
 
-**Startmenü:** Neues Spiel · Fortsetzen · Mehrspieler · Simulation (spielt selbst) · Optionen · Beenden
+**Startmenü:** Neues Spiel · Fortsetzen · Mehrspieler · Karteneditor · Simulation (spielt selbst) · Optionen · Beenden
+
+Gibt es eigene Karten, fragt *Neues Spiel* zuerst nach der Karte: *Standardkarte (Zufall)* wie
+bisher oder eine Karte aus dem Karteneditor. Der Spielstand merkt sich die Karte.
 
 - **Scanner (E):** Kristall-Lagerstätten sind unsichtbar, bis der Scanner sie erfasst.
   Der Scanner hat 10 Energieeinheiten und verbraucht 1 pro Sekunde, er läuft also höchstens
@@ -210,6 +213,27 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
   `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach Sieg oder Absturz wird er gelöscht.
 - **Simulation:** Ein Autopilot spielt selbst: scannen, abbauen, verkaufen, kämpfen, aufrüsten.
   Eine beliebige Taste führt zurück ins Menü.
+- **Karteneditor:** Zuerst kommt die Liste der gespeicherten Karten mit *Karte laden* und *Neu*
+  (leere Karte). Eine Karte ist nur Kulisse ohne Kollision: Gelände, Krater, Felsen, Straßen,
+  Monorail, Gebäude und Fundstücke. Stationen stehen an ihren festen Plätzen (der Editor zeigt
+  alle möglichen Bauplätze), Kristalle und Piraten erscheinen wie bisher zufällig.
+  Links im Werkzeugfenster wählst du ein Segment, *Zufall generieren* füllt die Karte mit Kratern,
+  Felsen und Fundstücken (Straßen, Monorail und Gebäude bleiben stehen). Bilden die
+  Monorail-Schienen einen geschlossenen Kreis, fährt darauf ein Zug, im Editor und im Spiel.
+  Gespeichert wird im Ordner `karten` neben der ausführbaren Datei.
+  *An Server senden* schickt die Karte an einen Mehrspieler-Server (Anmeldung mit Spielername und
+  Passwort). Das geht nur, wenn der Betreiber es dem Spieler auf der Verwaltungsseite erlaubt hat;
+  dort wählt er auch, welche Karte alle Spieler sehen.
+
+  | Eingabe | Wirkung |
+  |---|---|
+  | Linksklick (halten) | Segment setzen (malen), es rastet im 3-m-Raster ein |
+  | Rechtsklick (halten) | Teil unter dem Zeiger löschen (radieren) |
+  | R | Segment um 90° drehen |
+  | WASD / Pfeiltasten / mittlere Maustaste ziehen | Ansicht verschieben |
+  | Mausrad | zoomen |
+  | Strg+S | speichern |
+  | ESC | Auswahl aufheben, dann zurück zur Kartenliste |
 
 Alle Balancing-Werte (Preise, Upgrades, Gegner, Ausbaustufen ...) stehen in `shared/Config.hpp`
 (sie gelten für Einzelspieler und Server gleichermaßen).
@@ -385,6 +409,7 @@ Mondschuerfer/
 │   ├── Config.hpp        Balancing (auch die Mehrspieler-Werte MP_*)
 │   ├── World.hpp/.cpp    Spiellogik: Flug, Scanner, Abbau, Kampf, Stationen, Mehrspieler-Regeln
 │   ├── WorldGen.cpp      Mondoberfläche, Stationsaufbau (alle Ausbaustufen), Lagerstätten
+│   ├── GameMap.*         Eigene Karten: Dateiformat, Segmente, Monorail-Kreise
 │   ├── Ai.cpp            Verhalten von Piraten und Händlern, Autopilot für die Simulation
 │   ├── GameSettings.*    Spielparameter des Servers (Schwierigkeit, Stationen, Mondfarbe ...)
 │   ├── Protocol.*        Netzwerkprotokoll: Nachrichten, Kodieren/Dekodieren, Quantisierung
@@ -406,6 +431,8 @@ Mondschuerfer/
 │   ├── ClipPlayer.cpp/.hpp Funkspruch-Clips der Missionen (assets/clips, MPEG-1)
 │   ├── MusicMix.hpp      Überblenden der Musik (reine Rechnung, ohne raylib)
 │   ├── Save.cpp/.hpp     Spielstand
+│   ├── MapEditor.*       Karteneditor (Kartenliste, Werkzeuge, Raster) und Kartenauswahl
+│   ├── MapFiles.*        Eigene Karten im Ordner "karten" speichern und laden
 │   ├── NetClient.*       Mehrspieler: Verbindung, Anmeldung, Vorhersage, Interpolation
 │   ├── Multiplayer.*     Mehrspieler: Menüs (Adresse, Lobby, Anmeldung), Spielen, Zuschauen
 │   └── ClientConfig.*    Einstellungsdatei: Serveradresse, Spielername, Musik
