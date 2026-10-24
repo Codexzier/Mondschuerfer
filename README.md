@@ -142,6 +142,11 @@ denselben Stellen für Xbox- und PlayStation-Controller:
 | Pause (Menü) | Menü-Taste (drei Striche) | Options (rechts neben dem Touchpad) |
 | Zoom | Rechter Stick hoch / runter | Rechter Stick hoch / runter |
 
+Alternativ gibt es in den **Optionen → Steuerung** die **Tank-Steuerung**: Dann fliegt das Schiff
+mit dem linken Stick nach vorn geneigt vorwärts in Richtung seiner Nase (halb geneigt = halbes
+Höchsttempo), nach hinten geneigt rückwärts, und links / rechts dreht es sich. RT / LT
+gelten dabei weiter (und gehen dem Stick vor).
+
 **In allen Menüs** (Hauptmenü, Pause, Optionen, Stationsfenster, Mehrspieler-Menüs, Zuschauen)
 bewegt der linke Stick den Mauszeiger (zusätzlich als oranger Ring gezeichnet), **A** (Kreuz)
 klickt, das **Steuerkreuz** wählt in Knopflisten wie die Pfeiltasten, **B** (Kreis) heißt
@@ -380,6 +385,8 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
   1 min (Standard), 2 min oder 5 min. Danach verblassen sie; „Aus“ spart am meisten Leistung.
 
 *Steuerung*
+- Tank-Steuerung an / aus: wie der linke Stick des Controllers lenkt (aus = Flugrichtung im Bild,
+  an = vor / zurück fliegen und links / rechts drehen, siehe oben).
 - Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
   (alle übrigen Tasten, z. B. im Stationsfenster, stehen oben im Abschnitt „Steuerung“).
 

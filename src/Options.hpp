@@ -24,6 +24,9 @@
 //     - der Dauer der Fahrspuren der Rover (Regler: Aus, 15 s, 30 s, 1 min,
 //       2 min, 5 min; siehe Render.cpp).
 //   Seite "Steuerung":
+//     - Tank-Steuerung an/aus (Umschalter): wie der linke Stick des
+//       Controllers lenkt – aus = Richtung im Bild (bisher), an = vor/zurück
+//       neigen gibt Schub, links/rechts dreht das Schiff (Controls.cpp),
 //     - einer Übersicht der Steuerung als Tabelle: Tastatur/Maus, Xbox- und
 //       PlayStation-Controller (nur zum Nachlesen, nicht änderbar).
 //   Änderungen wirken sofort (die Musik wird gleich lauter/leiser) und
@@ -57,7 +60,7 @@
 //             hoch/runter (oder W/S) wählt die Zeile (auch die Karteireiter),
 //             Pfeil links/rechts (oder A/D) verstellt den Regler der Zeile bzw.
 //             wechselt auf den Karteireitern die Seite, Enter/Leertaste
-//             schaltet die Musik bzw. die Untertitel um oder drückt
+//             schaltet die Musik, die Untertitel bzw. die Tank-Steuerung um oder drückt
 //             "Zurück", ESC = zurück.
 //   Controller: LB/RB wechselt die Seite, linker Stick bewegt den Zeiger,
 //             A klickt (Regler: A halten und ziehen), Steuerkreuz wie die
@@ -96,7 +99,7 @@ private:
     // ROW_PIXEL .. ROW_FLASH sind die Grafikeffekte (EffectLevel usw.).
     enum Row {
         ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA,
-        ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_TRACKS, ROW_BACK
+        ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_TRACKS, ROW_TANK, ROW_BACK
     };
     static constexpr int kEffectRows = ROW_FLASH - ROW_PIXEL + 1;
 
@@ -111,6 +114,9 @@ private:
 
     // Untertitel der Funksprüche an/aus, wird wie SetMusicOn sofort gespeichert.
     void SetSubtitlesOn(bool on);
+
+    // Tank-Steuerung des Controllers an/aus, ebenfalls sofort gespeichert.
+    void SetTankSteeringOn(bool on);
 
     // Tilt-Shift-Stärke 0..1 (10-%-Schritte, 0 = aus); save wie bei SetVolume.
     void SetTiltShift(float v, bool save);

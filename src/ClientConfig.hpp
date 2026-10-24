@@ -40,6 +40,7 @@
 //     trail 2
 //     hit_flash 1.00
 //     pixel_look 0
+//     tank_steering 0
 // Unbekannte Zeilen werden ignoriert (so bleiben ältere Spielversionen mit
 // neueren Dateien verträglich). Fehlende Zeilen behalten ihren Standardwert
 // (z. B. eine Datei aus der Zeit vor den Musik-Einstellungen).
@@ -69,6 +70,7 @@ struct ClientConfig {
     int trail = 2;                            // Optionen: Triebwerksschweif 0 (aus), 1 kurz, 2 mittel, 3 lang (Zeile "trail 2")
     float hitFlash = 1.0f;                    // Optionen: Treffer-Aufblitzen 0..1, 0 = aus (Zeile "hit_flash 1.00")
     int pixelLook = 0;                        // Optionen: Stil-Look 0 (aus), Retro-Pixel 1 fein, 2 mittel, 3 grob (Zeile "pixel_look 0")
+    bool tankSteering = false;                // Optionen: Controller-Stick als Tank-Steuerung statt Richtung im Bild (Zeile "tank_steering 1|0")
 
     // Steht NICHT in der Datei: true, wenn ein Wert geändert, aber noch nicht
     // gespeichert wurde. Setzt, wer ändert, ohne gleich zu speichern (die

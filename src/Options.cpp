@@ -2,7 +2,7 @@
 // Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Ton" (Musik
 // an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA, Stil-Look,
 // Schatten, Sandsturm, Triebwerksschweif, Treffer-Aufblitzen, Fahrspuren) und "Steuerung"
-// (Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
+// (Tank-Steuerung an/aus, Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
 // Multiplayer.cpp (Mehrspieler-Pause), jeweils über ein OptionsScreen-Objekt.
@@ -32,7 +32,7 @@
 //                   Triebwerksschweif und Treffer-Aufblitzen (Effects.cpp,
 //                   Render.cpp) sowie für die Dauer der Fahrspuren der Rover
 //                   (Render.cpp)
-//      "Steuerung": feste Tabelle (kControls unten)
+//      "Steuerung": Umschalter Tank-Steuerung, feste Tabelle (kControls unten)
 //   5. Knopf "Zurück".
 // Das Fenster ist immer so hoch wie die längste Seite, damit es beim
 // Wechseln der Seite nicht springt.
@@ -120,7 +120,7 @@ constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 // Höhe des Inhalts der einzelnen Seiten (in derselben Reihenfolge wie in Draw):
 //   Ton:       vier Zeilen, Hinweiszeile 42
 //   Grafik:    neun Zeilen, Hinweiszeile 42
-//   Steuerung: Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
+//   Steuerung: eine Zeile (Tank-Steuerung), Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
 float SoundHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
 float GraphicsHeight() { return 9.0f * (kRowH + kRowGap) + 42.0f; }
 
@@ -137,7 +137,7 @@ constexpr int kShadowSizes[] = {0, 1024, 2048, 4096};
 const char* const kPixelNames[] = {"Aus", "Retro-Pixel fein", "Retro-Pixel mittel", "Retro-Pixel grob"};
 const char* const kShadowNames[] = {"Aus", "Niedrig", "Mittel", "Hoch"};
 const char* const kTrailNames[] = {"Aus", "Kurz", "Mittel", "Lang"};
-float ControlsHeight() { return 30.0f + 30.0f + kControlCount * kTableRowH; }
+float ControlsHeight() { return (kRowH + kRowGap) + 30.0f + 30.0f + kControlCount * kTableRowH; }
 
 // Gesamthöhe des Fensters: Rand 24, Überschrift 64, Karteireiter, Abstand 20,
 // die längste Seite, Abstand 16, Knopf, Rand 24.
@@ -336,6 +336,12 @@ void OptionsScreen::SetSubtitlesOn(bool on) {
     g_clientConfig.Save();
 }
 
+// Wie SetSubtitlesOn; Controls.cpp liest den Wert jedes Frame aus g_clientConfig.
+void OptionsScreen::SetTankSteeringOn(bool on) {
+    g_clientConfig.tankSteering = on;
+    g_clientConfig.Save();
+}
+
 // ===========================================================================
 // Zeichnen und Bedienen (Ablauf siehe Dateikopf)
 // ===========================================================================
@@ -355,6 +361,8 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_FXAA;
         for (int r = ROW_PIXEL; r <= ROW_FLASH; ++r) rows[n++] = r;
         rows[n++] = ROW_TRACKS;
+    } else if (tab == TAB_CONTROLS) {
+        rows[n++] = ROW_TANK;
     }
     rows[n++] = ROW_BACK;
     return n;
@@ -406,7 +414,7 @@ bool OptionsScreen::Draw() {
     // Seite wechseln: Tab (mit Umschalt rückwärts) bzw. LB/RB auf jeder Zeile,
     // auf den Karteireitern auch Pfeil links/rechts.
     const bool keys = frames_ > 1;
-    bool toggle = false, toggleSubs = false, close = false;
+    bool toggle = false, toggleSubs = false, toggleTank = false, close = false;
     float volStep = 0.0f, clipStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
     int msaaStep = 0, trackStep = 0, effectStep = 0;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
@@ -443,6 +451,7 @@ bool OptionsScreen::Draw() {
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
             else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
+            else if (sel_ == ROW_TANK) toggleTank = true;
             else if (sel_ == ROW_BACK) close = true;
         }
         if (BackPressed()) close = true;
@@ -688,7 +697,25 @@ bool OptionsScreen::Draw() {
              y + 4 * s, 17 * s, MUTED);
         overRow = overTilt || overMsaa || overFxaa || overEffect || overTracks;
     } else {
-        // Steuerung: nur Anzeige
+        // Zeile "Tank-Steuerung": wie die Zeile "Untertitel", schaltet um,
+        // wie der linke Stick im Flug lenkt (Controls.cpp).
+        const Rectangle rowTank{x, y, iw, kRowH * s};
+        const bool overTank = CheckCollisionPointRec(mouse, rowTank);
+        if (overTank && MouseMoved()) sel_ = ROW_TANK;
+        DrawRow(rowTank, sel_ == ROW_TANK);
+        Text("Tank-Steuerung", x + 22 * s, y + labelY, label, TEXT);
+        const Rectangle tankSw{x + kCtrlX * s, y + 9 * s, 120 * s, kRowH * s - 18 * s};
+        const bool tankClicked = Toggle(tankSw, g_clientConfig.tankSteering, 20 * s, sel_ == ROW_TANK);
+        if (tankClicked || (overTank && PointerPressed())) {
+            toggleTank = true;
+            sel_ = ROW_TANK;
+        }
+        Text(g_clientConfig.tankSteering ? "Stick vor/zurück = Schub, links/rechts = drehen" : "Stick zeigt die Flugrichtung im Bild",
+             tankSw.x + tankSw.width + 30 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
+        y += (kRowH + kRowGap) * s;
+        overRow = overTank;
+
+        // Steuerung: Übersicht, nur Anzeige
         Text("Tastatur, Maus und Controller gehen jederzeit, auch gemischt.", x, y + 2 * s, 17 * s, MUTED);
         y += 30 * s;
         const float ts = kTableText * s;
@@ -734,6 +761,7 @@ bool OptionsScreen::Draw() {
     if (padA && !(PadPointerActive() && (overRow || overTabs || backHover))) {
         if (sel_ == ROW_MUSIC) toggle = true;
         else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
+        else if (sel_ == ROW_TANK) toggleTank = true;
         else if (sel_ == ROW_BACK) close = true;
     }
     if (volStep != 0.0f) {
@@ -772,7 +800,11 @@ bool OptionsScreen::Draw() {
         SetSubtitlesOn(!g_clientConfig.subtitles);
         g_audio.Play(Sfx::UiConfirm);
     }
-    if ((sel_ != before || tab_ != tabBefore) && !toggle && !toggleSubs) g_audio.Play(Sfx::UiMove);
+    if (toggleTank) {
+        SetTankSteeringOn(!g_clientConfig.tankSteering);
+        g_audio.Play(Sfx::UiConfirm);
+    }
+    if ((sel_ != before || tab_ != tabBefore) && !toggle && !toggleSubs && !toggleTank) g_audio.Play(Sfx::UiMove);
     if (close) {
         Close();
         return true;

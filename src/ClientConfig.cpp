@@ -167,6 +167,10 @@ bool ClientConfig::Load() {
         } else if (key == "pixel_look") {
             const std::string v = Clean(value, 8);
             if (v == "0" || v == "1" || v == "2" || v == "3") pixelLook = std::stoi(v);
+        } else if (key == "tank_steering") {
+            const std::string v = Clean(value, 8);
+            if (v == "1") tankSteering = true;
+            else if (v == "0") tankSteering = false;
         }
         // andere Schlüssel: ignorieren (z. B. aus einer neueren Spielversion)
     }
@@ -194,6 +198,7 @@ bool ClientConfig::Save() {
     f << "trail " << trail << '\n';
     f << "hit_flash " << FormatVolume(hitFlash) << '\n';
     f << "pixel_look " << pixelLook << '\n';
+    f << "tank_steering " << (tankSteering ? 1 : 0) << '\n';
     // Absichtlich KEIN Passwort (siehe ClientConfig.hpp).
     f.close();   // erst beim Schließen ist sicher alles geschrieben
     if (!f) return false;
