@@ -90,6 +90,22 @@ public:
     // ist fest und wird nur einmal in Init() gesetzt.
     void SetCamera(Vector3 camPos);
 
+    // Richtung, in die das Sonnenlicht fällt (Länge 1). Effects.cpp stellt
+    // die Sonnenkamera der Schattenkarte danach ein.
+    Vector3 SunDirection() const { return sun_; }
+
+    // Grafikeffekte (Effects.hpp, Render.cpp), je Bild vor dem ersten Draw():
+    //   SetShadow:  lightVP = Blick- mal Projektionsmatrix der Sonne, slot =
+    //               Texturplatz der Schattenkarte, strength 0 = keine
+    //               Schatten, texel = Größe eines Bildpunkts der Karte (1 / Auflösung).
+    //   SetFlashes: Punktlichter von Explosionen (höchstens 4), pos.w =
+    //               Reichweite in Metern, color = Farbe mal Helligkeit.
+    //   SetFog:     Sandsturm, params wie fogParams in Effects.hpp
+    //               (z = 0: kein Nebel), color = Staubfarbe 0..1.
+    void SetShadow(const Matrix& lightVP, int slot, float strength, float texel);
+    void SetFlashes(const Vector4* pos, const Vector3* color, int count);
+    void SetFog(Vector3 center, Vector3 color, Vector4 params);
+
     // Gefundener Assets-Ordner mit "/" am Ende, z. B. "assets/" oder der
     // Ordner neben der ausführbaren Datei.
     const std::string& AssetDir() const { return assetDir_; }
@@ -128,6 +144,10 @@ private:
     int locLightDir_ = -1;
     int locViewPos_ = -1;
     int locEmissive_ = -1;
+    int locShadowMap_ = -1, locLightVP_ = -1, locShadowParams_ = -1;   // Schatten
+    int locFlashPos_ = -1, locFlashColor_ = -1;                         // Explosionsblitze
+    int locFogColor_ = -1, locFogCenter_ = -1, locFogParams_ = -1;      // Sandsturm
+    Vector3 sun_{0.0f, -1.0f, 0.0f};   // Richtung des Sonnenlichts (Init)
     bool ready_ = false;               // Init() war erfolgreich; vorher zeichnet Draw() nichts
 };
 

@@ -208,6 +208,15 @@ struct Particle {
     bool glow = false;
 };
 
+// Aufblitzen einer Explosion (Grafikeffekt "Treffer-Aufblitzen", Render.cpp:
+// Lichtkugel und Punktlicht). Wie die Partikel nur im Einzelspieler und im Client.
+struct Flash {
+    Vector3 pos{};
+    float life = 0.0f;     // Restzeit; life/maxLife = Helligkeit beim Abklingen
+    float maxLife = 0.45f;
+    float size = 1.0f;     // Größe der Explosion
+};
+
 // Kulisse: Krater, Felsen, Rover ... (nur Optik, keine Kollision).
 struct Deco {
     int model = -1;
@@ -599,6 +608,7 @@ public:
     std::vector<Wreck> wrecks;
     std::vector<Bullet> bullets;
     std::vector<Particle> particles;
+    std::vector<Flash> flashes;            // Explosionsblitze (nur Optik, wie particles)
     std::vector<Deco> decos;
     std::vector<MonorailLoop> monorails;   // geschlossene Monorail-Kreise der eigenen Karte (Render.cpp: Züge)
     // Kartenanimation (MapAnim.cpp). Die Rover stehen zusätzlich als Deko in

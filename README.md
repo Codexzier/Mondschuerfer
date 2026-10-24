@@ -359,6 +359,23 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
   kann, und es wird diese Stufe benutzt.
 - **FXAA** – glättet Kanten zusätzlich per Shader; Regler in 10-%-Schritten, ganz links „Aus“
   (Standard). Lässt sich zusammen mit der Kantenglättung einschalten.
+- **Stil-Look** – Aus (Standard) oder Retro-Pixel fein, mittel, grob: Die 3D-Welt wird in große
+  Pixel mit weniger Farbstufen zerlegt (wie 360, 240 bzw. 160 Bildzeilen). HUD und Menüs bleiben
+  scharf; FXAA ist dabei ohne Wirkung.
+- **Schatten** – Schiffe und andere bewegte Objekte (Rover, Züge, Raketen, Personen) werfen echte
+  Schatten auf Boden, Stationen und Felsen (Schattenkarte). Stufen Aus, Niedrig, Mittel (Standard)
+  und Hoch (schärfere Kanten, mehr Grafikspeicher). „Aus“ zeigt wie bisher runde Schatten unter den
+  Schiffen.
+- **Sandsturm** – Staub in der Farbe des Mondes, der die Sicht einschränkt: Nur ein Kreis um das
+  eigene Schiff bleibt klar, weiter weg verschwinden andere Schiffe, Felsen und Leuchteffekte in
+  wogenden Schwaden, dazu fliegen Sandkörner mit dem Wind. Regler in 10-%-Schritten (je stärker,
+  desto kleiner der klare Kreis); Standard „Aus“. Nicht im Karteneditor und nicht in der
+  Kartenübersicht des Zuschauers.
+- **Triebwerksschweif** – kurzer Schweif aus glühenden Partikeln hinter den Triebwerken, solange
+  ein Schiff Schub gibt: Aus, Kurz, Mittel (Standard) oder Lang.
+- **Treffer-Aufblitzen** – wie stark Schiffe bei einem Treffer aufleuchten und Explosionen
+  (zerstörte Schiffe) aufblitzen: ein Lichtball, der die Umgebung kurz anstrahlt, ganz nah am
+  eigenen Schiff hellt sich das ganze Bild auf. Regler in 10-%-Schritten, Standard 100 %.
 - **Fahrspuren (Rover)** – wie lange die Reifenspuren der Rover sichtbar bleiben: Aus, 15 s, 30 s,
   1 min (Standard), 2 min oder 5 min. Danach verblassen sie; „Aus“ spart am meisten Leistung.
 
@@ -390,17 +407,26 @@ tilt_shift 0.50
 msaa 4
 fxaa 0.00
 track_time 60
+shadows 2048
+sandstorm 0.00
+trail 2
+hit_flash 1.00
+pixel_look 0
 ```
 
-`music` und `subtitles` sind `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
+`music` und `subtitles` sind `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift`, `fxaa`, `sandstorm` und
+`hit_flash` je eine Zahl von `0` bis `1`
 (Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`, `track_time` die
-Sekunden der Fahrspuren (`0`, `15`, `30`, `60`, `120`, `300`). Fehlt die Datei
+Sekunden der Fahrspuren (`0`, `15`, `30`, `60`, `120`, `300`), `shadows` die Auflösung der
+Schattenkarte (`0`, `1024`, `2048`, `4096`), `trail` und `pixel_look` die Stufe `0` (aus) bis `3`. Fehlt die Datei
 oder eine Zeile, gelten die Standardwerte (Musik an, Musiklautstärke 50 %, Clip-Lautstärke 100 %, Untertitel an, Tilt-Shift 50 %,
-Kantenglättung 4x, FXAA aus, Fahrspuren 1 min).
+Kantenglättung 4x, FXAA aus, Fahrspuren 1 min, Schatten Mittel, Sandsturm aus, Schweif Mittel, Aufblitzen 100 %,
+Stil-Look aus).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
 `src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/TiltShift.*`
-(Tilt-Shift, Kantenglättung, FXAA), `src/ClientConfig.*` (Datei).
+(Tilt-Shift, Kantenglättung, FXAA, Retro-Pixel), `src/Effects.*` (Schattenkarte, Sandsturm),
+`src/Render.cpp` (Schweif, Explosionsblitze, Sandkörner), `src/ClientConfig.*` (Datei).
 
 ---
 
@@ -437,7 +463,8 @@ Mondschuerfer/
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
 │   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Ton, Grafik, Steuerung)
-│   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA (Werte aus den Optionen)
+│   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA, Retro-Pixel (Werte aus den Optionen)
+│   ├── Effects.cpp/.hpp  Grafikeffekte: Schattenkarte, Sandsturm, Bildblitz
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader

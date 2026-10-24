@@ -36,16 +36,22 @@
 //   - World.hpp / Config.hpp: Spielzustand und Balancing-Werte.
 //
 // Ablauf von World::Draw (die Reihenfolge ist wichtig):
-//   1. Undurchsichtige Modelle: Boden, Dekoration, Monorail, Raketen, Rover,
-//      Stationen, Lagerstätten, Wracks, Schiffe. Sie füllen den Tiefenpuffer.
+//   0. Grafikeffekte für dieses Bild einstellen (Effects.hpp): Sandsturm,
+//      Licht der Explosionen und – wenn die Option an ist – die
+//      Schattenkarte: die bewegten Objekte (DrawMovingModels) einmal aus
+//      Sicht der Sonne zeichnen.
+//   1. Undurchsichtige Modelle: Boden, Dekoration, Schienen, Startplätze,
+//      Stationen, Lagerstätten, Wracks und die bewegten Objekte (Züge,
+//      Raketen, Rover, Personen, Schiffe). Sie füllen den Tiefenpuffer.
 //   2. Halbtransparente Fahrspuren, Bodenmarkierungen und Schatten (normales
-//      Mischen).
+//      Mischen; die runden "Blob-Schatten" nur ohne Schattenkarte).
 //   3. Leuchteffekte mit additivem Mischen: Scanner, Lichtsäulen, Glimmen
 //      der Kristalle, Tore, Raketenflammen, Abbaustrahlen, Triebwerke,
-//      Geschosse, leuchtende Partikel.
-//   4. Rauch (auch der Raketen) und Trümmer (normales Mischen).
+//      Triebwerksschweif, Geschosse, leuchtende Partikel, Explosionsblitze.
+//   4. Rauch (auch der Raketen), Trümmer und Sandkörner (normales Mischen).
 //   Durchsichtiges kommt nach dem Undurchsichtigen, weil es mit dem schon
-//   fertigen Bild dahinter gemischt wird.
+//   fertigen Bild dahinter gemischt wird. Im Sandsturm verblasst alles
+//   Durchsichtige mit dem Abstand zum Schiff (fx::BeginEffects).
 //
 // Sichtweite ("Culling"): Alles, was weiter als drawRange (Standard 115 m,
 // Zuschauer: ganze Karte) waagerecht vom Blickpunkt der Kamera (cam.target)
@@ -55,10 +61,13 @@
 #include "World.hpp"
 #include "Assets.hpp"
 #include "ClientConfig.hpp"
+#include "Effects.hpp"
 #include "Models.hpp"
+#include "TiltShift.hpp"
 #include "rlgl.h"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace {
 
@@ -132,9 +141,9 @@ void DrawBeam(Vector3 base, float height, float radius, Color col) {
 }
 
 // Einfacher "Blob-Schatten": eine flache, halbdurchsichtige schwarze Scheibe
-// unter dem Schiff. Echte Schatten (Shadow-Mapping: Szene zusätzlich aus Sicht
-// der Sonne rendern) wären viel aufwendiger; die Scheibe zeigt trotzdem gut,
-// wo ein schwebendes Schiff über dem Boden steht.
+// unter dem Schiff. Nur wenn die Grafikoption "Schatten" aus ist; sonst gibt
+// es echte Schatten (Schattenkarte, Effects.hpp). Die Scheibe zeigt trotzdem
+// gut, wo ein schwebendes Schiff über dem Boden steht.
 void DrawShadow(Vector3 pos, float radius, float alpha) {
     DrawCylinder({pos.x, 0.06f, pos.z}, radius, radius, 0.02f, 18, Fade(BLACK, alpha));
 }
@@ -197,6 +206,168 @@ float EaseOutBack(float t) {
     return 1.0f + c3 * x * x * x + c1 * x * x;
 }
 
+// Bewegte Modelle: Monorail-Züge, Raketen, Rover, Personen und Schiffe.
+// World::Draw zeichnet sie zweimal: in die Schattenkarte (Grafikoption
+// "Schatten": nur sie werfen Schatten) und ins eigentliche Bild. So passen
+// Schatten und Modell immer genau zusammen. hitFlash = Stärke des
+// Treffer-Aufblitzens aus den Optionen (0..1).
+void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash) {
+    const float time = w.time;
+    // Modell-IDs nur einmal nachschlagen (static, siehe Geschütztürme in World::Draw)
+    static int trainCars[3] = {-1, -1, -1}, trainMid[3] = {-1, -1, -1}, rocketIds[2][4], roverModel = -1;
+    if (trainCars[0] < 0) {
+        trainCars[0] = g_assets.Id("monorail_trainFront");
+        trainCars[1] = g_assets.Id("monorail_trainPassenger");
+        trainCars[2] = g_assets.Id("monorail_trainEnd");
+        trainMid[0] = g_assets.Id("monorail_trainPassenger");
+        trainMid[1] = g_assets.Id("monorail_trainCargo");
+        trainMid[2] = g_assets.Id("monorail_trainBox");
+        for (int k = 0; k < 4; ++k) {
+            rocketIds[0][k] = g_assets.Id(kRocketA[k].model);
+            rocketIds[1][k] = g_assets.Id(kRocketB[k].model);
+        }
+        roverModel = g_assets.Id("rover");
+    }
+
+    // --- Monorail-Züge (eigene Karte, shared/GameMap.hpp) ------------------------
+    // Auf jedem geschlossenen Schienenkreis fährt ein Zug aus Triebwagen,
+    // Personenwagen und Schlusswagen. Die Lage ergibt sich nur aus der
+    // Weltzeit, es muss also nichts weitergerechnet oder gespeichert werden.
+    // Die Wagen schauen wie die Schiffe mit der Nase nach -z (YawTowards).
+    for (const MonorailLoop& loop : w.monorails) {
+        for (int c = 0; c < 3; ++c) {
+            Vector3 dir;
+            const Vector3 p = MonorailPoint(loop, time * mapgrid::TRAIN_SPEED - c * mapgrid::TRAIN_CAR_GAP, &dir);
+            if (Dist2D(p, focus) > cullR + 5.0f) continue;
+            g_assets.Draw(trainCars[c], p, YawTowards({0, 0, 0}, dir), mapgrid::CELL);
+        }
+    }
+
+    // --- Züge zwischen den Stationen (Kartenanimation, MapAnim.cpp) ---------------
+    // Der Zug pendelt: vorne und hinten je ein Triebwagen (der hintere
+    // umgedreht), so braucht er an den Enden nicht zu wenden. Die Wagen stehen
+    // auf der Oberkante der Schiene (0,13 im Kit, wie kTrackTop in GameMap.cpp).
+    for (const StationRail& r : w.rails) {
+        const float c = RailTrainPos(r, time);
+        if (c < 0.0f) continue;
+        Vector3 dir = Vector3Subtract(r.b, r.a);
+        dir.y = 0.0f;
+        dir = Vector3Normalize(dir);
+        for (int car = 0; car < 3; ++car) {
+            Vector3 p = Vector3Add(r.a, Vector3Scale(dir, c + (car - 1) * mapgrid::TRAIN_CAR_GAP));
+            p.y = 0.13f * mapgrid::CELL;
+            if (Dist2D(p, focus) > cullR + 5.0f) continue;
+            const int model = car == 1 ? trainMid[r.cargo] : trainCars[0];
+            const float carYaw = YawTowards({0, 0, 0}, car == 0 ? Vector3Negate(dir) : dir);
+            g_assets.Draw(model, p, carYaw, mapgrid::CELL);
+        }
+    }
+
+    // --- Raketen auf den Startplätzen (Kartenanimation) ------------------------------
+    // RocketAt: steht, startet, ist unterwegs oder landet. Beim Aufstieg kippt
+    // die ganze Rakete um die waagerechte Achse quer zu "out" (up x out); erst
+    // skalieren, dann das Bauteil auf seine Höhe schieben, kippen und an den
+    // Fußpunkt verschieben.
+    for (const RocketPad& pad : w.pads) {
+        if (Dist2D(pad.pos, focus) > cullR + 10.0f) continue;
+        const RocketPose rp = RocketAt(pad, time);
+        if (!rp.visible || rp.size < 0.01f) continue;
+        const float sc = PAD_SCALE * rp.size;
+        const Vector3 axis{pad.out.z, 0.0f, -pad.out.x};
+        for (int k = 0; k < 4; ++k) {
+            const RocketPart& part = pad.typeB ? kRocketB[k] : kRocketA[k];
+            Matrix m = MatrixMultiply(MatrixScale(sc, sc, sc), MatrixTranslate(0.0f, part.y * sc, 0.0f));
+            if (rp.tilt > 0.0f) m = MatrixMultiply(m, MatrixRotate(axis, rp.tilt));
+            m = MatrixMultiply(m, MatrixTranslate(rp.pos.x, rp.pos.y, rp.pos.z));
+            g_assets.Draw(rocketIds[pad.typeB ? 1 : 0][k], m);
+        }
+    }
+
+    // --- Rover (Kartenanimation) ----------------------------------------------------
+    // Beim Fahren schaukeln sie leicht (kleine Nick- und Rollwinkel, mit dem
+    // Index als Phasenversatz), im Stand nicht.
+    for (size_t i = 0; i < w.rovers.size(); ++i) {
+        const Rover& r = w.rovers[i];
+        if (Dist2D(r.pos, focus) > cullR + 2.0f) continue;
+        const float bump = std::min(1.0f, r.speed * 0.5f);
+        const float pitch = 0.035f * bump * sinf(time * 9.0f + i * 1.7f);
+        const float roll = 0.03f * bump * sinf(time * 7.0f + i * 2.3f);
+        g_assets.Draw(roverModel, TRS(r.pos, r.yaw, pitch, roll, r.scale));
+    }
+
+    // --- Personen (Mission "Personen einsammeln") --------------------------------
+    // Nur die eigenen (im Mehrspieler schickt der Server ohnehin nur diese).
+    // 1,8-fach vergrößert (das Modell ist nur 0,8 m hoch), damit man sie von
+    // oben erkennt; sie hüpfen leicht, als würden sie auf sich aufmerksam machen.
+    const PlayerState& me = w.Me();
+    for (const auto& pe : w.persons) {
+        if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
+        const float hop = 0.12f * fabsf(sinf(time * 4.0f + static_cast<float>(pe.id)));
+        g_assets.Draw(pe.model, Vector3{pe.pos.x, hop, pe.pos.z}, pe.yaw, 1.8f);
+    }
+
+    // --- Schiffe -------------------------------------------------------------------
+    // dead = wird gerade entfernt, hidden = angedockt (steht unsichtbar in der
+    // Station) bzw. Platzhalter ohne Schiff im Mehrspieler.
+    for (const auto& s : w.ships) {
+        if (s.dead || s.hidden) continue;
+        if (Dist2D(s.pos, focus) > cullR) continue;
+        // Farbton je Schiffsart: Piraten rötlich, Elite-Piraten violett.
+        // Spieler (auch fremde im Mehrspieler) und Händler/Miner bleiben unverändert.
+        Color tint = WHITE;
+        if (s.kind == ShipKind::Pirate) tint = Color{255, 150, 145, 255};
+        else if (s.kind == ShipKind::Elite) tint = Color{190, 150, 255, 255};
+        // Treffer-Aufblitzen: hitFlash springt beim Treffer auf 1 und klingt
+        // in ca. 0,3 s ab (World.cpp); warmweißes Eigenleuchten, so stark wie
+        // in den Optionen eingestellt.
+        const float hf = s.hitFlash * hitFlash;
+        Vector3 em{hf * 0.7f, hf * 0.5f, hf * 0.4f};
+        // Nicken: Beim Absturz zeigt die Nase deutlich nach unten (0,5 rad,
+        // ca. 29°); beim Beschleunigen neigt sich das Schiff leicht nach vorn
+        // (bis ca. 3,4° bei vollem Schub). bank = Rollwinkel in Kurven (bzw.
+        // Trudeln beim Absturz), berechnet in World.cpp.
+        float pitch = s.crashing ? -0.5f : -0.06f * s.thrustVisual;
+        g_assets.Draw(s.model, TRS(s.pos, s.yaw, pitch, s.bank, 1.0f), tint, em);
+    }
+}
+
+// Lage eines Triebwerks: Zwei Triebwerke am Heck jedes Schiffs (k = -1 links,
+// +1 rechts). fwd = Flugrichtung aus dem Kurs, side = fwd um 90° in der
+// Waagerechten gedreht (zeigt zur Seite). back Meter hinter der Schiffsmitte
+// (das Modell der Händler/Miner, ShipKind::Miner, ist länger: 1.4 statt
+// 1.15), 0.45 m zur Seite, 0.35 m hoch.
+Vector3 EnginePos(const Ship& s, int k) {
+    const Vector3 fwd = ForwardFromYaw(s.yaw);
+    const Vector3 side{fwd.z, 0, -fwd.x};
+    const float back = s.kind == ShipKind::Miner ? 1.4f : 1.15f;
+    Vector3 base = Vector3Add(s.pos, Vector3Add(Vector3Scale(fwd, -back), Vector3Scale(side, 0.45f * k)));
+    base.y += 0.35f;
+    return base;
+}
+
+// Triebwerksschweif (Grafikoption, Stufen kurz/mittel/lang): kleine
+// leuchtende Würfel, die hinter den Triebwerken entstehen, zurückbleiben,
+// schrumpfen und verblassen. Sie gehören nicht zur Welt (World::Draw ist
+// const und die Spiellogik braucht sie nicht), deshalb merkt sich diese
+// Datei sie selbst. Eine Wolke ist durch Startpunkt, Drift und
+// Entstehungszeit festgelegt; ihre Lage folgt daraus, ohne Update.
+struct TrailPuff {
+    Vector3 pos{};          // Ort beim Entstehen
+    Vector3 vel{};          // Drift in m/s
+    float born = 0.0f;      // Weltzeit beim Entstehen
+    float power = 1.0f;     // Schub beim Entstehen 0..1 (Helligkeit)
+    bool pirate = false;    // Piraten: rötliche Flamme
+};
+struct TrailState {
+    const World* world = nullptr;   // Welt, zu der die Wolken gehören (Menü-Hintergrund, Spiel ...)
+    float last = 0.0f;              // Weltzeit beim letzten Zeichnen
+    std::vector<TrailPuff> puffs;
+};
+TrailState g_trail;
+// Lebensdauer einer Wolke in Sekunden je Stufe (0 = aus)
+constexpr float kTrailLife[4] = {0.0f, 0.3f, 0.55f, 0.9f};
+constexpr float kTrailStep = 1.0f / 50.0f;   // je Triebwerk 50 Wolken pro Sekunde
+
 } // namespace
 
 // Zeichnet die ganze Welt aus Sicht von cam. Muss zwischen BeginMode3D(cam)
@@ -216,6 +387,43 @@ void World::Draw(const Camera3D& cam) const {
     const Ship& player = Player();
     const PlayerState& me = Me();
     const bool orangeMoon = g_assets.GetMoonColor() == MoonColor::Orange;
+
+    // --- Grafikeffekte dieses Bildes (Optionen → Grafik, Effects.hpp) ------------
+    // Sandsturm nur mit den Kameraeffekten (nicht im Karteneditor) und nicht in
+    // der Übersicht des Zuschauers (dort wäre die ganze Karte im Staub).
+    const float sand = tiltshift::Active() && cullR < 200.0f ? g_clientConfig.sandstorm : 0.0f;
+    fx::SetFog(focus, sand, time);
+    // Treffer-Aufblitzen: Jede Explosion leuchtet kurz als Punktlicht (die
+    // vier neuesten in Sichtweite), das Schiffe, Boden und Stationen in der
+    // Nähe anstrahlt. Helligkeit k² fällt in 0,45 s von 1 auf 0. Explodiert
+    // etwas nahe am Blickpunkt (unter 30 m), blitzt das ganze Bild kurz auf.
+    const float flashK = g_clientConfig.hitFlash;
+    Vector4 lightPos[4];
+    Vector3 lightCol[4];
+    int lights = 0;
+    float screenFlash = 0.0f;
+    if (flashK > 0.0f && cullR < 200.0f) {
+        for (size_t i = flashes.size(); i-- > 0 && lights < 4;) {
+            const Flash& f = flashes[i];
+            const float d = Dist2D(f.pos, focus);
+            if (d > cullR + 20.0f) continue;
+            const float k = f.life / f.maxLife, bright = k * k * flashK;
+            lightPos[lights] = Vector4{f.pos.x, f.pos.y + 1.5f, f.pos.z, 16.0f * f.size};
+            lightCol[lights] = Vector3{3.0f * bright, 2.15f * bright, 1.25f * bright};
+            ++lights;
+            screenFlash = std::max(screenFlash, 0.35f * bright * std::clamp(1.0f - d / 30.0f, 0.0f, 1.0f));
+        }
+    }
+    g_assets.SetFlashes(lightPos, lightCol, lights);
+    fx::SetScreenFlash(screenFlash);
+    // Schattenkarte: die bewegten Objekte zuerst aus Sicht der Sonne zeichnen
+    // (nur ihre Tiefe zählt, siehe Effects.hpp). Ist die Option aus, gibt es
+    // stattdessen weiter unten die einfachen runden Schatten.
+    const bool shadowMap = fx::BeginShadowPass(cam, cullR);
+    if (shadowMap) {
+        DrawMovingModels(*this, focus, cullR, 0.0f);
+        fx::EndShadowPass();
+    }
 
     // --- Boden --------------------------------------------------------------
     // Das Modell "terrain" ist eine flache Platte von 1 m x 1 m. Zwei Platten:
@@ -262,40 +470,13 @@ void World::Draw(const Camera3D& cam) const {
         }
     }
 
-    // --- Monorail-Züge (eigene Karte, shared/GameMap.hpp) ------------------------
-    // Auf jedem geschlossenen Schienenkreis fährt ein Zug aus Triebwagen,
-    // Personenwagen und Schlusswagen. Die Lage ergibt sich nur aus der
-    // Weltzeit, es muss also nichts weitergerechnet oder gespeichert werden.
-    // Die Wagen schauen wie die Schiffe mit der Nase nach -z (YawTowards).
-    static int trainCars[3] = {-1, -1, -1};
-    if (trainCars[0] < 0) {
-        trainCars[0] = g_assets.Id("monorail_trainFront");
-        trainCars[1] = g_assets.Id("monorail_trainPassenger");
-        trainCars[2] = g_assets.Id("monorail_trainEnd");
-    }
-    for (const MonorailLoop& loop : monorails) {
-        for (int c = 0; c < 3; ++c) {
-            Vector3 dir;
-            const Vector3 p = MonorailPoint(loop, time * mapgrid::TRAIN_SPEED - c * mapgrid::TRAIN_CAR_GAP, &dir);
-            if (Dist2D(p, focus) > cullR + 5.0f) continue;
-            g_assets.Draw(trainCars[c], p, YawTowards({0, 0, 0}, dir), mapgrid::CELL);
-        }
-    }
-
     // --- Monorail zwischen den Stationen (Kartenanimation, MapAnim.cpp) -----------
     // Gerade Schienen aus Rasterfeld-langen Stücken, mittig zwischen den
     // Enden. Das Kit-Stück liegt längs der z-Achse; mit yaw = atan2(dx, dz)
-    // zeigt es in Streckenrichtung (Drehung wie MapRotate). Der Zug pendelt:
-    // vorne und hinten je ein Triebwagen (der hintere umgedreht), so braucht
-    // er an den Enden nicht zu wenden. Die Wagen stehen auf der Oberkante der
-    // Schiene (0,13 im Kit, wie kTrackTop in GameMap.cpp).
-    static int railPiece = -1, trainMid[3] = {-1, -1, -1};
-    if (railPiece < 0) {
-        railPiece = g_assets.Id("monorail_trackStraight");
-        trainMid[0] = g_assets.Id("monorail_trainPassenger");
-        trainMid[1] = g_assets.Id("monorail_trainCargo");
-        trainMid[2] = g_assets.Id("monorail_trainBox");
-    }
+    // zeigt es in Streckenrichtung (Drehung wie MapRotate). Die Züge zeichnet
+    // DrawMovingModels.
+    static int railPiece = -1;
+    if (railPiece < 0) railPiece = g_assets.Id("monorail_trackStraight");
     for (const StationRail& r : rails) {
         Vector3 dir = Vector3Subtract(r.b, r.a);
         dir.y = 0.0f;
@@ -309,33 +490,15 @@ void World::Draw(const Camera3D& cam) const {
             if (Dist2D(p, focus) > cullR + 3.0f) continue;
             g_assets.Draw(railPiece, p, yaw, mapgrid::CELL);
         }
-        const float c = RailTrainPos(r, time);
-        if (c < 0.0f) continue;
-        for (int car = 0; car < 3; ++car) {
-            Vector3 p = Vector3Add(r.a, Vector3Scale(dir, c + (car - 1) * mapgrid::TRAIN_CAR_GAP));
-            p.y = 0.13f * mapgrid::CELL;
-            if (Dist2D(p, focus) > cullR + 5.0f) continue;
-            const int model = car == 1 ? trainMid[r.cargo] : trainCars[0];
-            const float carYaw = YawTowards({0, 0, 0}, car == 0 ? Vector3Negate(dir) : dir);
-            g_assets.Draw(model, p, carYaw, mapgrid::CELL);
-        }
     }
 
     // --- Raketenstartplätze (Kartenanimation) ---------------------------------------
-    // Plattform mit Gerüst daneben, darauf die Rakete (RocketAt: steht,
-    // startet, ist unterwegs oder landet). Beim Aufstieg kippt die ganze
-    // Rakete um die waagerechte Achse quer zu "out" (up x out); erst
-    // skalieren, dann das Bauteil auf seine Höhe schieben, kippen und an den
-    // Fußpunkt verschieben.
-    static int padPlatform = -1, padTower = -1, padTowerTop = -1, rocketIds[2][4];
+    // Plattform mit Gerüst daneben; die Rakete darauf zeichnet DrawMovingModels.
+    static int padPlatform = -1, padTower = -1, padTowerTop = -1;
     if (padPlatform < 0) {
         padPlatform = g_assets.Id("platform_large");
         padTower = g_assets.Id("structure_detailed");
         padTowerTop = g_assets.Id("structure");
-        for (int k = 0; k < 4; ++k) {
-            rocketIds[0][k] = g_assets.Id(kRocketA[k].model);
-            rocketIds[1][k] = g_assets.Id(kRocketB[k].model);
-        }
     }
     for (const RocketPad& pad : pads) {
         if (Dist2D(pad.pos, focus) > cullR + 10.0f) continue;
@@ -345,29 +508,6 @@ void World::Draw(const Camera3D& cam) const {
         g_assets.Draw(padTower, tower, towerYaw, PAD_SCALE);
         g_assets.Draw(padTowerTop, Vector3Add(tower, {0, 1.0f * PAD_SCALE, 0}), towerYaw, PAD_SCALE);
         g_assets.Draw(padTowerTop, Vector3Add(tower, {0, 2.0f * PAD_SCALE, 0}), towerYaw, PAD_SCALE);
-        const RocketPose rp = RocketAt(pad, time);
-        if (!rp.visible || rp.size < 0.01f) continue;
-        const float sc = PAD_SCALE * rp.size;
-        const Vector3 axis{pad.out.z, 0.0f, -pad.out.x};
-        for (int k = 0; k < 4; ++k) {
-            const RocketPart& part = pad.typeB ? kRocketB[k] : kRocketA[k];
-            Matrix m = MatrixMultiply(MatrixScale(sc, sc, sc), MatrixTranslate(0.0f, part.y * sc, 0.0f));
-            if (rp.tilt > 0.0f) m = MatrixMultiply(m, MatrixRotate(axis, rp.tilt));
-            m = MatrixMultiply(m, MatrixTranslate(rp.pos.x, rp.pos.y, rp.pos.z));
-            g_assets.Draw(rocketIds[pad.typeB ? 1 : 0][k], m);
-        }
-    }
-
-    // --- Rover (Kartenanimation) ----------------------------------------------------
-    // Beim Fahren schaukeln sie leicht (kleine Nick- und Rollwinkel, mit dem
-    // Index als Phasenversatz), im Stand nicht.
-    for (size_t i = 0; i < rovers.size(); ++i) {
-        const Rover& r = rovers[i];
-        if (Dist2D(r.pos, focus) > cullR + 2.0f) continue;
-        const float bump = std::min(1.0f, r.speed * 0.5f);
-        const float pitch = 0.035f * bump * sinf(time * 9.0f + i * 1.7f);
-        const float roll = 0.03f * bump * sinf(time * 7.0f + i * 2.3f);
-        g_assets.Draw(roverModel, TRS(r.pos, r.yaw, pitch, roll, r.scale));
     }
 
     // --- Stationen ------------------------------------------------------------
@@ -457,37 +597,8 @@ void World::Draw(const Camera3D& cam) const {
         g_assets.Draw(w.model, TRS(w.pos, w.yaw, w.tilt, w.tilt * 0.7f, 1.0f), Color{95, 92, 92, 255});
     }
 
-    // --- Personen (Mission "Personen einsammeln") --------------------------------
-    // Nur die eigenen (im Mehrspieler schickt der Server ohnehin nur diese).
-    // 1,8-fach vergrößert (das Modell ist nur 0,8 m hoch), damit man sie von
-    // oben erkennt; sie hüpfen leicht, als würden sie auf sich aufmerksam machen.
-    for (const auto& pe : persons) {
-        if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
-        const float hop = 0.12f * fabsf(sinf(time * 4.0f + static_cast<float>(pe.id)));
-        g_assets.Draw(pe.model, Vector3{pe.pos.x, hop, pe.pos.z}, pe.yaw, 1.8f);
-    }
-
-    // --- Schiffe -------------------------------------------------------------------
-    // dead = wird gerade entfernt, hidden = angedockt (steht unsichtbar in der
-    // Station) bzw. Platzhalter ohne Schiff im Mehrspieler.
-    for (const auto& s : ships) {
-        if (s.dead || s.hidden) continue;
-        if (Dist2D(s.pos, focus) > cullR) continue;
-        // Farbton je Schiffsart: Piraten rötlich, Elite-Piraten violett.
-        // Spieler (auch fremde im Mehrspieler) und Händler/Miner bleiben unverändert.
-        Color tint = WHITE;
-        if (s.kind == ShipKind::Pirate) tint = Color{255, 150, 145, 255};
-        else if (s.kind == ShipKind::Elite) tint = Color{190, 150, 255, 255};
-        // Treffer-Aufblitzen: hitFlash springt beim Treffer auf 1 und klingt
-        // in ca. 0,3 s ab (World.cpp); warmweißes Eigenleuchten.
-        Vector3 em{s.hitFlash * 0.7f, s.hitFlash * 0.5f, s.hitFlash * 0.4f};
-        // Nicken: Beim Absturz zeigt die Nase deutlich nach unten (0,5 rad,
-        // ca. 29°); beim Beschleunigen neigt sich das Schiff leicht nach vorn
-        // (bis ca. 3,4° bei vollem Schub). bank = Rollwinkel in Kurven (bzw.
-        // Trudeln beim Absturz), berechnet in World.cpp.
-        float pitch = s.crashing ? -0.5f : -0.06f * s.thrustVisual;
-        g_assets.Draw(s.model, TRS(s.pos, s.yaw, pitch, s.bank, 1.0f), tint, em);
-    }
+    // --- Züge, Raketen, Rover, Personen und Schiffe ------------------------------------
+    DrawMovingModels(*this, focus, cullR, flashK);
 
     // ===== Ab hier transparente / leuchtende Effekte ====================================
     // raylib sammelt einfache Formen (DrawCylinder, DrawCube, rlBegin/rlVertex)
@@ -508,6 +619,8 @@ void World::Draw(const Camera3D& cam) const {
     // einen später gezeichneten dahinter komplett verdecken. So muss nicht
     // nach Entfernung sortiert werden.
     rlDisableDepthMask();
+    // Im Sandsturm verblassen alle folgenden Effekte mit dem Abstand zum Schiff
+    fx::BeginEffects();
 
     // Fahrspuren der Rover (Kartenanimation)
     // Je Radseite ein schmaler, dunkler Streifen von Spurpunkt zu Spurpunkt
@@ -554,15 +667,17 @@ void World::Draw(const Camera3D& cam) const {
         }
     }
 
-    // Schatten
+    // Schatten (nur ohne Schattenkarte, die zeichnet echte Schatten)
     // Alpha 0.16 bis 2,5 m Flughöhe, darüber schwächer, ab 12,5 m nur noch
     // 20 % davon: je höher das Schiff, desto blasser der Schatten.
     for (const auto& s : ships) {
+        if (shadowMap) break;
         if (s.dead || s.hidden || Dist2D(s.pos, focus) > cullR) continue;
         float h = std::max(0.0f, s.pos.y);
         DrawShadow(s.pos, 1.1f, 0.16f * std::clamp(1.2f - h * 0.08f, 0.2f, 1.0f));
     }
     for (const Rover& r : rovers) {
+        if (shadowMap) break;
         if (Dist2D(r.pos, focus) <= cullR) DrawShadow(r.pos, 0.22f * r.scale, 0.18f);
     }
 
@@ -776,28 +891,88 @@ void World::Draw(const Camera3D& cam) const {
     }
 
     // Triebwerke
-    // Zwei Flammenkegel am Heck jedes Schiffs. fwd = Flugrichtung aus dem Kurs,
-    // side = fwd um 90° in der Waagerechten gedreht (zeigt zur Seite).
-    // Lage: back Meter hinter der Schiffsmitte (das Modell der Händler/Miner,
-    // ShipKind::Miner, ist länger: 1.4 statt 1.15), 0.45 m links/rechts (k = -1 / +1), 0.35 m hoch.
+    // Zwei Flammenkegel am Heck jedes Schiffs (Lage siehe EnginePos).
     // Länge: 0.25 m im Leerlauf, bis zu 0.9 m mehr bei vollem Schub
     // (thrustVisual 0..1), dazu schnelles Flackern (40 rad/s, ca. 6 Mal pro
     // Sekunde) mit der Schiffs-id als Phasenversatz. Piraten rot, sonst orange.
     for (const auto& s : ships) {
         if (s.dead || s.hidden || Dist2D(s.pos, focus) > cullR) continue;
         Vector3 fwd = ForwardFromYaw(s.yaw);
-        Vector3 side{fwd.z, 0, -fwd.x};
         float len = 0.25f + s.thrustVisual * 0.9f + 0.08f * sinf(time * 40.0f + s.id);
-        float back = s.kind == ShipKind::Miner ? 1.4f : 1.15f;
         for (int k = -1; k <= 1; k += 2) {
-            Vector3 base = Vector3Add(s.pos, Vector3Add(Vector3Scale(fwd, -back), Vector3Scale(side, 0.45f * k)));
-            base.y += 0.35f;
+            Vector3 base = EnginePos(s, k);
             Vector3 tip = Vector3Add(base, Vector3Scale(fwd, -len));
             Color c = s.faction == Faction::Pirate ? Color{255, 90, 70, 200} : Color{255, 170, 60, 200};
             // DrawCylinderEx(Start, Ende, Radius am Start, Radius am Ende, ...):
             // breit am Triebwerk, spitz am Ende.
             DrawCylinderEx(base, tip, 0.18f, 0.02f, 6, c);
         }
+    }
+
+    // Triebwerksschweif (Grafikoption, siehe TrailPuff oben)
+    // Neue Wolken auf einem festen Zeitraster (alle kTrailStep Sekunden
+    // Weltzeit) für die Zeit seit dem letzten Bild: So entstehen unabhängig
+    // von der Bildrate gleich viele, und in der Pause (Weltzeit steht) bleibt
+    // der Schweif stehen. Eine Wolke, die vor "ago" Sekunden entstand, kommt
+    // an die Stelle, an der das Triebwerk damals war (pos - vel * ago).
+    // Ohne Schub (Leerlauf, langsam) entsteht nichts. Zufall für die Drift aus
+    // Hash01 (Schiff, Zeitpunkt, Triebwerk), damit nichts gespeichert werden muss.
+    // Eine neue Welt (oder ein Zeitsprung) beginnt ohne alte Wolken.
+    const float trailLife = kTrailLife[std::clamp(g_clientConfig.trail, 0, 3)];
+    if (g_trail.world != this || time < g_trail.last || time - g_trail.last > 1.0f) {
+        g_trail.puffs.clear();
+        g_trail.world = this;
+        g_trail.last = time;
+    }
+    if (trailLife > 0.0f && cullR < 200.0f) {
+        const long first = static_cast<long>(floorf(g_trail.last / kTrailStep)) + 1;
+        const long newest = static_cast<long>(floorf(time / kTrailStep));
+        for (const auto& s : ships) {
+            if (s.dead || s.hidden || s.crashing || Dist2D(s.pos, focus) > cullR) continue;
+            const float speed = sqrtf(s.vel.x * s.vel.x + s.vel.z * s.vel.z);
+            const float power = std::max(s.thrustVisual, std::min(1.0f, speed / 12.0f));
+            if (power < 0.08f) continue;
+            const Vector3 fwd = ForwardFromYaw(s.yaw);
+            const Vector3 side{fwd.z, 0, -fwd.x};
+            // höchstens 8 Zeitpunkte je Bild (bei sehr niedriger Bildrate)
+            for (long t = std::max(first, newest - 7); t <= newest; ++t) {
+                const float ago = time - t * kTrailStep;
+                for (int k = -1; k <= 1; k += 2) {
+                    const float seed = static_cast<float>(t % 100000) * 0.731f + s.id * 5.17f + k * 1.9f;
+                    TrailPuff p;
+                    p.pos = Vector3Subtract(Vector3Add(EnginePos(s, k), Vector3Scale(fwd, -(0.3f + 0.5f * s.thrustVisual))),
+                                            Vector3Scale(s.vel, ago));
+                    p.vel = Vector3Add(Vector3Scale(fwd, -(1.2f + 1.0f * Hash01(seed))), Vector3Scale(side, (Hash01(seed + 0.3f) - 0.5f) * 0.8f));
+                    p.vel.y = (Hash01(seed + 0.6f) - 0.3f) * 0.6f;
+                    p.vel = Vector3Add(p.vel, Vector3Scale(s.vel, 0.15f));
+                    p.born = t * kTrailStep;
+                    p.power = power;
+                    p.pirate = s.faction == Faction::Pirate;
+                    g_trail.puffs.push_back(p);
+                }
+            }
+        }
+    }
+    g_trail.last = time;
+    g_trail.puffs.erase(std::remove_if(g_trail.puffs.begin(), g_trail.puffs.end(),
+                                       [&](const TrailPuff& p) { return time - p.born >= trailLife; }),
+                        g_trail.puffs.end());
+    // Zeichnen: Würfel wie die Partikel. Neu heiß gelblich-weiß, dann in der
+    // Farbe der Flamme (Piraten rot, sonst orange); dabei kleiner und
+    // durchsichtiger. Die Drift wird zum Ende hin langsamer (Faktor 1 - age/2life).
+    for (const TrailPuff& p : g_trail.puffs) {
+        const float age = time - p.born;
+        const float f = 1.0f - age / trailLife;   // 1 = neu, 0 = gleich weg
+        const Vector3 pos = Vector3Add(p.pos, Vector3Scale(p.vel, age * (1.0f - 0.5f * age / trailLife)));
+        if (Dist2D(pos, focus) > cullR) continue;
+        const float size = (0.07f + 0.17f * f) * (0.6f + 0.4f * p.power);
+        const Color hot{255, 240, 200, 255};
+        const Color flame = p.pirate ? Color{255, 90, 70, 255} : Color{255, 160, 70, 255};
+        const float hk = std::clamp((f - 0.55f) / 0.45f, 0.0f, 1.0f);
+        const Color c{static_cast<unsigned char>(flame.r + (hot.r - flame.r) * hk), static_cast<unsigned char>(flame.g + (hot.g - flame.g) * hk),
+                      static_cast<unsigned char>(flame.b + (hot.b - flame.b) * hk),
+                      static_cast<unsigned char>(210.0f * f * f * (0.4f + 0.6f * p.power))};
+        DrawCube(pos, size, size, size, c);
     }
 
     // Geschosse
@@ -835,6 +1010,21 @@ void World::Draw(const Camera3D& cam) const {
         float s = p.size * (0.4f + 0.6f * f);
         DrawCube(p.pos, s, s, s, Fade(p.color, f));
     }
+
+    // Explosionsblitze (Treffer-Aufblitzen, Stärke aus den Optionen): ein
+    // heller Lichtball, der sich in 0,45 s ausdehnt und verblasst, mit
+    // weißem Kern, dazu ein warmer Lichtschein am Boden. Das Punktlicht auf
+    // den Modellen kommt aus dem Beleuchtungs-Shader (siehe oben, SetFlashes).
+    if (flashK > 0.0f) {
+        for (const Flash& f : flashes) {
+            if (Dist2D(f.pos, focus) > cullR + 10.0f) continue;
+            const float k = f.life / f.maxLife, bright = k * k * flashK;
+            const float r = (1.4f + 2.4f * (1.0f - k)) * f.size;
+            DrawSphereEx(f.pos, r, 8, 12, Color{255, 200, 130, static_cast<unsigned char>(150 * bright)});
+            DrawSphereEx(f.pos, r * 0.45f, 6, 10, Color{255, 250, 235, static_cast<unsigned char>(255 * bright)});
+            DrawGlowDisc({f.pos.x, 0.1f, f.pos.z}, 9.0f * f.size, Color{255, 170, 90, static_cast<unsigned char>(170 * bright)}, 32);
+        }
+    }
     // Zurück zum normalen Mischen (Alpha-Blending): Rauch und Trümmer sollen
     // auch abdunkeln können, was additiv nicht geht.
     EndBlendMode();
@@ -871,9 +1061,48 @@ void World::Draw(const Camera3D& cam) const {
         }
     }
 
+    // Sandkörner im Sandsturm: kurze Striche, die mit dem Wind (gleiche
+    // Richtung wie die Schwaden im Shader, Effects.hpp) durch einen Würfel von
+    // 2 x 36 m um den Blickpunkt fliegen. Wer hinten hinausfliegt, kommt vorn
+    // wieder herein (Modulo); am Rand des Würfels blenden sie aus, damit das
+    // nicht auffällt. Startpunkt und Tempo jedes Korns aus Hash01, die Lage
+    // folgt aus der Zeit – es wird nichts gespeichert. Anzahl und Deckkraft
+    // wachsen mit der Stärke des Sandsturms.
+    if (sand > 0.0f) {
+        const int count = static_cast<int>(320.0f * sand);
+        const float box = 36.0f;
+        const Vector3 wind = Vector3Normalize({0.9f, 0.0f, 0.55f});
+        const Color dust = fx::SandColor();
+        const Color grain{static_cast<unsigned char>(std::min(255, dust.r + 50)), static_cast<unsigned char>(std::min(255, dust.g + 45)),
+                          static_cast<unsigned char>(std::min(255, dust.b + 40)), 255};
+        auto wrap = [box](float v, float center) {
+            const float span = 2.0f * box;
+            float m = fmodf(v - (center - box), span);
+            if (m < 0.0f) m += span;
+            return center - box + m;
+        };
+        rlBegin(RL_LINES);
+        for (int i = 0; i < count; ++i) {
+            const float fi = static_cast<float>(i);
+            const float speed = 14.0f + 10.0f * Hash01(fi * 3.33f + 0.77f);
+            const float x = wrap(Hash01(fi * 1.37f + 0.11f) * 2.0f * box + wind.x * speed * time, focus.x);
+            const float z = wrap(Hash01(fi * 2.71f + 0.53f) * 2.0f * box + wind.z * speed * time, focus.z);
+            const float y = 0.3f + 7.0f * Hash01(fi * 0.93f + 0.29f) + 0.4f * sinf(time * 2.0f + fi);
+            const float edge = std::clamp(std::min(box - fabsf(x - focus.x), box - fabsf(z - focus.z)) / 6.0f, 0.0f, 1.0f);
+            const float len = 0.5f + 0.7f * Hash01(fi * 4.19f + 0.37f);
+            const unsigned char a = static_cast<unsigned char>(140.0f * sand * edge);
+            rlColor4ub(grain.r, grain.g, grain.b, a);
+            rlVertex3f(x, y, z);
+            rlColor4ub(grain.r, grain.g, grain.b, 0);
+            rlVertex3f(x - wind.x * len, y, z - wind.z * len);
+        }
+        rlEnd();
+    }
+
     // Alles Gesammelte noch mit den Effekt-Einstellungen zeichnen, dann den
     // Normalzustand wiederherstellen (für das nächste Frame und alles, was
     // nach World::Draw gezeichnet wird).
+    fx::EndEffects();
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
     rlEnableBackfaceCulling();

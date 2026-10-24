@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 // Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Ton" (Musik
-// an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA, Fahrspuren) und "Steuerung"
+// an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA, Stil-Look,
+// Schatten, Sandsturm, Triebwerksschweif, Treffer-Aufblitzen, Fahrspuren) und "Steuerung"
 // (Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
@@ -25,9 +26,12 @@
 //   3. Karteireiter zeichnen; Klick wechselt die Seite.
 //   4. Inhalt der gewählten Seite:
 //      "Ton":       zwei Umschalter und zwei Schieberegler (Maus wird dabei ausgewertet)
-//      "Grafik":    Schieberegler für Tilt-Shift, Kantenglättung (MSAA) und
-//                   FXAA (alle umgesetzt in TiltShift.cpp) sowie für die
-//                   Dauer der Fahrspuren der Rover (Render.cpp)
+//      "Grafik":    Schieberegler für Tilt-Shift, Kantenglättung (MSAA),
+//                   FXAA und Stil-Look (alle umgesetzt in TiltShift.cpp),
+//                   für die Grafikeffekte Schatten, Sandsturm,
+//                   Triebwerksschweif und Treffer-Aufblitzen (Effects.cpp,
+//                   Render.cpp) sowie für die Dauer der Fahrspuren der Rover
+//                   (Render.cpp)
 //      "Steuerung": feste Tabelle (kControls unten)
 //   5. Knopf "Zurück".
 // Das Fenster ist immer so hoch wie die längste Seite, damit es beim
@@ -115,16 +119,24 @@ constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Höhe des Inhalts der einzelnen Seiten (in derselben Reihenfolge wie in Draw):
 //   Ton:       vier Zeilen, Hinweiszeile 42
-//   Grafik:    vier Zeilen, Hinweiszeile 42
+//   Grafik:    neun Zeilen, Hinweiszeile 42
 //   Steuerung: Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
 float SoundHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
-float GraphicsHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
+float GraphicsHeight() { return 9.0f * (kRowH + kRowGap) + 42.0f; }
 
 // Stufen des Reglers "Fahrspuren": so viele Sekunden bleiben die Reifenspuren
 // der Rover sichtbar (0 = keine Spuren). Die letzte Stufe ist
 // cfg::TRACK_TIME_MAX; länger merkt sich die Welt die Spur nicht.
 constexpr int kTrackTimes[] = {0, 15, 30, 60, 120, 300};
 constexpr int kTrackLevels = 6;
+
+// Stufen des Reglers "Schatten": Auflösung der Schattenkarte (Bildpunkte je
+// Seite, 0 = aus). Höher = schärfere Schattenkanten, braucht mehr Grafikspeicher.
+constexpr int kShadowSizes[] = {0, 1024, 2048, 4096};
+// Namen der Stufen von Stil-Look, Schatten und Triebwerksschweif
+const char* const kPixelNames[] = {"Aus", "Retro-Pixel fein", "Retro-Pixel mittel", "Retro-Pixel grob"};
+const char* const kShadowNames[] = {"Aus", "Niedrig", "Mittel", "Hoch"};
+const char* const kTrailNames[] = {"Aus", "Kurz", "Mittel", "Lang"};
 float ControlsHeight() { return 30.0f + 30.0f + kControlCount * kTableRowH; }
 
 // Gesamthöhe des Fensters: Rand 24, Überschrift 64, Karteireiter, Abstand 20,
@@ -168,6 +180,7 @@ void OptionsScreen::Open() {
     draggingMsaa_ = false;
     draggingFxaa_ = false;
     draggingTracks_ = false;
+    for (bool& d : draggingEffect_) d = false;
 }
 
 void OptionsScreen::Close() {
@@ -177,6 +190,7 @@ void OptionsScreen::Close() {
     draggingMsaa_ = false;
     draggingFxaa_ = false;
     draggingTracks_ = false;
+    for (bool& d : draggingEffect_) d = false;
     g_clientConfig.SaveIfChanged();   // z. B. Lautstärke per Pfeiltasten geändert
     g_audio.Play(Sfx::UiBack);
 }
@@ -270,6 +284,52 @@ void OptionsScreen::SetTrackLevel(int level, bool save) {
     else g_clientConfig.unsaved = true;
 }
 
+// Grafikeffekte: Stufen je Zeile (siehe Options.hpp). Sandsturm und
+// Treffer-Aufblitzen stehen in der Datei als Wert 0..1, Stufe = Zehntel.
+// Alle anderen Dateien lesen die Werte jedes Frame aus g_clientConfig.
+int OptionsScreen::EffectLevels(int row) {
+    return row == ROW_SAND || row == ROW_FLASH ? 11 : 4;
+}
+
+int OptionsScreen::EffectLevel(int row) {
+    switch (row) {
+        case ROW_PIXEL: return std::clamp(g_clientConfig.pixelLook, 0, 3);
+        case ROW_SHADOWS: {
+            int level = 0;
+            while (level < 3 && kShadowSizes[level + 1] <= g_clientConfig.shadows) ++level;
+            return level;
+        }
+        case ROW_SAND: return static_cast<int>(std::lround(g_clientConfig.sandstorm * 10.0f));
+        case ROW_TRAIL: return std::clamp(g_clientConfig.trail, 0, 3);
+        case ROW_FLASH: return static_cast<int>(std::lround(g_clientConfig.hitFlash * 10.0f));
+        default: return 0;
+    }
+}
+
+std::string OptionsScreen::EffectText(int row) {
+    const int level = EffectLevel(row);
+    switch (row) {
+        case ROW_PIXEL: return kPixelNames[level];
+        case ROW_SHADOWS: return kShadowNames[level];
+        case ROW_TRAIL: return kTrailNames[level];
+        default: return level > 0 ? std::to_string(level * 10) + " %" : std::string("Aus");
+    }
+}
+
+void OptionsScreen::SetEffectLevel(int row, int level, bool save) {
+    level = std::clamp(level, 0, EffectLevels(row) - 1);
+    switch (row) {
+        case ROW_PIXEL: g_clientConfig.pixelLook = level; break;
+        case ROW_SHADOWS: g_clientConfig.shadows = kShadowSizes[level]; break;
+        case ROW_SAND: g_clientConfig.sandstorm = level / 10.0f; break;
+        case ROW_TRAIL: g_clientConfig.trail = level; break;
+        case ROW_FLASH: g_clientConfig.hitFlash = level / 10.0f; break;
+        default: return;
+    }
+    if (save) g_clientConfig.Save();
+    else g_clientConfig.unsaved = true;
+}
+
 // Wie SetMusicOn; Hud.cpp liest den Wert jedes Frame aus g_clientConfig.
 void OptionsScreen::SetSubtitlesOn(bool on) {
     g_clientConfig.subtitles = on;
@@ -280,7 +340,7 @@ void OptionsScreen::SetSubtitlesOn(bool on) {
 // Zeichnen und Bedienen (Ablauf siehe Dateikopf)
 // ===========================================================================
 // Wählbare Zeilen der Seite tab von oben nach unten (Pfeil hoch/runter).
-// Liefert die Anzahl; rows muss Platz für 6 Einträge haben.
+// Liefert die Anzahl; rows muss Platz für 12 Einträge haben.
 int OptionsScreen::RowsOf(int tab, int* rows) {
     int n = 0;
     rows[n++] = ROW_TABS;
@@ -293,6 +353,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_TILT;
         rows[n++] = ROW_MSAA;
         rows[n++] = ROW_FXAA;
+        for (int r = ROW_PIXEL; r <= ROW_FLASH; ++r) rows[n++] = r;
         rows[n++] = ROW_TRACKS;
     }
     rows[n++] = ROW_BACK;
@@ -305,8 +366,9 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
 void OptionsScreen::SetTab(int tab, bool keepTabsRow) {
     tab_ = (tab + TAB_COUNT) % TAB_COUNT;
     dragging_ = draggingClip_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = draggingTracks_ = false;
+    for (bool& d : draggingEffect_) d = false;
     g_clientConfig.SaveIfChanged();
-    int rows[6];
+    int rows[12];
     RowsOf(tab_, rows);
     sel_ = keepTabsRow ? ROW_TABS : rows[1];
 }
@@ -346,7 +408,7 @@ bool OptionsScreen::Draw() {
     const bool keys = frames_ > 1;
     bool toggle = false, toggleSubs = false, close = false;
     float volStep = 0.0f, clipStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
-    int msaaStep = 0, trackStep = 0;
+    int msaaStep = 0, trackStep = 0, effectStep = 0;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
     if (keys) {
         if (IsKeyPressed(KEY_TAB))
@@ -354,7 +416,7 @@ bool OptionsScreen::Draw() {
         if (PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) SetTab(tab_ + 1, sel_ == ROW_TABS);
         if (PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)) SetTab(tab_ - 1, sel_ == ROW_TABS);
         // Pfeil hoch/runter: nur durch die Zeilen der aktuellen Seite
-        int rows[6];
+        int rows[12];
         const int n = RowsOf(tab_, rows);
         int at = 0;
         while (at < n - 1 && rows[at] != sel_) ++at;
@@ -377,6 +439,7 @@ bool OptionsScreen::Draw() {
         if (sel_ == ROW_MSAA) msaaStep = dir;
         if (sel_ == ROW_FXAA) fxaaStep = 0.1f * dir;
         if (sel_ == ROW_TRACKS) trackStep = dir;
+        if (sel_ >= ROW_PIXEL && sel_ <= ROW_FLASH) effectStep = dir;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
             else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
@@ -569,6 +632,36 @@ bool OptionsScreen::Draw() {
         Text(fxaaText, fxaaSlider.x + fxaaSlider.width + 30 * s, y + labelY, label, g_clientConfig.fxaa > 0.0f ? TEXT : MUTED);
         y += (kRowH + kRowGap) * s;
 
+        // Zeilen der Grafikeffekte (Stil-Look, Schatten, Sandsturm,
+        // Triebwerksschweif, Treffer-Aufblitzen): alle gleich gebaut, ein
+        // Regler mit EffectLevels Stufen (Wert 0 .. 1 wie bei der
+        // Kantenglättung) und der Anzeige EffectText daneben.
+        static const char* const kEffectNames[kEffectRows] = {"Stil-Look", "Schatten", "Sandsturm", "Triebwerksschweif",
+                                                              "Treffer-Aufblitzen"};
+        bool overEffect = false;
+        for (int row = ROW_PIXEL; row <= ROW_FLASH; ++row) {
+            bool& dragging = draggingEffect_[row - ROW_PIXEL];
+            const Rectangle rowR{x, y, iw, kRowH * s};
+            const bool over = CheckCollisionPointRec(mouse, rowR);
+            if (over && MouseMoved()) sel_ = row;
+            overEffect = overEffect || over;
+            DrawRow(rowR, sel_ == row || dragging);
+            Text(kEffectNames[row - ROW_PIXEL], x + 22 * s, y + labelY, label, TEXT);
+            const Rectangle slider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+            const int levels = EffectLevels(row);
+            const float stepSize = 1.0f / (levels - 1);
+            float value = EffectLevel(row) * stepSize;
+            const bool wasDragging = dragging;
+            if (Slider(slider, value, dragging, sel_ == row, stepSize)) {
+                SetEffectLevel(row, static_cast<int>(std::lround(value * (levels - 1))), false);
+                g_audio.Play(Sfx::UiMove, 0.6f);
+            }
+            if (dragging) sel_ = row;
+            if (wasDragging && !dragging) g_clientConfig.SaveIfChanged();
+            Text(EffectText(row), slider.x + slider.width + 30 * s, y + labelY, label, EffectLevel(row) > 0 ? TEXT : MUTED);
+            y += (kRowH + kRowGap) * s;
+        }
+
         // Zeile "Fahrspuren": Regler mit sechs Stufen (kTrackTimes), Wert
         // 0, 0.2, ... 1 wie bei der Kantenglättung.
         const Rectangle rowTracks{x, y, iw, kRowH * s};
@@ -591,9 +684,9 @@ bool OptionsScreen::Draw() {
         Text(trackText, trackSlider.x + trackSlider.width + 30 * s, y + labelY, label, tt > 0 ? TEXT : MUTED);
         y += (kRowH + kRowGap) * s;
 
-        Text("Wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf. Kantenglättung und FXAA gehen auch zusammen.", x, y + 4 * s,
-             17 * s, MUTED);
-        overRow = overTilt || overMsaa || overFxaa || overTracks;
+        Text("Wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf. Der Sandsturm schränkt die Sicht um das Schiff ein.", x,
+             y + 4 * s, 17 * s, MUTED);
+        overRow = overTilt || overMsaa || overFxaa || overEffect || overTracks;
     } else {
         // Steuerung: nur Anzeige
         Text("Tastatur, Maus und Controller gehen jederzeit, auch gemischt.", x, y + 2 * s, 17 * s, MUTED);
@@ -665,6 +758,10 @@ bool OptionsScreen::Draw() {
     }
     if (trackStep != 0) {
         SetTrackLevel(TrackLevel(g_clientConfig.trackTime) + trackStep, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (effectStep != 0) {
+        SetEffectLevel(sel_, EffectLevel(sel_) + effectStep, false);
         g_audio.Play(Sfx::UiMove, 0.6f);
     }
     if (toggle) {
