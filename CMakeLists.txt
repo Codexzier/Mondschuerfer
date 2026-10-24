@@ -29,6 +29,7 @@ set(MONDSCHUERFER_SHARED_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/World.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/WorldGen.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/GameMap.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shared/MapAnim.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Ai.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Models.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/GameSettings.cpp

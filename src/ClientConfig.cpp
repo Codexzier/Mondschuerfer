@@ -148,6 +148,10 @@ bool ClientConfig::Load() {
         } else if (key == "fxaa") {
             float v = 0.0f;
             if (ParseNumber(Clean(value, 16), v)) fxaa = v > 1.0f ? 1.0f : v;
+        } else if (key == "track_time") {
+            // nur die Stufen aus den Optionen (Sekunden); alles andere: Standard behalten
+            const std::string v = Clean(value, 8);
+            if (v == "0" || v == "15" || v == "30" || v == "60" || v == "120" || v == "300") trackTime = std::stoi(v);
         }
         // andere Schlüssel: ignorieren (z. B. aus einer neueren Spielversion)
     }
@@ -169,6 +173,7 @@ bool ClientConfig::Save() {
     f << "tilt_shift " << FormatVolume(tiltShift) << '\n';
     f << "msaa " << msaa << '\n';
     f << "fxaa " << FormatVolume(fxaa) << '\n';
+    f << "track_time " << trackTime << '\n';
     // Absichtlich KEIN Passwort (siehe ClientConfig.hpp).
     f.close();   // erst beim Schließen ist sicher alles geschrieben
     if (!f) return false;

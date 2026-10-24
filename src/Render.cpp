@@ -36,12 +36,14 @@
 //   - World.hpp / Config.hpp: Spielzustand und Balancing-Werte.
 //
 // Ablauf von World::Draw (die Reihenfolge ist wichtig):
-//   1. Undurchsichtige Modelle: Boden, Dekoration, Stationen, Lagerstätten,
-//      Wracks, Schiffe. Sie füllen den Tiefenpuffer.
-//   2. Halbtransparente Bodenmarkierungen und Schatten (normales Mischen).
-//   3. Leuchteffekte mit additivem Mischen: Scanner, Lichtsäulen,
-//      Abbaustrahlen, Triebwerke, Geschosse, leuchtende Partikel.
-//   4. Rauch und Trümmer (normales Mischen).
+//   1. Undurchsichtige Modelle: Boden, Dekoration, Monorail, Raketen, Rover,
+//      Stationen, Lagerstätten, Wracks, Schiffe. Sie füllen den Tiefenpuffer.
+//   2. Halbtransparente Fahrspuren, Bodenmarkierungen und Schatten (normales
+//      Mischen).
+//   3. Leuchteffekte mit additivem Mischen: Scanner, Lichtsäulen, Glimmen
+//      der Kristalle, Tore, Raketenflammen, Abbaustrahlen, Triebwerke,
+//      Geschosse, leuchtende Partikel.
+//   4. Rauch (auch der Raketen) und Trümmer (normales Mischen).
 //   Durchsichtiges kommt nach dem Undurchsichtigen, weil es mit dem schon
 //   fertigen Bild dahinter gemischt wird.
 //
@@ -52,6 +54,8 @@
 // ---------------------------------------------------------------------------
 #include "World.hpp"
 #include "Assets.hpp"
+#include "ClientConfig.hpp"
+#include "Models.hpp"
 #include "rlgl.h"
 #include <algorithm>
 #include <cmath>
@@ -135,6 +139,53 @@ void DrawShadow(Vector3 pos, float radius, float alpha) {
     DrawCylinder({pos.x, 0.06f, pos.z}, radius, radius, 0.02f, 18, Fade(BLACK, alpha));
 }
 
+// Weicher Lichtfleck: Scheibe mit der Farbe col in der Mitte, die zum Rand
+// hin durchsichtig wird (Alpha 0). Jedes Dreieck bekommt eigene Farben je
+// Eckpunkt; OpenGL verläuft dazwischen. Für additives Mischen gedacht
+// (Schein der Kristalle und Tore auf dem Boden).
+void DrawGlowDisc(Vector3 c, float r, Color col, int segments = 24) {
+    rlBegin(RL_TRIANGLES);
+    for (int i = 0; i < segments; ++i) {
+        const float a0 = 2 * PI * i / segments, a1 = 2 * PI * (i + 1) / segments;
+        rlColor4ub(col.r, col.g, col.b, col.a);
+        rlVertex3f(c.x, c.y, c.z);
+        rlColor4ub(col.r, col.g, col.b, 0);
+        rlVertex3f(c.x + cosf(a0) * r, c.y, c.z + sinf(a0) * r);
+        rlVertex3f(c.x + cosf(a1) * r, c.y, c.z + sinf(a1) * r);
+    }
+    rlEnd();
+}
+
+// Pseudozufall 0..1 aus einer Zahl (gleiche Eingabe -> gleiches Ergebnis),
+// z. B. für die Stelle, an der ein Kristall gerade aufblitzt.
+float Hash01(float n) {
+    const float x = sinf(n * 12.9898f) * 43758.5453f;
+    return x - floorf(x);
+}
+
+// Tore (Kartenanimation, MapAnim.cpp): Jedes Tor öffnet einmal pro Minute
+// für GATE_OPEN Sekunden ein "Wurmloch". Wann, hängt von seiner Lage ab, damit
+// nicht alle gleichzeitig aufleuchten. GateTime = Sekunden seit dem letzten
+// Öffnen (0..60), GateGlow = Leuchtstärke 0..1 (in 0,3 s an, in der letzten
+// Sekunde aus).
+constexpr float GATE_PERIOD = 60.0f;
+constexpr float GATE_OPEN = 6.0f;
+float GateTime(const Deco& d, float time) { return fmodf(time + fabsf(d.pos.x * 0.37f + d.pos.z * 0.61f), GATE_PERIOD); }
+float GateGlow(float u) {
+    if (u >= GATE_OPEN) return 0.0f;
+    return std::min(1.0f, u / 0.3f) * std::clamp(GATE_OPEN - u, 0.0f, 1.0f);
+}
+
+// Bauteile der Raketen auf den Startplätzen: wie am Raketenplatz der
+// Handelsstation (WorldGen.cpp) übereinandergestapelt, y = Höhe im Kit-Raster.
+struct RocketPart {
+    const char* model;
+    float y;
+};
+const RocketPart kRocketA[4] = {{"rocket_baseA", 0.0f}, {"rocket_fuelA", 1.0f}, {"rocket_sidesA", 1.5f}, {"rocket_topA", 2.5f}};
+const RocketPart kRocketB[4] = {{"rocket_baseB", 0.0f}, {"rocket_fuelB", 1.0f}, {"rocket_sidesB", 2.0f}, {"rocket_topB", 3.0f}};
+constexpr float PAD_SCALE = 1.8f;   // Startplatz und Rakete in Stationsgröße
+
 // Easing-Funktion "easeOutBack" (bekannte Formel, z. B. easings.net):
 // t = 0..1 ergibt 0..1, schießt aber kurz vor dem Ende um etwa 10 % über 1
 // hinaus und federt zurück. c1 = 1.70158 ist der übliche Wert für genau
@@ -181,9 +232,23 @@ void World::Draw(const Camera3D& cam) const {
     // --- Dekoration -----------------------------------------------------------
     // Felsen, Krater usw. aus WorldGen.cpp. Große Objekte ragen weit über ihren
     // Mittelpunkt hinaus, deshalb wächst der Culling-Radius mit der Größe.
+    // Rover und Tore (Kartenanimation): die Modell-IDs nur einmal nachschlagen
+    // (static, siehe Geschütztürme unten). Rover stehen nur als Startplatz in
+    // decos; gezeichnet werden sie weiter unten aus rovers.
+    static int roverModel = -1, gateA = -1, gateB = -1;
+    if (roverModel < 0) {
+        roverModel = g_assets.Id("rover");
+        gateA = g_assets.Id("gate_simple");
+        gateB = g_assets.Id("gate_complex");
+    }
     for (const auto& d : decos) {
+        if (d.model == roverModel) continue;
         if (Dist2D(d.pos, focus) > cullR + d.scale * 0.6f) continue;
-        if (d.yScale > 0.0f) {
+        if (d.model == gateA || d.model == gateB) {
+            // Tor: leuchtet beim Öffnen des Wurmlochs bläulich (Effekt unten, additiv)
+            const float g = GateGlow(GateTime(d, time));
+            g_assets.Draw(d.model, d.pos, d.yaw, d.scale, WHITE, Vector3{0.10f * g, 0.25f * g, 0.55f * g});
+        } else if (d.yScale > 0.0f) {
             // Flache, große Krater: in der Höhe anders skaliert als in der
             // Breite. TRS kann nur gleichmäßig skalieren, deshalb wird die
             // Matrix hier von Hand gebaut (gleiche Reihenfolge: skalieren,
@@ -215,6 +280,94 @@ void World::Draw(const Camera3D& cam) const {
             if (Dist2D(p, focus) > cullR + 5.0f) continue;
             g_assets.Draw(trainCars[c], p, YawTowards({0, 0, 0}, dir), mapgrid::CELL);
         }
+    }
+
+    // --- Monorail zwischen den Stationen (Kartenanimation, MapAnim.cpp) -----------
+    // Gerade Schienen aus Rasterfeld-langen Stücken, mittig zwischen den
+    // Enden. Das Kit-Stück liegt längs der z-Achse; mit yaw = atan2(dx, dz)
+    // zeigt es in Streckenrichtung (Drehung wie MapRotate). Der Zug pendelt:
+    // vorne und hinten je ein Triebwagen (der hintere umgedreht), so braucht
+    // er an den Enden nicht zu wenden. Die Wagen stehen auf der Oberkante der
+    // Schiene (0,13 im Kit, wie kTrackTop in GameMap.cpp).
+    static int railPiece = -1, trainMid[3] = {-1, -1, -1};
+    if (railPiece < 0) {
+        railPiece = g_assets.Id("monorail_trackStraight");
+        trainMid[0] = g_assets.Id("monorail_trainPassenger");
+        trainMid[1] = g_assets.Id("monorail_trainCargo");
+        trainMid[2] = g_assets.Id("monorail_trainBox");
+    }
+    for (const StationRail& r : rails) {
+        Vector3 dir = Vector3Subtract(r.b, r.a);
+        dir.y = 0.0f;
+        const float len = Vector3Length(dir);
+        dir = Vector3Scale(dir, 1.0f / len);
+        const int pieces = static_cast<int>(len / mapgrid::CELL);
+        const float start = (len - pieces * mapgrid::CELL) * 0.5f;
+        const float yaw = atan2f(dir.x, dir.z);
+        for (int k = 0; k < pieces; ++k) {
+            const Vector3 p = Vector3Add(r.a, Vector3Scale(dir, start + (k + 0.5f) * mapgrid::CELL));
+            if (Dist2D(p, focus) > cullR + 3.0f) continue;
+            g_assets.Draw(railPiece, p, yaw, mapgrid::CELL);
+        }
+        const float c = RailTrainPos(r, time);
+        if (c < 0.0f) continue;
+        for (int car = 0; car < 3; ++car) {
+            Vector3 p = Vector3Add(r.a, Vector3Scale(dir, c + (car - 1) * mapgrid::TRAIN_CAR_GAP));
+            p.y = 0.13f * mapgrid::CELL;
+            if (Dist2D(p, focus) > cullR + 5.0f) continue;
+            const int model = car == 1 ? trainMid[r.cargo] : trainCars[0];
+            const float carYaw = YawTowards({0, 0, 0}, car == 0 ? Vector3Negate(dir) : dir);
+            g_assets.Draw(model, p, carYaw, mapgrid::CELL);
+        }
+    }
+
+    // --- Raketenstartplätze (Kartenanimation) ---------------------------------------
+    // Plattform mit Gerüst daneben, darauf die Rakete (RocketAt: steht,
+    // startet, ist unterwegs oder landet). Beim Aufstieg kippt die ganze
+    // Rakete um die waagerechte Achse quer zu "out" (up x out); erst
+    // skalieren, dann das Bauteil auf seine Höhe schieben, kippen und an den
+    // Fußpunkt verschieben.
+    static int padPlatform = -1, padTower = -1, padTowerTop = -1, rocketIds[2][4];
+    if (padPlatform < 0) {
+        padPlatform = g_assets.Id("platform_large");
+        padTower = g_assets.Id("structure_detailed");
+        padTowerTop = g_assets.Id("structure");
+        for (int k = 0; k < 4; ++k) {
+            rocketIds[0][k] = g_assets.Id(kRocketA[k].model);
+            rocketIds[1][k] = g_assets.Id(kRocketB[k].model);
+        }
+    }
+    for (const RocketPad& pad : pads) {
+        if (Dist2D(pad.pos, focus) > cullR + 10.0f) continue;
+        g_assets.Draw(padPlatform, pad.pos, 0.0f, PAD_SCALE);
+        const Vector3 tower = Vector3Add(pad.pos, Vector3Scale({-pad.out.z, 0.0f, pad.out.x}, 1.5f * PAD_SCALE));
+        const float towerYaw = atan2f(pad.out.x, pad.out.z);
+        g_assets.Draw(padTower, tower, towerYaw, PAD_SCALE);
+        g_assets.Draw(padTowerTop, Vector3Add(tower, {0, 1.0f * PAD_SCALE, 0}), towerYaw, PAD_SCALE);
+        g_assets.Draw(padTowerTop, Vector3Add(tower, {0, 2.0f * PAD_SCALE, 0}), towerYaw, PAD_SCALE);
+        const RocketPose rp = RocketAt(pad, time);
+        if (!rp.visible || rp.size < 0.01f) continue;
+        const float sc = PAD_SCALE * rp.size;
+        const Vector3 axis{pad.out.z, 0.0f, -pad.out.x};
+        for (int k = 0; k < 4; ++k) {
+            const RocketPart& part = pad.typeB ? kRocketB[k] : kRocketA[k];
+            Matrix m = MatrixMultiply(MatrixScale(sc, sc, sc), MatrixTranslate(0.0f, part.y * sc, 0.0f));
+            if (rp.tilt > 0.0f) m = MatrixMultiply(m, MatrixRotate(axis, rp.tilt));
+            m = MatrixMultiply(m, MatrixTranslate(rp.pos.x, rp.pos.y, rp.pos.z));
+            g_assets.Draw(rocketIds[pad.typeB ? 1 : 0][k], m);
+        }
+    }
+
+    // --- Rover (Kartenanimation) ----------------------------------------------------
+    // Beim Fahren schaukeln sie leicht (kleine Nick- und Rollwinkel, mit dem
+    // Index als Phasenversatz), im Stand nicht.
+    for (size_t i = 0; i < rovers.size(); ++i) {
+        const Rover& r = rovers[i];
+        if (Dist2D(r.pos, focus) > cullR + 2.0f) continue;
+        const float bump = std::min(1.0f, r.speed * 0.5f);
+        const float pitch = 0.035f * bump * sinf(time * 9.0f + i * 1.7f);
+        const float roll = 0.03f * bump * sinf(time * 7.0f + i * 2.3f);
+        g_assets.Draw(roverModel, TRS(r.pos, r.yaw, pitch, roll, r.scale));
     }
 
     // --- Stationen ------------------------------------------------------------
@@ -290,9 +443,10 @@ void World::Draw(const Camera3D& cam) const {
         // Größe: man sieht den Fortschritt, sie verschwindet aber nicht, bevor
         // sie leer ist.
         float fill = 0.55f + 0.45f * static_cast<float>(d.amount) / std::max(1, d.initial);
-        // emissive: grünliches Eigenleuchten im Takt von pulse.
+        // emissive: grünliches Eigenleuchten im Takt von pulse; nie ganz aus,
+        // damit die Kristalle auch im dunklen Moment noch glimmen.
         g_assets.Draw(d.model, d.pos, d.yaw, d.scale * appear * fill, WHITE,
-                      Vector3{0.05f, 0.18f * pulse, 0.10f * pulse});
+                      Vector3{0.06f, 0.08f + 0.26f * pulse, 0.05f + 0.16f * pulse});
     }
 
     // --- Wracks ------------------------------------------------------------------
@@ -355,6 +509,51 @@ void World::Draw(const Camera3D& cam) const {
     // nach Entfernung sortiert werden.
     rlDisableDepthMask();
 
+    // Fahrspuren der Rover (Kartenanimation)
+    // Je Radseite ein schmaler, dunkler Streifen von Spurpunkt zu Spurpunkt
+    // (MapAnim.cpp legt alle 0,6 m einen an), 5 cm über dem Boden und damit
+    // unter den Schatten. Die Räder liegen im Kit bei x = +-0,125 und sind
+    // 0,05 breit. Jeder Punkt verblasst
+    // mit seinem Alter und ist nach der in den Optionen eingestellten Zeit
+    // (g_clientConfig.trackTime, 0 = aus) weg. Die Schleife läuft vom neuesten
+    // Punkt rückwärts und hört beim ersten zu alten auf. Erster Abschnitt:
+    // vom Rover selbst zum neuesten Punkt. In der Übersicht (Zuschauer, ganze
+    // Karte) wären die Streifen nur Bruchteile eines Pixels: dort keine Spuren.
+    const float trackLife = static_cast<float>(g_clientConfig.trackTime);
+    if (trackLife > 0.0f && cullR < 200.0f) {
+        auto alphaAt = [&](float t) {
+            return static_cast<unsigned char>(95.0f * std::clamp(1.0f - (time - t) / trackLife, 0.0f, 1.0f));
+        };
+        for (const Rover& r : rovers) {
+            if (r.track.empty()) continue;
+            const float off = 0.125f * r.scale, half = 0.028f * r.scale, y = 0.05f;
+            const Vector3 f = ForwardFromYaw(r.yaw);
+            TrackPoint prev{r.pos.x, r.pos.z, -f.z, f.x, time};
+            rlBegin(RL_TRIANGLES);
+            for (size_t i = r.track.size(); i-- > 0;) {
+                const TrackPoint& q = r.track[i];
+                if (time - q.t >= trackLife) break;
+                const bool inView = Vector2Distance({q.x, q.z}, {focus.x, focus.z}) < cullR;
+                if (inView) {
+                    const unsigned char a0 = alphaAt(prev.t), a1 = alphaAt(q.t);
+                    for (int k = -1; k <= 1; k += 2) {
+                        const float i0 = k * off - half, o0 = k * off + half;
+                        const Vector3 p0{prev.x + prev.sx * i0, y, prev.z + prev.sz * i0};
+                        const Vector3 p1{prev.x + prev.sx * o0, y, prev.z + prev.sz * o0};
+                        const Vector3 q0{q.x + q.sx * i0, y, q.z + q.sz * i0};
+                        const Vector3 q1{q.x + q.sx * o0, y, q.z + q.sz * o0};
+                        rlColor4ub(35, 33, 32, a0); rlVertex3f(p0.x, p0.y, p0.z); rlVertex3f(p1.x, p1.y, p1.z);
+                        rlColor4ub(35, 33, 32, a1); rlVertex3f(q1.x, q1.y, q1.z);
+                        rlColor4ub(35, 33, 32, a0); rlVertex3f(p0.x, p0.y, p0.z);
+                        rlColor4ub(35, 33, 32, a1); rlVertex3f(q1.x, q1.y, q1.z); rlVertex3f(q0.x, q0.y, q0.z);
+                    }
+                }
+                prev = q;
+            }
+            rlEnd();
+        }
+    }
+
     // Schatten
     // Alpha 0.16 bis 2,5 m Flughöhe, darüber schwächer, ab 12,5 m nur noch
     // 20 % davon: je höher das Schiff, desto blasser der Schatten.
@@ -362,6 +561,9 @@ void World::Draw(const Camera3D& cam) const {
         if (s.dead || s.hidden || Dist2D(s.pos, focus) > cullR) continue;
         float h = std::max(0.0f, s.pos.y);
         DrawShadow(s.pos, 1.1f, 0.16f * std::clamp(1.2f - h * 0.08f, 0.2f, 1.0f));
+    }
+    for (const Rover& r : rovers) {
+        if (Dist2D(r.pos, focus) <= cullR) DrawShadow(r.pos, 0.22f * r.scale, 0.18f);
     }
 
     // Markierungen unter Schiffen
@@ -447,6 +649,100 @@ void World::Draw(const Camera3D& cam) const {
         float pulse = 0.6f + 0.4f * sinf(time * 4.0f + static_cast<float>(pe.id));
         DrawBeam(pe.pos, 10.0f, 0.3f, Color{230, 200, 40, static_cast<unsigned char>(80 * pulse)});
         DrawGroundRing(pe.pos, 2.4f, 2.8f, Color{255, 225, 60, static_cast<unsigned char>(140 * pulse)}, 40);
+    }
+
+    // Kristalle glimmen: weicher grüner Schein auf dem Boden und kleine
+    // Lichtfunken (drei gekreuzte, dünne Quader), die an wechselnden Stellen
+    // der Kristalle kurz aufblitzen. Jeder der vier Funken hat seinen eigenen
+    // Takt (1,6..2,4 s) und leuchtet davon die ersten 18 %; die Stelle ergibt
+    // sich aus Lagerstätte, Funke und Takt (Hash01). Größe und Form folgen
+    // dem Kristall (wie oben beim Zeichnen: einblenden, beim Abbau kleiner);
+    // die Funken sitzen zur Mitte hin höher, wie die Spitzen einer Kristallgruppe.
+    for (const auto& d : deposits) {
+        if (!d.revealed || Dist2D(d.pos, focus) > cullR) continue;
+        const float pulse = 0.5f + 0.5f * sinf(time * 3.0f + d.id);
+        const float fill = 0.55f + 0.45f * static_cast<float>(d.amount) / std::max(1, d.initial);
+        const float sc = d.scale * std::clamp(d.revealT, 0.0f, 1.0f) * fill;
+        DrawGlowDisc({d.pos.x, 0.1f, d.pos.z}, 1.5f * sc, Color{60, 255, 170, static_cast<unsigned char>(45 + 40 * pulse)});
+        const BoundingBox b = ModelBounds(d.model);
+        const float rad = std::max(b.max.x, b.max.z) * sc * 0.8f, height = b.max.y * sc;
+        for (int g = 0; g < 4; ++g) {
+            const float period = 1.6f + 0.27f * g;
+            const float cyc = (time + d.id * 0.37f + g * 0.61f) / period;
+            const float n = floorf(cyc), f = cyc - n;
+            if (f > 0.18f) continue;
+            const float k = sinf(PI * f / 0.18f);
+            const float seed = n * 7.13f + d.id * 3.31f + g * 1.73f;
+            const float ang = Hash01(seed) * 2.0f * PI, out = Hash01(seed + 0.5f);
+            const Vector3 p{d.pos.x + cosf(ang) * rad * out, height * (1.05f - 0.6f * out), d.pos.z + sinf(ang) * rad * out};
+            const float len = 0.75f * k, w = 0.07f;
+            const Color c{210, 255, 235, static_cast<unsigned char>(255 * k)};
+            DrawCube(p, len, w, w, c);
+            DrawCube(p, w, len, w, c);
+            DrawCube(p, w, w, len, c);
+        }
+    }
+
+    // Tore: das "Wurmloch" (Kartenanimation). Der Ring der Kit-Modelle
+    // gate_simple/gate_complex hat seine Mitte 0,585 über dem Boden und innen
+    // etwa 0,3 Radius (Kit-Maße, aus dem Modell abgelesen); er steht in der
+    // x-y-Ebene des Modells, die Fläche zeigt also nach normal (local +z).
+    // Ablauf (u = Sekunden seit dem Öffnen): Ring leuchtet auf, ab 0,25 s
+    // wächst die Fläche, 0,45..1,5 s schießt ein heller Kegel nach vorn
+    // heraus, dann schimmert die Fläche mit nach außen laufenden Wellen,
+    // ab 5 s fällt sie zur Mitte zusammen. Dazu ein blauer Schein am Boden.
+    for (const auto& d : decos) {
+        if ((d.model != gateA && d.model != gateB) || Dist2D(d.pos, focus) > cullR + d.scale) continue;
+        const float u = GateTime(d, time);
+        const float glow = GateGlow(u);
+        if (glow <= 0.0f) continue;
+        const float s = d.scale;
+        const float open = std::clamp((u - 0.25f) / 0.35f, 0.0f, 1.0f) * std::clamp((5.8f - u) / 0.8f, 0.0f, 1.0f);
+        const Vector3 c{d.pos.x, d.pos.y + 0.585f * s, d.pos.z};
+        const Vector3 right{cosf(d.yaw), 0.0f, -sinf(d.yaw)};
+        const Vector3 normal{sinf(d.yaw), 0.0f, cosf(d.yaw)};
+        DrawGlowDisc({d.pos.x, 0.1f, d.pos.z}, 1.1f * s, Color{70, 140, 255, static_cast<unsigned char>(90 * glow)}, 32);
+        const float radius = 0.3f * s * open;
+        if (radius > 0.01f) {
+            // Fläche aus 4 Ringen x 28 Abschnitten; Helligkeit je Eckpunkt
+            const int rings = 4, segs = 28;
+            auto vertex = [&](int j, int i) {
+                const float rr = radius * j / rings, a = 2.0f * PI * i / segs;
+                const float wave = 0.5f + 0.5f * sinf(static_cast<float>(j) * 2.3f - u * 8.0f);
+                const float bright = std::clamp((0.35f + 0.45f * wave + 0.25f * (1.0f - static_cast<float>(j) / rings)) * glow, 0.0f, 1.0f);
+                rlColor4ub(90, 170, 255, static_cast<unsigned char>(210 * bright));
+                rlVertex3f(c.x + right.x * cosf(a) * rr, c.y + sinf(a) * rr, c.z + right.z * cosf(a) * rr);
+            };
+            rlBegin(RL_TRIANGLES);
+            for (int j = 0; j < rings; ++j) {
+                for (int i = 0; i < segs; ++i) {
+                    vertex(j, i); vertex(j + 1, i); vertex(j + 1, i + 1);
+                    vertex(j, i); vertex(j + 1, i + 1); vertex(j, i + 1);
+                }
+            }
+            rlEnd();
+        }
+        if (u > 0.45f && u < 1.5f) {
+            const float k = sinf(PI * (u - 0.45f) / 1.05f);
+            const Vector3 tip = Vector3Add(c, Vector3Scale(normal, 0.8f * s * k));
+            DrawCylinderEx(c, tip, 0.27f * s * open, 0.04f * s, 16, Color{150, 210, 255, static_cast<unsigned char>(170 * k)});
+            DrawCylinderEx(c, Vector3Lerp(c, tip, 0.8f), 0.12f * s, 0.02f * s, 12, Color{230, 245, 255, static_cast<unsigned char>(200 * k)});
+        }
+    }
+
+    // Raketenflammen: zwei Kegel unter dem Fußpunkt entgegen der Längsachse
+    // der Rakete (up, um tilt nach "out" gekippt), flackernd. Länge mit dem
+    // Schub; schrumpft mit der Rakete in großer Höhe.
+    for (size_t i = 0; i < pads.size(); ++i) {
+        const RocketPad& pad = pads[i];
+        const RocketPose rp = RocketAt(pad, time);
+        if (!rp.visible || rp.thrust <= 0.0f || Dist2D(rp.pos, focus) > cullR + 10.0f) continue;
+        const Vector3 up{pad.out.x * sinf(rp.tilt), cosf(rp.tilt), pad.out.z * sinf(rp.tilt)};
+        const float len = (2.2f + 1.6f * rp.thrust + 0.35f * sinf(time * 37.0f + i)) * rp.thrust * rp.size;
+        const Vector3 base = Vector3Add(rp.pos, Vector3Scale(up, 0.2f * rp.size));
+        const Vector3 tip = Vector3Subtract(rp.pos, Vector3Scale(up, len));
+        DrawCylinderEx(base, tip, 0.75f * rp.size, 0.05f, 10, Color{255, 150, 50, 200});
+        DrawCylinderEx(base, Vector3Lerp(base, tip, 0.6f), 0.38f * rp.size, 0.02f, 8, Color{255, 240, 190, 230});
     }
 
     // Abbaustrahlen
@@ -550,6 +846,29 @@ void World::Draw(const Camera3D& cam) const {
         float f = p.life / p.maxLife;
         float s = p.size * (p.gravity > 0 ? 1.0f : (1.6f - f * 0.6f));
         DrawCube(p.pos, s, s, s, Fade(p.color, std::min(1.0f, f * 1.5f)));
+    }
+
+    // Rauch der Raketen: Wolken, die alle 0,1 s am Startplatz entstehen,
+    // solange das Triebwerk läuft und die Rakete tiefer als 14 m ist (beim
+    // Start und kurz vor der Landung). Statt sie als Partikel zu speichern,
+    // wird für jeden Zeitpunkt der letzten 3 s nachgerechnet, ob dort eine
+    // Wolke entstand (RocketAt ist eine reine Funktion der Zeit). Die Wolke
+    // treibt nach außen (Richtung aus Hash01), steigt etwas, wächst und verblasst.
+    for (size_t i = 0; i < pads.size(); ++i) {
+        const RocketPad& pad = pads[i];
+        if (Dist2D(pad.pos, focus) > cullR + 10.0f) continue;
+        const long newest = static_cast<long>(floorf(time / 0.1f));
+        for (long e = newest; e > newest - 30; --e) {
+            const float born = e * 0.1f, age = time - born;
+            if (age < 0.0f || age > 3.0f) continue;
+            const RocketPose rp = RocketAt(pad, born);
+            if (!rp.visible || rp.thrust < 0.2f || rp.pos.y > 14.0f) continue;
+            const float ang = Hash01(static_cast<float>(e) * 0.73f + i * 5.1f) * 2.0f * PI;
+            const float dist = 1.6f + 7.0f * (1.0f - expf(-age * 1.2f));
+            const Vector3 c{pad.pos.x + cosf(ang) * dist, 0.5f + age * 0.7f, pad.pos.z + sinf(ang) * dist};
+            const float size = 0.9f + age * 1.1f;
+            DrawCube(c, size, size, size, Fade(Color{170, 168, 172, 255}, 0.45f * (1.0f - age / 3.0f)));
+        }
     }
 
     // Alles Gesammelte noch mit den Effekt-Einstellungen zeichnen, dann den

@@ -34,6 +34,7 @@
 //     tilt_shift 0.50
 //     msaa 4
 //     fxaa 0.00
+//     track_time 60
 // Unbekannte Zeilen werden ignoriert (so bleiben ältere Spielversionen mit
 // neueren Dateien verträglich). Fehlende Zeilen behalten ihren Standardwert
 // (z. B. eine Datei aus der Zeit vor den Musik-Einstellungen).
@@ -57,6 +58,7 @@ struct ClientConfig {
     float tiltShift = 0.5f;                   // Optionen: Tilt-Shift-Stärke 0..1, 0 = aus (Zeile "tilt_shift 0.50")
     int msaa = 4;                             // Optionen: Kantenglättung 0/2/4/8/16-fach, 0 = aus (Zeile "msaa 4")
     float fxaa = 0.0f;                        // Optionen: FXAA-Stärke 0..1, 0 = aus (Zeile "fxaa 0.00")
+    int trackTime = 60;                       // Optionen: Fahrspuren der Rover sichtbar in s: 0 (aus), 15, 30, 60, 120, 300 (Zeile "track_time 60")
 
     // Steht NICHT in der Datei: true, wenn ein Wert geändert, aber noch nicht
     // gespeichert wurde. Setzt, wer ändert, ohne gleich zu speichern (die

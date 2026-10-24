@@ -563,6 +563,7 @@ void World::Update(float dt) {
     UpdateTurrets(dt);
     UpdateBullets(dt);
     UpdateParticles(dt);
+    if (!isServer) UpdateMapAnim(dt);   // Rover (nur Kulisse, eigener Zufallsgenerator)
 
     // Wracks altern; die ersten 60 s steigt gelegentlich Rauch auf (im
     // Schnitt in jedem 31. Schritt ein Teilchen)
@@ -672,11 +673,12 @@ void World::Update(float dt) {
 // Einzelspieler, wenn die Welt "steht": angedockt (Stationsfenster offen),
 // nach dem Sieg und beim Autopiloten in der Station (main.cpp). Nur Partikel,
 // Meldungen und Animationen laufen weiter, damit das Bild nicht einfriert.
-// Keine Zufallszahlen, kein Spielgeschehen.
+// Keine Zufallszahlen aus rng (die Rover nutzen animRng), kein Spielgeschehen.
 void World::UpdateAmbient(float dt) {
     if (dt <= 0.0f) return;
     time += dt;
     UpdateParticles(dt);
+    UpdateMapAnim(dt);
     for (auto& ps : players) {
         for (auto& n : ps.notices) n.time -= dt;
         ps.notices.erase(std::remove_if(ps.notices.begin(), ps.notices.end(), [](const Notice& n) { return n.time <= 0; }),
@@ -739,6 +741,7 @@ void World::UpdateCosmetics(float dt) {
     // mit und überschreibt es damit regelmäßig)
     for (auto& w : wrecks) w.age += dt;
     UpdateParticles(dt);
+    UpdateMapAnim(dt);
     for (auto& ps : players) {
         for (auto& n : ps.notices) n.time -= dt;
         ps.notices.erase(std::remove_if(ps.notices.begin(), ps.notices.end(), [](const Notice& n) { return n.time <= 0; }),
