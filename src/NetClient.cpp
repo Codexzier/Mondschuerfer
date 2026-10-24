@@ -114,6 +114,7 @@ constexpr double MAX_EXTRAPOLATION = 0.25;    // s: so lange fremde Schiffe bei 
 constexpr float BULLET_MAX_AGE = 0.35f;       // s: ältere Geschossdaten (Netz hängt) verwerfen
 constexpr size_t MAX_QUEUED_SOUNDS = 256;     // falls niemand TakeSounds() aufruft
 constexpr size_t MAX_QUEUED_GOALS = 32;
+constexpr size_t MAX_QUEUED_CHAT = 64;
 constexpr size_t CLIENT_MAX_PACKET = 1024 * 1024;   // Schutz vor riesigen Paketen (ENet-Standard: 32 MB)
 constexpr float TIME_SYNC_SMOOTHING = 0.05f;  // Anteil, mit dem jede neue Messung die Zeitschätzung verschiebt
 constexpr double TIME_SYNC_RESET = 1.0;       // s Abweichung: Schätzung neu beginnen statt glätten
@@ -317,6 +318,7 @@ struct NetClient::Impl {
     std::vector<SoundEvent> sounds;
     std::vector<NetClient::GoalNotice> goals;
     bool respawned = false;
+    std::vector<net::ChatLineMsg> chat;
 
     // --- Zeit ---------------------------------------------------------------------------
     Clock::time_point epoch;           // Nullpunkt für Now()
@@ -455,6 +457,7 @@ void NetClient::Impl::ResetSession() {
     sounds.clear();
     goals.clear();
     respawned = false;
+    chat.clear();
     timeSynced = false;
     timeOffset = 0.0;
     lastRenderTime = -1e9;
@@ -732,6 +735,14 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
         case net::MsgType::MapData: {
             net::MapDataMsg m;
             if (net::Decode(r, m)) HandleMapData(m);
+            break;
+        }
+        case net::MsgType::ChatLine: {
+            net::ChatLineMsg m;
+            if (net::Decode(r, m) && state == NetState::Playing) {
+                if (chat.size() >= MAX_QUEUED_CHAT) chat.erase(chat.begin());
+                chat.push_back(m);
+            }
             break;
         }
         default:
@@ -1487,6 +1498,7 @@ void NetClient::Impl::UpdateRemoteShips() {
         s.mining = b.mining;
         s.mineTarget = Vector3{b.mineX, 0.0f, b.mineZ};
         s.docked = b.docked;
+        s.chatting = b.chatting;
         const Vector3 pb{b.x, b.y, b.z};
         float hpFrac = b.hpFrac;
         if (a && Vector2Distance({a->x, a->z}, {b.x, b.z}) < REMOTE_TELEPORT) {
@@ -1778,6 +1790,23 @@ void NetClient::SendDockAction(net::DockActionType action, int param) {
     if (d.host) enet_host_flush(d.host);
 }
 
+void NetClient::SendChat(const std::string& text) {
+    Impl& d = *impl_;
+    if (d.state != NetState::Playing) return;
+    net::ChatMsg m;
+    m.text = text;
+    d.Send(net::Encode(m), true);
+    if (d.host) enet_host_flush(d.host);
+}
+
+void NetClient::SendChatTyping(bool typing) {
+    Impl& d = *impl_;
+    if (d.state != NetState::Playing) return;
+    net::ChatTypingMsg m;
+    m.typing = typing;
+    d.Send(net::Encode(m), true);
+}
+
 bool NetClient::WorldReady() const { return impl_->worldReady; }
 World& NetClient::GetWorld() { return impl_->world; }
 const World& NetClient::GetWorld() const { return impl_->world; }
@@ -1806,6 +1835,12 @@ bool NetClient::TakeRespawned() {
     const bool r = impl_->respawned;
     impl_->respawned = false;
     return r;
+}
+
+std::vector<net::ChatLineMsg> NetClient::TakeChat() {
+    std::vector<net::ChatLineMsg> out;
+    out.swap(impl_->chat);
+    return out;
 }
 
 bool NetClient::TakeWorldRebuilt() {

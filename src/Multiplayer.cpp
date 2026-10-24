@@ -321,6 +321,8 @@ void MultiplayerScreen::EnterPlaying() {
     padZoom_ = 0.0f;
     controls_.Reset();
     autoDockT_ = 0.0f;
+    chat_.Clear();
+    chatTypingSent_ = false;
     ResetAutopilot();   // Autopilot-Zustand (Ai.cpp) gehört jetzt der Spiegelwelt
     SetStatus("", MUTED);
 
@@ -487,6 +489,9 @@ void MultiplayerScreen::HandleNetwork() {
             }
         }
     }
+
+    // Chat: neue Zeilen ins Fenster (auch die eigenen kommen vom Server zurück)
+    for (const net::ChatLineMsg& l : net_.TakeChat()) chat_.Add(l.name, l.text, l.playerId == net_.MyPlayerId());
 }
 
 // ===========================================================================
@@ -505,6 +510,16 @@ void MultiplayerScreen::Update(float frameDt) {
         autoConnectDone_ = true;
         addressField_.text = opt_.connect;
         StartConnect();
+    }
+
+    // --- 0. Chat: Enter öffnet die Eingabe, ESC schließt sie ---------------------
+    // Vor der Flugsteuerung, die bei offener Eingabe ruht. Ob die Eingabe offen
+    // ist, erfährt der Server (Sprechblase am Schiff für die anderen).
+    const bool chatAllowed = phase_ == Phase::Playing && net_.WorldReady() && !paused_ && goalAnimT_ < 0.0f;
+    chat_.Update(chatAllowed);
+    if (chat_.Active() != chatTypingSent_) {
+        chatTypingSent_ = chat_.Active();
+        net_.SendChatTyping(chatTypingSent_);
     }
 
     // --- 1. Eingaben fürs eigene Schiff (nur im Spiel) ---------------------------
@@ -570,7 +585,7 @@ void MultiplayerScreen::Update(float frameDt) {
                 goalAnimT_ = -1.0f;
                 dockFrames_ = 0;   // dieselbe Taste darf nicht auch das Stationsfenster bedienen
             }
-        } else if (!paused_ && w.Me().dockedAt < 0 && PilotControls::PausePressed()) {
+        } else if (!paused_ && w.Me().dockedAt < 0 && !chat_.Busy() && PilotControls::PausePressed()) {
             paused_ = true;
             pauseSel_ = 0;
             pauseFrames_ = 0;
@@ -613,9 +628,10 @@ void MultiplayerScreen::ReadGameInput(float dt, ShipInput& held, bool& scan, boo
     // Angedockt: Ein Mausziel ist erledigt. Angedockt oder Pause: keine
     // Steuerung (wie im Einzelspieler, wo World::Update während des
     // Andockens und der Pause gar nicht läuft). In der Pause bleibt ein
-    // Mausziel erhalten; danach geht der Flug dorthin weiter.
+    // Mausziel erhalten; danach geht der Flug dorthin weiter. Ebenso, solange
+    // im Chat getippt wird (die Tasten gehören dann dem Text).
     if (w.Me().dockedAt >= 0) controls_.Reset();
-    if (paused_ || w.Me().dockedAt >= 0) return;
+    if (paused_ || w.Me().dockedAt >= 0 || chat_.Busy()) return;
     if (opt_.autopilot) {
         // Autopilot (Testoption): dieselbe Steuerlogik wie die Simulation im
         // Einzelspieler, angewendet auf die Spiegelwelt. Er "drückt" nur Tasten;
@@ -673,8 +689,9 @@ void MultiplayerScreen::UpdatePlayingCamera(float dt) {
     const Ship& p = w.Player();
     const bool hasShip = !p.dead && !p.hidden;
 
-    // Mausrad und rechter Stick (padZoom_, in Mausrad-Rasten; ReadGameInput)
-    float wheel = GetMouseWheelMove() + padZoom_;
+    // Mausrad und rechter Stick (padZoom_, in Mausrad-Rasten; ReadGameInput).
+    // Über dem Chatfenster blättert das Mausrad bei offener Eingabe im Verlauf.
+    float wheel = (chat_.WantsWheel() ? 0.0f : GetMouseWheelMove()) + padZoom_;
     padZoom_ = 0.0f;
     if (wheel != 0.0f && !paused_) zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
 
@@ -1169,16 +1186,24 @@ void MultiplayerScreen::DrawPlaying() {
     const Rectangle tp = TopPilotsRect();
     DrawShipNames(w);
     SetHudRightReserve(static_cast<float>(GetScreenWidth()) - tp.x + 8 * Scale(), tp.y + tp.height + 8 * Scale());
+    SetHudLeftReserve(ChatBox::Height() + 8 * Scale());   // Tastenhilfe über dem Chatfenster
     DrawHud(w, cam_, false);
     SetHudRightReserve(0.0f, 0.0f);   // Standard für den Einzelspieler wiederherstellen
+    SetHudLeftReserve(0.0f);
     DrawTopPilots(w);
+
+    // Chat unten links (vor dem Stationsfenster, das darüber liegen darf)
+    std::string chatText;
+    if (chat_.Draw(chatText)) net_.SendChat(chatText);
 
     // Stationsfenster: wie im Einzelspieler, aber jede Aktion ist nur eine
     // Anfrage an den Server. Das Ergebnis (neuer Kontostand, Schild ...) kommt
     // mit dem nächsten Snapshot zurück. Während der Zielanimation ausgeblendet
     // (das Ziel wird beim Verkauf erreicht, also immer angedockt).
     if (w.Me().dockedAt >= 0 && goalAnimT_ < 0.0f && undockSentT_ < 0.0f && !paused_) {
-        DockRequest req = DrawDockPanel(w, dockFrames_ > 1 && !opt_.autopilot);
+        // Beim Tippen im Chat (und im Frame, in dem Enter/ESC ihn geöffnet
+        // oder geschlossen hat) ist das Fenster nur Anzeige.
+        DockRequest req = DrawDockPanel(w, dockFrames_ > 1 && !opt_.autopilot && !chat_.Busy());
         if (req.repair) net_.SendDockAction(net::DockActionType::Repair);
         if (req.buy >= 0) net_.SendDockAction(net::DockActionType::BuyUpgrade, req.buy);
         // BuyShip: Schiffstyp, Bit 7 = in Zahlung geben (siehe DockActionMsg)
@@ -1219,13 +1244,20 @@ std::string MultiplayerScreen::NameForShip(const Ship& s) const {
 }
 
 // Namen über den Schiffen der anderen Spieler (nur wenn auf dem Bildschirm
-// und nicht hinter den HUD-Panels oben links bzw. oben rechts)
+// und nicht hinter den HUD-Panels oben links bzw. oben rechts), darüber die
+// Sprechblase, wenn jemand im Chat tippt (auch über dem eigenen Schiff)
 void MultiplayerScreen::DrawShipNames(const World& w) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     const Rectangle statusPanel{0, 0, 380 * s, 320 * s};   // Statuspanel des HUD (Hud.cpp) plus Rand
     const Rectangle tp = TopPilotsRect();
     const Rectangle rightColumn{tp.x - 10 * s, 0, W - tp.x + 10 * s, tp.y + tp.height + 6 * s};
+    // Eigenes Schiff: Sprechblase, solange wir selbst tippen
+    const Ship& own = w.Player();
+    if (chat_.Active() && !own.dead && !own.hidden) {
+        const Vector2 p = GetWorldToScreen(Vector3Add(own.pos, {0.0f, 2.4f, 0.0f}), cam_);
+        DrawChatEmote({p.x, p.y - 4 * s}, elapsed_);
+    }
     for (const Ship& sh : w.ships) {
         if (&sh == &w.Player() || sh.dead || sh.hidden) continue;
         if (sh.playerId < 0 && sh.kind != ShipKind::Player) continue;
@@ -1239,6 +1271,7 @@ void MultiplayerScreen::DrawShipNames(const World& w) {
         const float tw = Width(name, ts);
         DrawRectangleRec({p.x - tw * 0.5f - 6 * s, p.y - ts - 8 * s, tw + 12 * s, ts + 6 * s}, Color{10, 12, 20, 150});
         TextCentered(name, p.x, p.y - ts - 5 * s, ts, sh.crashing ? BAD : GOOD);
+        if (sh.chatting) DrawChatEmote({p.x, p.y - ts - 12 * s}, elapsed_);   // tippt gerade im Chat
     }
 }
 

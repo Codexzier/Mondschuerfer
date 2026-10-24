@@ -29,11 +29,13 @@
 //   3b. Spieler: Client schickt Register (neues Konto) oder LoginStart,
 //       Server antwortet LoginChallenge, Client antwortet LoginProof
 //       -> Server antwortet Welcome oder Error.
-//   4. Im Spiel: Client schickt Input (30/s) und DockAction.
+//   4. Im Spiel: Client schickt Input (30/s), DockAction, Chat (Nachricht)
+//      und ChatTyping (Chat-Eingabe offen/zu).
 //      Server schickt Snapshot (15/s, Zuschauer 10/s), Events (bei Bedarf),
 //      Deposits (wenn sich die sichtbaren Lagerstätten ändern),
-//      Players (1/s), Highscores (bei Änderung) und Settings (wenn der
-//      Betreiber Einstellungen ohne Neuaufbau der Welt ändert, z. B. Schiffe).
+//      Players (1/s), Highscores (bei Änderung), Settings (wenn der
+//      Betreiber Einstellungen ohne Neuaufbau der Welt ändert, z. B. Schiffe)
+//      und ChatLine (Chat-Nachricht eines Spielers, an alle Spieler).
 //      Nach jedem Welcome und beim Kartenwechsel: MapData (aktive Karte).
 //   Karte hochladen (Karteneditor): wie 3b LoginStart -> LoginChallenge, dann
 //   MapUpload statt LoginProof -> Server antwortet MapUploadResult. Das meldet
@@ -61,7 +63,8 @@ namespace net {
 // Version 6: Schiffstypen vom Server (GameSettings::ships, Nachricht Settings),
 //            Kanonen bis 5, Modellvariante craft_racer.
 // Version 7: Karten aus dem Karteneditor (MapUpload, MapUploadResult, MapData).
-constexpr uint16_t PROTOCOL_VERSION = 7;
+// Version 8: Chat (Chat, ChatTyping, ChatLine; SnapShip::chatting).
+constexpr uint16_t PROTOCOL_VERSION = 8;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -85,6 +88,7 @@ constexpr int MAX_NAME = 16;
 constexpr int MIN_PASSWORD = 6;                  // prüft nur der Client (der Server sieht das Passwort nie)
 constexpr uint32_t KDF_ITERATIONS = 20000;       // PBKDF2-Runden für den Anmeldeschlüssel
 constexpr int MAX_INPUTS_PER_MSG = 4;            // Eingaben werden mehrfach geschickt (gegen Paketverlust)
+constexpr int MAX_CHAT = 100;                    // Chat-Nachricht: höchstens so viele Zeichen
 
 using Key32 = std::array<uint8_t, 32>;
 using Bytes16 = std::array<uint8_t, 16>;
@@ -102,6 +106,8 @@ enum class MsgType : uint8_t {
     DockAction = 6,
     Leave = 7,
     MapUpload = 8,
+    Chat = 9,
+    ChatTyping = 10,
     // Server -> Client
     ServerInfo = 100,
     Error = 101,
@@ -115,6 +121,7 @@ enum class MsgType : uint8_t {
     Settings = 109,
     MapUploadResult = 110,
     MapData = 111,
+    ChatLine = 112,
 };
 
 enum class ErrorCode : uint8_t {
@@ -136,6 +143,13 @@ const char* ErrorText(ErrorCode c);
 
 // Prüft einen Spielernamen (Länge und erlaubte Zeichen)
 bool ValidPlayerName(const std::string& name);
+
+// Chat: erlaubt sind die Zeichen, die die Schrift des Spiels kennt (32..126
+// und 160..255, also auch ä, ö, ü, ß). ValidChatText prüft eine ganze
+// Nachricht: gültiges UTF-8, nur solche Zeichen, 1..MAX_CHAT Zeichen und
+// nicht nur Leerzeichen.
+bool ChatChar(int codepoint);
+bool ValidChatText(const std::string& text);
 
 // ---------------------------------------------------------------------------
 // Schreiben und Lesen von Bytes
@@ -250,6 +264,19 @@ struct MapUploadMsg {
     GameMap map;                  // ohne author (den setzt der Server)
 };
 
+// Chat-Nachricht des Spielers (nur angemeldete Spieler). Der Server prüft
+// den Text (ValidChatText) und schickt ihn als ChatLine an alle Spieler,
+// auch zurück an den Absender.
+struct ChatMsg {
+    std::string text;             // UTF-8, ohne Spielername
+};
+
+// Chat-Eingabe geöffnet (true) oder geschlossen (false). Der Server zeigt
+// das den anderen als Sprechblase am Schiff (SnapShip::chatting).
+struct ChatTypingMsg {
+    bool typing = false;
+};
+
 // ---------------------------------------------------------------------------
 // Server -> Client
 // ---------------------------------------------------------------------------
@@ -359,6 +386,7 @@ struct SnapShip {
     bool docked = false;
     float mineX = 0, mineZ = 0;   // Ziel des Abbaustrahls
     int16_t playerId = -1;        // >= 0: Schiff eines Spielers
+    bool chatting = false;        // Spieler tippt gerade im Chat (Sprechblase)
 };
 
 struct SnapBullet {
@@ -488,6 +516,13 @@ struct MapDataMsg {
     GameMap map;                  // ohne author
 };
 
+// Eine Chat-Nachricht (Antwort auf ChatMsg, an alle angemeldeten Spieler)
+struct ChatLineMsg {
+    int32_t playerId = -1;        // Absender
+    std::string name;             // Spielername des Absenders
+    std::string text;
+};
+
 // ---------------------------------------------------------------------------
 // Kodieren (inkl. Typ-Byte) und Dekodieren (Typ-Byte bereits gelesen)
 // ---------------------------------------------------------------------------
@@ -497,6 +532,8 @@ std::vector<uint8_t> Encode(const LoginProofMsg& m);
 std::vector<uint8_t> Encode(const InputMsg& m);
 std::vector<uint8_t> Encode(const DockActionMsg& m);
 std::vector<uint8_t> Encode(const MapUploadMsg& m);
+std::vector<uint8_t> Encode(const ChatMsg& m);
+std::vector<uint8_t> Encode(const ChatTypingMsg& m);
 std::vector<uint8_t> EncodeSimple(MsgType t);   // Nachrichten ohne Inhalt (Spectate, Leave)
 std::vector<uint8_t> Encode(const ServerInfoMsg& m);
 std::vector<uint8_t> Encode(const ErrorMsg& m);
@@ -510,6 +547,7 @@ std::vector<uint8_t> Encode(const HighscoresMsg& m);
 std::vector<uint8_t> Encode(const SettingsMsg& m);
 std::vector<uint8_t> Encode(const MapUploadResultMsg& m);
 std::vector<uint8_t> Encode(const MapDataMsg& m);
+std::vector<uint8_t> Encode(const ChatLineMsg& m);
 
 bool Decode(Reader& r, RegisterMsg& m);
 bool Decode(Reader& r, LoginStartMsg& m);
@@ -517,6 +555,8 @@ bool Decode(Reader& r, LoginProofMsg& m);
 bool Decode(Reader& r, InputMsg& m);
 bool Decode(Reader& r, DockActionMsg& m);
 bool Decode(Reader& r, MapUploadMsg& m);
+bool Decode(Reader& r, ChatMsg& m);
+bool Decode(Reader& r, ChatTypingMsg& m);
 bool Decode(Reader& r, ServerInfoMsg& m);
 bool Decode(Reader& r, ErrorMsg& m);
 bool Decode(Reader& r, LoginChallengeMsg& m);
@@ -529,6 +569,7 @@ bool Decode(Reader& r, HighscoresMsg& m);
 bool Decode(Reader& r, SettingsMsg& m);
 bool Decode(Reader& r, MapUploadResultMsg& m);
 bool Decode(Reader& r, MapDataMsg& m);
+bool Decode(Reader& r, ChatLineMsg& m);
 
 // ---------------------------------------------------------------------------
 // Modellvarianten: über das Netz werden kleine Nummern statt Modell-IDs geschickt

@@ -22,6 +22,8 @@
 //   - Ereignisse (Töne, Explosionen, Meldungen, Ziel erreicht) an das Spiel
 //     weitergeben.
 //   - Die aktive Karte des Servers (MapData) in die Spiegelwelt setzen.
+//   - Chat: Nachrichten und "tippt gerade" schicken, empfangene Zeilen
+//     weitergeben (das Chatfenster selbst ist src/Chat.hpp).
 //   - Karten hochladen (Karteneditor, UploadMap).
 //
 // Benutzt von: src/Multiplayer.cpp (Menüs, Anzeige), src/MapEditor.cpp
@@ -85,6 +87,11 @@ public:
     // Stationsfenster: Anfrage an den Server
     void SendDockAction(net::DockActionType action, int param = 0);
 
+    // Chat (nur als Spieler): Nachricht schicken bzw. melden, ob die
+    // Chat-Eingabe offen ist (Sprechblase am eigenen Schiff für die anderen).
+    void SendChat(const std::string& text);
+    void SendChatTyping(bool typing);
+
     // --- Spielwelt ---------------------------------------------------------------
     bool WorldReady() const;              // Welcome empfangen, Welt aufgebaut
     World& GetWorld();
@@ -111,6 +118,7 @@ public:
     };
     std::vector<GoalNotice> TakeGoals();
     bool TakeRespawned();                 // true einmalig nach einem neuen eigenen Schiff
+    std::vector<net::ChatLineMsg> TakeChat();   // neue Chat-Zeilen (älteste zuerst)
     bool TakeWorldRebuilt();              // true einmalig nach (erneutem) Welcome
 
 private:

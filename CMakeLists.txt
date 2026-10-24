@@ -96,6 +96,7 @@ add_executable(Mondschuerfer
         src/Controls.cpp
         src/MapFiles.cpp
         src/MapEditor.cpp
+        src/Chat.cpp
         ${MONDSCHUERFER_SHARED_SOURCES}
 )
 

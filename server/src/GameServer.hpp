@@ -150,6 +150,11 @@ private:
         int queueWindowSteps = 0;           // Schritte im laufenden Fenster
         uint64_t noInteractUntilTick = 0;   // kurz nach dem Abdocken "Interaktion" ignorieren (sonst sofort wieder angedockt)
 
+        // --- Chat (siehe HandleChat) ---
+        bool chatting = false;              // Chat-Eingabe offen (Sprechblase am Schiff, ApplyInputs)
+        double chatTokens = 0.0;            // Flutbremse: so viele Nachrichten darf er gerade schicken
+        double chatTokensAt = 0.0;          // Now() der letzten Berechnung von chatTokens
+
         // --- Senden ---
         uint64_t timeBaseTick = 0;          // serverTime in Snapshots zählt ab hier (siehe ClientTime)
         int lastShipId = -1;                // für das Ereignis "Respawned"
@@ -223,6 +228,8 @@ private:
     Account* CheckProof(Client& c, const net::Key32& proof, const char* what);
     void HandleInput(Client& c, const net::InputMsg& m);
     void HandleDockAction(Client& c, const net::DockActionMsg& m);
+    void HandleChat(Client& c, const net::ChatMsg& m);
+    void HandleChatTyping(Client& c, const net::ChatTypingMsg& m);
     void HandleLeave(Client& c);
     void BadPacket(Client& c, const char* what);
     void FailLogin(Client& c, net::ErrorCode code);

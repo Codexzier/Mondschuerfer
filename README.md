@@ -110,6 +110,7 @@ den **Optionen**.
 | 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) / Mission annehmen (Tab „Missionen“) |
 | Tab | Karteireiter der Handelsstation wechseln (Station / Schiff / Missionen) |
 | ESC / P | Pause |
+| Enter | Chat (nur Mehrspieler): Eingabe öffnen, mit Text noch einmal Enter = senden, ESC = abbrechen |
 | H | Steuerung einblenden |
 | M | Ton an / aus |
 | F11 | Vollbild |
@@ -121,7 +122,7 @@ den **Optionen**.
 | Linksklick auf den Boden | Das Schiff fliegt dorthin und hält dort an. Das Ziel zeigt ein pulsierender oranger Ring. |
 | Linke Maustaste halten | Das Schiff folgt dem Mauszeiger (je weiter weg der Zeiger, desto schneller). |
 | Rechte Maustaste | Flugziel löschen |
-| Mausrad | Zoom |
+| Mausrad | Zoom (bei offener Chat-Eingabe über dem Chatfenster: im Chatverlauf blättern) |
 
 Lenkt man mit W/A/S/D (oder dem Controller), wird ein Mausziel gelöscht. Klicks auf Fenster des
 HUD (Statusfenster, Radar, Hinweise) setzen kein Ziel. Liegt das Ziel in einer Station, kommt

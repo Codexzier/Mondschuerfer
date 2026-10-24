@@ -47,6 +47,11 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation);
 // eine dateiweite Variable in Hud.cpp und würde sonst "hängen bleiben").
 void SetHudRightReserve(float width, float bottom);
 
+// Mehrspieler: unten links liegt das Chatfenster (Chat.hpp). Die Tastenhilfe
+// rückt um height Pixel nach oben. Wie SetHudRightReserve: Multiplayer.cpp
+// setzt den Wert direkt vor DrawHud und danach wieder auf 0.
+void SetHudLeftReserve(float height);
+
 // Was der Spieler im Stationsfenster angeklickt hat. Ausgeführt wird es vom
 // Aufrufer: im Einzelspieler direkt an der World, im Mehrspieler als Anfrage
 // an den Server.

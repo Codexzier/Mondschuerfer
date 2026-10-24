@@ -125,6 +125,7 @@ struct Ship {
     float thrustVisual = 0.0f;    // geglätteter Schub 0..1 für die Triebwerksflamme (nur Optik)
     int playerId = -1;            // >= 0: Schiff eines menschlichen Spielers (PlayerState::id)
     bool docked = false;          // Spieler ist angedockt: nicht angreifbar, bewegt sich nicht
+    bool chatting = false;        // Mehrspieler: Spieler tippt im Chat (Sprechblase, nur Optik)
 
     // KI (Ai.cpp)
     AiState ai = AiState::Wander;

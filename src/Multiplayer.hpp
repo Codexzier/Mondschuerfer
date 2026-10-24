@@ -29,7 +29,8 @@
 //      |                    v
 //      |                 Playing: Spiel wie im Einzelspieler, zusätzlich
 //      |                 "Beste Piloten", Namen über fremden Schiffen,
-//      |                 Anzeige nach Absturz, Abschlussanimation beim Ziel.
+//      |                 Anzeige nach Absturz, Abschlussanimation beim Ziel,
+//      |                 Chat unten links (ChatBox, Chat.hpp).
 //      |                 Pause (ESC) mit Weiterspielen / Optionen / Abmelden;
 //      |                 die Optionen (OptionsScreen) liegen wie die Pause
 //      |                 über dem Spiel, das auf dem Server weiterläuft.
@@ -48,10 +49,11 @@
 // Einzelspieler. Ihre Befehle gehen als Eingabepakete an den Server; das
 // Netzwerkprotokoll ist dafür unverändert.
 //
-// Abhängigkeiten: NetClient, ClientConfig (das gemeinsame g_clientConfig),
+// Abhängigkeiten: NetClient, Chat, ClientConfig (das gemeinsame g_clientConfig),
 // Options (Optionen in der Pause), Controls (Flugsteuerung), World
 // (shared/), Ui, Hud, Audio, Assets (Mondfarbe), raylib.
 // ---------------------------------------------------------------------------
+#include "Chat.hpp"
 #include "ClientConfig.hpp"
 #include "Controls.hpp"
 #include "NetClient.hpp"
@@ -198,6 +200,8 @@ private:
     float autoDockT_ = 0.0f;       // Autopilot: Zeit an der Station
     float autoDockNextAction_ = 0.0f;
     bool hadShip_ = false;         // schon einmal ein eigenes Schiff gesehen (für "zerstört")
+    ChatBox chat_;                 // Chatfenster unten links
+    bool chatTypingSent_ = false;  // zuletzt an den Server gemeldet: Chat-Eingabe offen
 
     // Abschlussanimation "Ziel erreicht"
     float goalAnimT_ = -1.0f;      // < 0: keine Animation
