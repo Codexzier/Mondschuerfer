@@ -74,6 +74,35 @@ bool ValidPlayerName(const std::string& name) {
     return true;
 }
 
+bool ChatChar(int cp) { return (cp >= 32 && cp <= 126) || (cp >= 160 && cp <= 255); }
+
+// Der Text kommt von irgendeinem Client: UTF-8 von Hand dekodieren und dabei
+// alles ablehnen, was die Schrift nicht kennt (Steuerzeichen, Emojis ...).
+// Die erlaubten Zeichen brauchen 1 Byte (bis 127) oder 2 Byte (128..255).
+bool ValidChatText(const std::string& text) {
+    int count = 0;
+    bool visible = false;
+    for (size_t i = 0; i < text.size(); ++count) {
+        const auto b0 = static_cast<unsigned char>(text[i]);
+        int cp = 0;
+        if (b0 < 0x80) {
+            cp = b0;
+            i += 1;
+        } else if ((b0 & 0xE0) == 0xC0 && i + 1 < text.size()) {
+            const auto b1 = static_cast<unsigned char>(text[i + 1]);
+            if ((b1 & 0xC0) != 0x80) return false;
+            cp = ((b0 & 0x1F) << 6) | (b1 & 0x3F);
+            if (cp < 0x80) return false;   // unnötig lang kodiert
+            i += 2;
+        } else {
+            return false;   // 3-/4-Byte-Zeichen oder abgeschnitten
+        }
+        if (!ChatChar(cp)) return false;
+        if (cp != ' ') visible = true;
+    }
+    return visible && count <= MAX_CHAT;
+}
+
 // ===========================================================================
 // Writer / Reader
 // Writer hängt Bytes an buf an. Reader liest der Reihe nach (pos_) aus
@@ -471,6 +500,30 @@ bool Decode(Reader& r, MapUploadMsg& m) {
     return ReadMap(r, m.map);
 }
 
+std::vector<uint8_t> Encode(const ChatMsg& m) {
+    Writer w;
+    Start(MsgType::Chat, w);
+    w.Str(m.text);
+    return w.buf;
+}
+
+bool Decode(Reader& r, ChatMsg& m) {
+    m.text = r.Str();
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const ChatTypingMsg& m) {
+    Writer w;
+    Start(MsgType::ChatTyping, w);
+    w.U8(m.typing ? 1 : 0);
+    return w.buf;
+}
+
+bool Decode(Reader& r, ChatTypingMsg& m) {
+    m.typing = r.U8() != 0;
+    return r.ok();
+}
+
 // ===========================================================================
 // Server -> Client
 // ===========================================================================
@@ -646,12 +699,13 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U8(QUnit(s.thrustVisual));
         w.U8(QUnit(s.hitFlash));
         // Bitfeld wie oben: 1 = stürzt ab, 2 = feindlich, 4 = baut ab,
-        // 8 = angedockt
+        // 8 = angedockt, 16 = tippt im Chat
         uint8_t flags = 0;
         if (s.crashing) flags |= 1;
         if (s.hostile) flags |= 2;
         if (s.mining) flags |= 4;
         if (s.docked) flags |= 8;
+        if (s.chatting) flags |= 16;
         w.U8(flags);
         // Das Abbauziel nur, wenn das Schiff gerade abbaut (spart 4 Byte je
         // Schiff). Decode liest es nur dann, wenn Bit 4 gesetzt ist.
@@ -782,6 +836,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         s.hostile = (flags & 2) != 0;
         s.mining = (flags & 4) != 0;
         s.docked = (flags & 8) != 0;
+        s.chatting = (flags & 16) != 0;
         if (s.mining) {
             s.mineX = DPos(r.I16());
             s.mineZ = DPos(r.I16());
@@ -1095,6 +1150,22 @@ std::vector<uint8_t> Encode(const MapDataMsg& m) {
 bool Decode(Reader& r, MapDataMsg& m) {
     m.custom = r.U8() != 0;
     return ReadMap(r, m.map);
+}
+
+std::vector<uint8_t> Encode(const ChatLineMsg& m) {
+    Writer w;
+    Start(MsgType::ChatLine, w);
+    w.I32(m.playerId);
+    w.Str(m.name);
+    w.Str(m.text);
+    return w.buf;
+}
+
+bool Decode(Reader& r, ChatLineMsg& m) {
+    m.playerId = r.I32();
+    m.name = r.Str();
+    m.text = r.Str();
+    return r.ok();
 }
 
 // ===========================================================================

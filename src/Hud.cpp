@@ -68,6 +68,7 @@ namespace {
 // Rechte obere Ecke, die Randpfeile meiden (siehe SetHudRightReserve). 0 = Standard.
 float g_rightReserveW = 0.0f;
 float g_rightReserveBottom = 0.0f;
+float g_leftReserve = 0.0f;           // SetHudLeftReserve (Chatfenster unten links)
 
 // Eine Zeile des Statusfensters: Beschriftung links (grau), Wert rechts,
 // darunter ein Balken mit dem Füllstand frac (0..1). Belegt 36 * s Pixel Höhe.
@@ -362,6 +363,8 @@ void SetHudRightReserve(float width, float bottom) {
     g_rightReserveBottom = bottom;
 }
 
+void SetHudLeftReserve(float height) { g_leftReserve = height; }
+
 // Die Zeilen der Tastenhilfe liefert controls::HelpRows() (Controls.cpp) –
 // je nach zuletzt benutztem Gerät die Tastatur/Maus-Belegung (9 Zeilen) oder
 // die des Controllers (7 Zeilen, Xbox- oder PlayStation-Namen). Dort steht
@@ -606,13 +609,16 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // die Hilfe also wieder. y = Unterkante minus Höhe der Liste
     // (ControlsHeight, bei 16 px Schrift) minus 16 px Rand.
     // Mit Controller gibt es keine Taste H; der Hinweis nennt dann die Pause,
-    // in der die Hilfe immer steht.
+    // in der die Hilfe immer steht. Im Mehrspieler steht alles über dem
+    // Chatfenster (lb = Unterkante), und H beim Tippen zählt nicht.
     if (!simulation) {
-        if (me.playTime < 90.0f || IsKeyDown(KEY_H)) DrawControls(18 * s, H - ControlsHeight(16 * s) - 16 * s, 16 * s);
+        const float lb = H - g_leftReserve;
+        if (me.playTime < 90.0f || (IsKeyDown(KEY_H) && !TextInputActive()))
+            DrawControls(18 * s, lb - ControlsHeight(16 * s) - 16 * s, 16 * s);
         else if (controls::ActiveDevice() == controls::Device::KeyboardMouse)
-            Text("[H] Steuerung anzeigen", 18 * s, H - 30 * s, 16 * s, Color{200, 205, 215, 170});
+            Text("[H] Steuerung anzeigen", 18 * s, lb - 30 * s, 16 * s, Color{200, 205, 215, 170});
         else
-            Text("Steuerung: in der Pause " + controls::KeyHint(controls::Act::Pause), 18 * s, H - 30 * s, 16 * s,
+            Text("Steuerung: in der Pause " + controls::KeyHint(controls::Act::Pause), 18 * s, lb - 30 * s, 16 * s,
                  Color{200, 205, 215, 170});
     }
 }

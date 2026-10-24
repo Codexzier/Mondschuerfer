@@ -98,6 +98,10 @@ constexpr double LOBBY_TIMEOUT = 15.0 * 60.0;     // so lange darf man ohne Anme
 // Abmelden außerhalb einer Station: So lange bleibt das Schiff noch ohne
 // Steuerung in der Welt und kann abgeschossen werden (LogoutPlayer).
 constexpr double LOGOUT_GRACE = 10.0;
+// Chat-Flutbremse (HandleChat): bis zu CHAT_BURST Nachrichten direkt
+// hintereinander, danach eine pro 1 / CHAT_PER_SECOND Sekunden.
+constexpr double CHAT_BURST = 4.0;
+constexpr double CHAT_PER_SECOND = 0.5;
 
 // --- Anmeldung (docs/Mehrspieler.md Abschnitt 8, siehe LoginBlocked) ---
 // Alle Grenzen gelten für ein Zeitfenster von 10 Minuten.
@@ -571,6 +575,7 @@ void GameServer::ApplyInputs() {
         in.fire = c.held.fire;
         if (tick_ < c.noInteractUntilTick) in.interact = false;
         ps->input = in;
+        if (Ship* s = world_.PlayerShip(*ps)) s->chatting = c.chatting;
     }
 }
 
@@ -1056,6 +1061,18 @@ void GameServer::OnReceive(Client& c, const uint8_t* data, size_t len) {
             else HandleDockAction(c, m);
             break;
         }
+        case net::MsgType::Chat: {
+            net::ChatMsg m;
+            if (!net::Decode(r, m)) BadPacket(c, "Chat");
+            else HandleChat(c, m);
+            break;
+        }
+        case net::MsgType::ChatTyping: {
+            net::ChatTypingMsg m;
+            if (!net::Decode(r, m)) BadPacket(c, "ChatTyping");
+            else HandleChatTyping(c, m);
+            break;
+        }
         case net::MsgType::Leave:
             HandleLeave(c);
             break;
@@ -1293,6 +1310,38 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
     }
 }
 
+// Chat-Nachricht: prüfen, bremsen und als ChatLine an alle angemeldeten
+// Spieler schicken (auch an den Absender, der sie erst dann anzeigt).
+// Zuschauer haben keinen Namen und kein Chatfenster.
+void GameServer::HandleChat(Client& c, const net::ChatMsg& m) {
+    if (c.role != Role::Player) return;
+    c.chatting = false;   // gesendet = Eingabe zu (der Client schickt das auch noch)
+    if (!net::ValidChatText(m.text)) {
+        BadPacket(c, "Chat");
+        return;
+    }
+    const double now = Now();
+    c.chatTokens = std::min(CHAT_BURST, c.chatTokens + (now - c.chatTokensAt) * CHAT_PER_SECOND);
+    c.chatTokensAt = now;
+    if (c.chatTokens < 1.0) {
+        if (PlayerState* ps = world_.FindPlayer(c.playerId))
+            world_.Notify(*ps, "Chat: bitte etwas langsamer schreiben.", Color{255, 200, 120, 255});
+        return;
+    }
+    c.chatTokens -= 1.0;
+    net::ChatLineMsg line;
+    line.playerId = c.playerId;
+    line.name = c.name;
+    line.text = m.text;
+    const std::vector<uint8_t> bytes = net::Encode(line);
+    for (auto& up : clients_)
+        if (up->role == Role::Player && !up->closing) Send(*up, bytes, true);
+}
+
+void GameServer::HandleChatTyping(Client& c, const net::ChatTypingMsg& m) {
+    if (c.role == Role::Player) c.chatting = m.typing;
+}
+
 void GameServer::HandleLeave(Client& c) {
     if (c.role == Role::Player) LogoutPlayer(c, "selbst abgemeldet", true);
     else if (c.role == Role::Spectator) Log(Fmt("Zuschauer #%u (%s) hat sich abgemeldet", c.connId, c.ipText.c_str()));
@@ -1390,6 +1439,7 @@ void GameServer::LogoutPlayer(Client& c, const char* reason, bool saveNow, bool 
         const Ship* s = world_.PlayerShip(*ps);
         if (allowGrace && c.account && s && !crashed && ps->dockedAt < 0) {
             ps->input = ShipInput{};   // keine Steuerung mehr: Schiff treibt aus
+            world_.PlayerShip(*ps)->chatting = false;
             departing_.push_back({c.playerId, c.account, c.name, Now() + LOGOUT_GRACE, ps->deaths});
             lingers = true;
         } else {
@@ -1404,6 +1454,7 @@ void GameServer::LogoutPlayer(Client& c, const char* reason, bool saveNow, bool 
     c.playerId = -1;
     c.account = nullptr;
     c.inputs.clear();
+    c.chatting = false;
 }
 
 // Einmal pro Schritt (und mit finishAll vor Neuaufbau und Beenden): Schiffe
@@ -1632,6 +1683,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         ss.mineX = s.mineTarget.x;
         ss.mineZ = s.mineTarget.z;
         ss.playerId = static_cast<int16_t>(std::clamp(s.playerId, -1, 32767));
+        ss.chatting = s.chatting;
         m.ships.push_back(ss);
     }
 

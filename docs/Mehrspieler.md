@@ -137,7 +137,7 @@ nicht; ENet verwirft verspätete ältere Pakete). Mondschürfer benutzt zwei Kan
 
 | Kanal | Art | Was läuft darüber | Warum so? |
 |---|---|---|---|
-| 0 `CHANNEL_RELIABLE` | zuverlässig | Anmeldung, Welcome, Events, Deposits, Players, Highscores, DockAction, Leave | darf nicht verloren gehen (ein verlorenes „Ziel erreicht“ käme nie an) |
+| 0 `CHANNEL_RELIABLE` | zuverlässig | Anmeldung, Welcome, Events, Deposits, Players, Highscores, DockAction, Chat, Leave | darf nicht verloren gehen (ein verlorenes „Ziel erreicht“ käme nie an) |
 | 1 `CHANNEL_UNRELIABLE` | unzuverlässig | Input, Snapshot | nur der neueste Stand zählt; ein Wiederholen würde nur alte Daten nachliefern und neue aufhalten |
 
 Der ganze Ablauf als Sequenzdiagramm. `--->` heißt zuverlässig, `~~~>` unzuverlässig:
@@ -181,6 +181,8 @@ Der ganze Ablauf als Sequenzdiagramm. `--->` heißt zuverlässig, `~~~>` unzuver
         |<------------------ Deposits (bei Änderung, höchstens 4/s) -------|  selbst entdeckte Lagerstätten
         |<------------------ Players (1/s), Highscores (bei Änderung) -----|
         |------------------- DockAction (nur angedockt) ------------------>|  Abdocken/Reparieren/Kaufen
+        |------------------- ChatTyping(offen/zu), Chat(Text) ------------>|  Text prüfen, Flutbremse
+        |<------------------ ChatLine(Name, Text) an alle Spieler ---------|  Sprechblase: SnapShip-Bit 16
         |                                                                  |
         |------------------- Leave --------------------------------------->|  speichern, entfernen, trennen
 ```
