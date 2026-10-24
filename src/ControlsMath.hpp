@@ -8,7 +8,7 @@
 //   macht daraus die Steuerbefehle des eigenen Schiffs (ShipInput: Schub,
 //   Drehen, Feuer ...). Die eigentlichen Rechnungen dafür stehen hier,
 //   getrennt vom Abfragen der Geräte:
-//     1. Totzone des Sticks                      StickDeadzone
+//     1. Totzone des Sticks                      StickDeadzone, AxisDeadzone
 //     2. Stick-Richtung im Bild -> Weltrichtung  CameraGroundAxes, StickToYaw,
 //                                                ImageAngleDeg
 //     3. Trigger-Werte "kalibrieren"             TriggerReader
@@ -95,6 +95,16 @@ inline Vector2 StickDeadzone(Vector2 raw, float dz = kStickDeadzone) {
     if (len <= dz) return {0.0f, 0.0f};
     const float m = std::min(1.0f, (len - dz) / (1.0f - dz));
     return Vector2Scale(raw, m / len);
+}
+
+// Totzone für EINE Achse (Tank-Steuerung): wie oben, aber nur mit dem
+// Betrag eines Werts -1..1; das Vorzeichen bleibt. Hier ist die eckige
+// Totzone gewollt: Wer den Stick gerade nach vorn drückt, soll nicht durch
+// ein kleines Zittern zur Seite nebenbei drehen.
+inline float AxisDeadzone(float raw, float dz = kStickDeadzone) {
+    const float a = fabsf(raw);
+    if (a <= dz) return 0.0f;
+    return copysignf(std::min(1.0f, (a - dz) / (1.0f - dz)), raw);
 }
 
 // ===========================================================================

@@ -6,20 +6,23 @@
 // (Mehrspieler), Hud.cpp und Options.cpp (Tastennamen).
 //
 // Abhängigkeiten: ControlsMath.hpp (alle Rechnungen), Ui.hpp (Flug-/
-// Menümodus, Controller-Nummer, UI-Flächen, Farbe ACCENT), raylib (Geräte
+// Menümodus, Controller-Nummer, UI-Flächen, Farbe ACCENT), ClientConfig.hpp
+// (g_clientConfig.tankSteering: wie der linke Stick lenkt), raylib (Geräte
 // abfragen, GetScreenToWorldRay, Zeichnen), rlgl (eigene Dreiecke für die
 // Zielmarkierung, wie die Bodenringe in Render.cpp).
 //
 // Ablauf von PilotControls::Read (ein Frame im freien Flug):
 //   1. Tastatur – genau wie früher (damals ReadPlayerInput in main.cpp und
 //      ReadHeldInput in Multiplayer.cpp, jetzt nur noch hier).
-//   2. Controller – Stick-Richtung, Trigger-Tempo, Knöpfe A/B/Y, Zoom.
+//   2. Controller – Stick-Richtung (oder Tank-Steuerung), Trigger-Tempo,
+//      Knöpfe A/B/Y, Zoom.
 //   3. Maus – Ziel setzen (Klick), dem Zeiger folgen (halten), löschen.
 //      Hat in 1. oder 2. jemand gelenkt, wird das Mausziel gelöscht.
 //   4. Gibt es ein Mausziel, lenken Schub und Drehen dorthin (FlightTarget).
 // Alles läuft im Spiel-Thread.
 // ---------------------------------------------------------------------------
 #include "Controls.hpp"
+#include "ClientConfig.hpp"
 #include "Ui.hpp"
 #include "raylib.h"
 #include "rlgl.h"
@@ -139,14 +142,15 @@ FlightInput PilotControls::Read(const Ship& ship, const Camera3D& cam, float dt)
         lt_ = TriggerReader{};
         triggerPad_ = pad;
     }
-    Vector2 stick{0.0f, 0.0f};
+    Vector2 rawStick{0.0f, 0.0f}, stick{0.0f, 0.0f};   // linker Stick ohne / mit Totzone
     float rt = 0.0f, lt = 0.0f, zoomStick = 0.0f;
     bool aDown = false, bPressed = false, yPressed = false;
     if (testPad_) {
-        stick = StickFromImageAngle(testAngle_);
+        rawStick = stick = StickFromImageAngle(testAngle_);
         rt = testTrigger_;
     } else if (pad >= 0) {
-        stick = StickDeadzone({GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_X), GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_Y)});
+        rawStick = {GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_X), GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_Y)};
+        stick = StickDeadzone(rawStick);
         rt = rt_.Value(GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_TRIGGER));
         lt = lt_.Value(GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_TRIGGER));
         zoomStick = StickDeadzone({0.0f, GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_Y)}).y;
@@ -156,10 +160,33 @@ FlightInput PilotControls::Read(const Ship& ship, const Camera3D& cam, float dt)
         yPressed = IsGamepadButtonPressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_UP);
     }
     bool padSteer = false;
-    // Linker Stick = Flugrichtung im Bild. Das Schiff dreht sich auf die
-    // Sollrichtung wie der Autopilot (Winkelfehler * 2,8). Stick in Ruhe:
-    // kein Drehbefehl, die Richtung bleibt.
-    if (stick.x != 0.0f || stick.y != 0.0f) {
+    if (g_clientConfig.tankSteering) {
+        // Tank-Steuerung (Optionen): Stick vor/zurück = vorwärts/rückwärts
+        // in Richtung der Schiffsnase, links/rechts = drehen wie A/D, alles
+        // stufenlos und unabhängig von der Kamera. Jede Achse mit eigener
+        // Totzone (AxisDeadzone). Stick nach vorn liefert y = -1, nach
+        // rechts x = +1; turn +1 = links.
+        // Nach vorn wirkt der Stick wie der rechte Trigger (halb geneigt =
+        // halbes Höchsttempo), nach hinten wie der linke (Rückwärtsschub).
+        const float push = -AxisDeadzone(rawStick.y);
+        const float side = AxisDeadzone(rawStick.x);
+        if (push > 0.0f) {
+            const Vector3 fwd = ForwardFromYaw(ship.yaw);
+            const float vFwd = ship.vel.x * fwd.x + ship.vel.z * fwd.z;
+            in.thrust = push >= 0.98f ? 1.0f : ThrustForSpeed(push * ship.maxSpeed, vFwd, ship.maxSpeed);
+            padSteer = true;
+        } else if (push < 0.0f) {
+            in.thrust = push;
+            padSteer = true;
+        }
+        if (side != 0.0f) {
+            in.turn = -side;
+            padSteer = true;
+        }
+    } else if (stick.x != 0.0f || stick.y != 0.0f) {
+        // Linker Stick = Flugrichtung im Bild. Das Schiff dreht sich auf die
+        // Sollrichtung wie der Autopilot (Winkelfehler * 2,8). Stick in Ruhe:
+        // kein Drehbefehl, die Richtung bleibt.
         const float desired = StickToYaw(stick, CameraGroundAxes(cam.position, cam.target));
         in.turn = Clamp(AngleDiff(ship.yaw, desired) * kSteerGain, -1.0f, 1.0f);
         padSteer = true;
@@ -167,6 +194,8 @@ FlightInput PilotControls::Read(const Ship& ship, const Camera3D& cam, float dt)
     // Linker Trigger bremst (Rückwärtsschub wie Taste S, stufenlos) und hat
     // Vorrang. Rechter Trigger = Wunschtempo: ganz gedrückt = Vollschub wie
     // Taste W, sonst hält ThrustForSpeed das Tempo "Trigger * Höchsttempo".
+    // Die Trigger gelten auch bei der Tank-Steuerung und gehen dort dem
+    // Schub des Sticks vor.
     if (lt > 0.0f) {
         in.thrust = -lt;
         padSteer = true;
@@ -308,13 +337,15 @@ size_t MaxHelpRows() {
 }
 
 std::vector<HelpRow> HelpRows(Device d) {
+    // Linker Stick je nach Einstellung in den Optionen (Tank-Steuerung)
+    const char* stick = g_clientConfig.tankSteering ? "Schub / Drehen" : "Flugrichtung";
     switch (d) {
         case Device::Xbox:
-            return {{"Linker Stick", "Flugrichtung"}, {"RT / LT", "Tempo / Bremsen"}, {"A", "Schießen"},
+            return {{"Linker Stick", stick},          {"RT / LT", "Tempo / Bremsen"}, {"A", "Schießen"},
                     {"B", "Scanner an/aus"},         {"Y", "Abbauen / Andocken"},  {"Rechter Stick", "Zoom"},
                     {"Menü-Taste", "Pause"}};
         case Device::PlayStation:
-            return {{"Linker Stick", "Flugrichtung"}, {"R2 / L2", "Tempo / Bremsen"}, {"Kreuz", "Schießen"},
+            return {{"Linker Stick", stick},          {"R2 / L2", "Tempo / Bremsen"}, {"Kreuz", "Schießen"},
                     {"Kreis", "Scanner an/aus"},      {"Dreieck", "Abbauen / Andocken"}, {"Rechter Stick", "Zoom"},
                     {"Options", "Pause"}};
         case Device::KeyboardMouse:

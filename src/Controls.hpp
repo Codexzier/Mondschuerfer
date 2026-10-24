@@ -16,7 +16,8 @@
 //       Maustaste löscht das Ziel. Schießen, Scanner, Andocken bleiben auf
 //       der Tastatur.
 //     - Controller: linker Stick = Flugrichtung (so, wie der Stick IM BILD
-//       zeigt), rechter Trigger = Tempo, linker Trigger = bremsen,
+//       zeigt) – oder mit der Tank-Steuerung aus den Optionen: vor/zurück
+//       = Schub, links/rechts = drehen –, rechter Trigger = Tempo, linker Trigger = bremsen,
 //       A schießen, B Scanner, Y Andocken/Abbauen, Menü-Taste Pause,
 //       rechter Stick hoch/runter = Zoom. PlayStation an denselben Stellen:
 //       Kreuz, Kreis, Dreieck, R2/L2, Options.
@@ -36,7 +37,8 @@
 // Abhängigkeiten:
 //   shared/World.hpp (Ship, ShipInput, cfg-Werte), src/ControlsMath.hpp (die
 //   Rechnungen: Totzonen, Stick -> Richtung, Trigger, Anflug), src/Ui.hpp
-//   (Flug-/Menümodus, Controller, UI-Flächen), raylib (Tastatur, Maus,
+//   (Flug-/Menümodus, Controller, UI-Flächen), src/ClientConfig.hpp
+//   (Einstellung Tank-Steuerung), raylib (Tastatur, Maus,
 //   Controller, Kamerastrahl, Zeichnen der Zielmarkierung).
 //
 // Ablauf pro Frame (nur im freien Flug, nicht angedockt, nicht in der Pause):
