@@ -13,9 +13,11 @@
 //     - Dauergeräusche (enum Loop): Triebwerk, Schub, Scanner, Abbau-Laser.
 //       Sie laufen als Endlosschleife und werden jedes Frame über LoopState
 //       lauter oder leiser gestellt (0 = aus).
-//     - Musik (MusicTrack, siehe MusicMix.hpp): ein Stück für die Menüs, eins
-//       für das Spiel. SetMusicTrack() sagt, welches gerade laufen soll;
-//       Update() blendet weich zwischen ihnen über. In den Optionen lässt sich
+//     - Musik (MusicTrack, siehe MusicMix.hpp): ein Stück für die Menüs, drei
+//       für das Spiel (nacheinander im Kreis), eins für die Piraten-Mission
+//       und eins für das erreichte Ziel. SetMusicTrack() sagt, welche Musik
+//       gerade laufen soll, PlayGoalMusic() stößt die Zielmusik an; Update()
+//       blendet weich zwischen den Stücken über. In den Optionen lässt sich
 //       die Musik ausschalten und ihre Lautstärke einstellen.
 //
 // Wer benutzt sie?
@@ -115,12 +117,18 @@ public:
     bool Muted() const { return muted_; }
 
     // --- Musik ---------------------------------------------------------------
-    // Welches Stück soll laufen? Jedes Frame vor Update() aufrufen (main.cpp
+    // Welche Musik soll laufen? Jedes Frame vor Update() aufrufen (main.cpp
     // App::UpdateAudio, Multiplayer.cpp MultiplayerScreen::UpdateAudio); ein
     // Wechsel blendet in Update() weich über (Dauer siehe MusicMix.hpp).
-    void SetMusicTrack(MusicTrack t) { mix_.wanted = t; }
+    void SetMusicTrack(MusicTrack t) { track_ = t; }
+    // Ziel erreicht (100.000): "Deep Space Horizon" einmal von vorn bis zum
+    // Ende spielen, anstelle der Spiel- bzw. Piratenmusik; danach geht es mit
+    // dieser weiter. Wechselt die Musik vorher auf Menu/None (zurück ins
+    // Menü), entfällt der Rest.
+    void PlayGoalMusic() { goalMusic_ = true; }
     // Optionen: Musik an/aus. Aus = ausblenden und anhalten; wieder an =
-    // weiter an derselben Stelle des Stücks.
+    // weiter an derselben Stelle des Stücks (Situationsmusik von vorn, siehe
+    // kSongs in Audio.cpp).
     void SetMusicEnabled(bool on) { mix_.enabled = on; }
     bool MusicEnabled() const { return mix_.enabled; }
     // Optionen: Lautstärke 0..1 (wird begrenzt). Wirkt sofort.
@@ -170,16 +178,22 @@ private:
     void Trigger(Sfx id, float volume, float pan);
     // Führt ein Dauergeräusch auf die Ziel-Lautstärke level (0..1) nach.
     void UpdateLoop(int loop, float level, float pitch, float dt);
-    // Musik: Blenden weiterrechnen, Stücke starten/pausieren und nachfüllen.
+    // Musik: Stück wählen, Blenden weiterrechnen, Stücke starten/pausieren
+    // und nachfüllen, am Ende eines Stücks das nächste der Spielmusik wählen.
     void UpdateMusic(float dt);
+    // Index (in kSongs) des Stücks, das jetzt laufen soll, -1 = Stille.
+    int WantedSong();
 
     Effect effects_[static_cast<int>(Sfx::Count)];
     Track loops_[LOOP_COUNT];
-    // Musikstücke (Index = MusicTrack::Menu / Game). Dieselbe Track-Struktur
-    // wie bei den Dauergeräuschen; volume ist hier die zuletzt eingestellte
-    // Lautstärke aus MusicMix::Gain.
+    // Musikstücke (Index = Zeile in kSongs, Audio.cpp). Dieselbe
+    // Track-Struktur wie bei den Dauergeräuschen; volume ist hier die zuletzt
+    // eingestellte Lautstärke aus MusicMix::Gain.
     Track songs_[MusicMix::kTracks];
     MusicMix mix_;                   // Überblend-Rechnung, Musik an/aus, Lautstärke
+    MusicTrack track_ = MusicTrack::None;   // gewünschte Musik (SetMusicTrack)
+    int playlist_ = 0;               // aktuelles Stück der Spielmusik (0..2 = Lunar Silence 01..03)
+    bool goalMusic_ = false;         // Zielmusik angestoßen und noch nicht zu Ende
     std::vector<Pending> pending_;   // wartende verzögerte Effekte
     double clock_ = 0.0;             // eigene Uhr (Summe aller dt aus Update), für den Mindestabstand
     float alarmT_ = 0.0f;            // Sekunden bis zum nächsten Warnton

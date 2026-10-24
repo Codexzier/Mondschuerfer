@@ -327,16 +327,18 @@ Pakete nichts wirklich Passendes enthalten. Ohne Audiogerät läuft das Spiel st
 
 ## Musik und Optionen
 
-Zwei Musikstücke von **dekker187** (erstellt mit Suno) liegen in `assets/music/`:
+Die Musikstücke von **dekker187** (erstellt mit Suno) liegen in `assets/music/`:
 
 | Stück | Datei | Läuft … |
 |---|---|---|
-| *Main Menu Theme* | `main_menu_theme.mp3` | im Hauptmenü, in den Optionen aus dem Hauptmenü und in den Mehrspieler-Menüs (Serveradresse, Lobby, Anmeldung) |
-| *Lunar Silence 01* | `lunar_silence_01.mp3` | im Spiel: Einzelspiel samt Pause und Endbildschirmen, Simulation, Mehrspieler-Spiel und Zuschauen |
+| *Main Menu Theme* | `main_menu_theme.mp3` | im Hauptmenü, in den Optionen aus dem Hauptmenü und in den Mehrspieler-Menüs (Serveradresse, Lobby, Anmeldung); Endlosschleife |
+| *Lunar Silence 01–03* | `lunar_silence_01.mp3` … `_03.mp3` | im Spiel: Einzelspiel samt Pause und Endbildschirmen, Simulation, Mehrspieler-Spiel und Zuschauen; nacheinander, nach dem dritten wieder das erste |
+| *Entering Pirate Territory* | `enteringPirateTerritory.mp3` | im Spiel, solange die eigene Mini-Mission „Piraten abschießen“ läuft (Endlosschleife, beginnt jedes Mal von vorn) |
+| *Deep Space Horizon* | `deepSpaceHorizon.mp3` | einmal, sobald man das Ziel (100.000) erreicht; danach wieder die Spielmusik |
 
-Beim Wechsel zwischen Menü und Spiel blendet die Musik weich über (das alte Stück wird in 1 s
-leiser, das neue in 1,5 s lauter). Ein Stück, das gerade nicht läuft, wird angehalten und setzt
-später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
+Beim Wechsel zwischen den Stücken blendet die Musik weich über (das alte Stück wird in 1 s
+leiser, das neue in 1,5 s lauter). Menü- und Spielmusik, die gerade nicht laufen, werden angehalten
+und setzen später an derselben Stelle fort.
 
 **Optionen** (Hauptmenü → *Optionen*, oder in der Pause → *Optionen*) mit drei Karteireitern:
 
@@ -442,7 +444,7 @@ Mondschuerfer/
 │   ├── models/*.glb      Alle 153 Modelle des Kenney Space Kit (unverändert)
 │   ├── sounds/scifi/     Kenney Sci-Fi Sounds (73 Dateien, unverändert)
 │   ├── sounds/interface/ Kenney Interface Sounds (100 Dateien, unverändert)
-│   ├── music/            Musik von dekker187: main_menu_theme.mp3, lunar_silence_01.mp3
+│   ├── music/            Musik von dekker187: main_menu_theme.mp3, lunar_silence_01–03.mp3 u. a.
 │   └── Kenney_*_License.txt
 ├── shared/               Gemeinsamer Code für Spiel UND Server (ohne raylib-Funktionen)
 │   ├── Config.hpp        Balancing (auch die Mehrspieler-Werte MP_*)

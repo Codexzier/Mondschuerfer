@@ -43,10 +43,11 @@
 //      Tonhöhe leicht zufällig verändern, PlaySound.
 // Dauergeräusche: Update -> UpdateLoop je Schleife (weich überblenden,
 // starten/pausieren, Stream nachfüllen).
-// Musik: main.cpp/Multiplayer.cpp wählen mit SetMusicTrack das Stück ->
-// Update -> UpdateMusic: MusicMix rechnet die Blenden weiter, danach wird
-// jedes Stück gestartet/fortgesetzt, in der Lautstärke gesetzt, nachgefüllt
-// oder (bei Lautstärke 0) pausiert – wie die Dauergeräusche.
+// Musik: main.cpp/Multiplayer.cpp wählen mit SetMusicTrack die Musik (und
+// stoßen mit PlayGoalMusic die Zielmusik an) -> Update -> UpdateMusic:
+// WantedSong wählt das Stück, MusicMix rechnet die Blenden weiter, danach
+// wird jedes Stück gestartet/fortgesetzt, in der Lautstärke gesetzt,
+// nachgefüllt oder (bei Lautstärke 0) pausiert – wie die Dauergeräusche.
 // ---------------------------------------------------------------------------
 #include "Audio.hpp"
 #include "raymath.h"
@@ -169,18 +170,37 @@ const LoopDef kLoops[Audio::LOOP_COUNT] = {
 };
 
 // ===========================================================================
-// Tabelle: Musikstücke (Index = MusicTrack::Menu bzw. MusicTrack::Game)
+// Tabelle: Musikstücke (Index = enum Song)
 // ===========================================================================
-// Beide Stücke stammen von dekker187 (erstellt mit Suno) und wurden vom
-// Projektinhaber für das Spiel bereitgestellt. Sie sind je gut 3 Minuten lang
-// (MP3, 48 kHz, Stereo) und laufen als Endlosschleife.
+// Alle Stücke stammen von dekker187 (erstellt mit Suno) und wurden vom
+// Projektinhaber für das Spiel bereitgestellt (MP3, je einige Minuten).
 // Warum Music (Streaming) und nicht Sound? Ein ganzes Stück entpackt wären
 // über 70 MB Sampledaten pro Datei (197 s * 48000 Abtastwerte/s * 2 Kanäle *
 // 4 Byte); als Stream liegen immer nur wenige Kilobyte im Speicher.
-const char* const kSongs[MusicMix::kTracks] = {
-    "music/main_menu_theme.mp3",   // Menu: "Main Menu Theme"
-    "music/lunar_silence_01.mp3",  // Game: "Lunar Silence 01"
+//   loop     Endlosschleife. Sonst läuft das Stück einmal bis zum Ende, dann
+//            geht es mit dem nächsten weiter (siehe Audio::UpdateMusic).
+//   restart  Beim nächsten Mal von vorn statt an derselben Stelle weiter
+//            (Situationsmusik: jede Piraten-Mission beginnt mit dem Anfang
+//            des Stücks).
+// Die Spielmusik (SONG_GAME_1..3) läuft der Reihe nach im Kreis.
+enum Song { SONG_MENU, SONG_GAME_1, SONG_GAME_2, SONG_GAME_3, SONG_PIRATES, SONG_GOAL, SONG_COUNT };
+constexpr int kPlaylist = SONG_GAME_3 - SONG_GAME_1 + 1;   // Stücke der Spielmusik
+
+struct SongDef {
+    const char* file;
+    bool loop;
+    bool restart;
 };
+const SongDef kSongs[] = {
+    {"music/main_menu_theme.mp3", true, false},           // Menu: "Main Menu Theme"
+    {"music/lunar_silence_01.mp3", false, false},         // Game: "Lunar Silence 01"
+    {"music/lunar_silence_02.mp3", false, false},         // Game: "Lunar Silence 02"
+    {"music/lunar_silence_03.mp3", false, false},         // Game: "Lunar Silence 03"
+    {"music/enteringPirateTerritory.mp3", true, true},    // Pirates: "Entering Pirate Territory"
+    {"music/deepSpaceHorizon.mp3", false, true},          // Ziel erreicht: "Deep Space Horizon"
+};
+static_assert(sizeof(kSongs) / sizeof(kSongs[0]) == SONG_COUNT, "kSongs passt nicht zu enum Song");
+static_assert(SONG_COUNT == MusicMix::kTracks, "MusicMix::kTracks passt nicht zu kSongs");
 
 } // namespace
 
@@ -236,15 +256,16 @@ bool Audio::Init(const std::string& assetDir) {
         else TraceLog(LOG_WARNING, "Sound konnte nicht geladen werden: %s", path.c_str());
     }
 
-    // Musik: wie die Dauergeräusche als Stream mit Endlosschleife. Fehlt eine
-    // Datei, bleibt nur dieses Stück stumm (UpdateMusic prüft valid).
+    // Musik: wie die Dauergeräusche als Stream, mit Endlosschleife nur laut
+    // kSongs. Fehlt eine Datei, bleibt nur dieses Stück stumm (UpdateMusic
+    // prüft valid).
     // LoadMusicStream liest bei MP3 die Datei einmal kurz durch, um ihre Länge
     // zu bestimmen – das dauert einen Augenblick, passiert aber nur beim Start.
     for (int i = 0; i < MusicMix::kTracks; ++i) {
-        const std::string path = assetDir + kSongs[i];
+        const std::string path = assetDir + kSongs[i].file;
         songs_[i].music = LoadMusicStream(path.c_str());
         songs_[i].valid = IsMusicValid(songs_[i].music);
-        if (songs_[i].valid) songs_[i].music.looping = true;
+        if (songs_[i].valid) songs_[i].music.looping = kSongs[i].loop;
         else TraceLog(LOG_WARNING, "Musik konnte nicht geladen werden: %s", path.c_str());
     }
     ready_ = true;
@@ -441,10 +462,30 @@ void Audio::UpdateLoop(int loop, float level, float pitch, float dt) {
 // ===========================================================================
 // Musik
 // ===========================================================================
+// Welches Stück soll laufen? Vorrang von oben nach unten:
+//   - Menu: Menümusik, None: Stille (beide beenden eine laufende Zielmusik,
+//     ebenso "Musik aus" in den Optionen)
+//   - Zielmusik, solange angestoßen (PlayGoalMusic) und nicht zu Ende
+//   - Pirates: Piratenmusik
+//   - sonst das aktuelle Stück der Spielmusik
+// Fehlt die Datei der Ziel- bzw. Piratenmusik, gilt die nächste Stufe;
+// fehlende Stücke der Spielmusik werden übersprungen.
+int Audio::WantedSong() {
+    if (track_ == MusicTrack::None || track_ == MusicTrack::Menu || !mix_.enabled) goalMusic_ = false;
+    if (track_ == MusicTrack::None) return -1;
+    if (track_ == MusicTrack::Menu) return SONG_MENU;
+    if (goalMusic_ && songs_[SONG_GOAL].valid) return SONG_GOAL;
+    goalMusic_ = false;
+    if (track_ == MusicTrack::Pirates && songs_[SONG_PIRATES].valid) return SONG_PIRATES;
+    for (int n = 0; n < kPlaylist && !songs_[SONG_GAME_1 + playlist_].valid; ++n) playlist_ = (playlist_ + 1) % kPlaylist;
+    return SONG_GAME_1 + playlist_;
+}
+
 // Ablauf pro Frame:
-//   1. mix_.Step(dt): Blenden weiterrechnen (gewünschtes Stück lauter, alle
-//      anderen leiser; Musik aus = alle leiser). Die Rechnung steht in
-//      MusicMix.hpp, damit sie ohne Audiogerät testbar ist.
+//   1. WantedSong() wählt das Stück, mix_.Step(dt) rechnet die Blenden
+//      weiter (gewünschtes Stück lauter, alle anderen leiser; Musik aus =
+//      alle leiser). Die Rechnung steht in MusicMix.hpp, damit sie ohne
+//      Audiogerät testbar ist.
 //   2. Für jedes Stück die fertige Lautstärke (Gain = Blende * Regler *
 //      Grundpegel) übernehmen:
 //        > 0: beim ersten Mal starten (PlayMusicStream, beginnt am Anfang),
@@ -453,11 +494,19 @@ void Audio::UpdateLoop(int loop, float level, float pitch, float dt) {
 //             nötig, siehe Dateikopf).
 //        = 0: pausieren. Ein stummes Stück kostet so keine Rechenzeit, und
 //             wer aus dem Spiel kurz ins Menü und zurück geht, hört das
-//             Spielstück dort weiter, wo es aufgehört hat.
+//             Spielstück dort weiter, wo es aufgehört hat. Situationsmusik
+//             (restart in kSongs) wird stattdessen angehalten und
+//             zurückgespult, damit sie beim nächsten Mal von vorn beginnt.
+//   3. Stück ohne Endlosschleife zu Ende: raylib hat es selbst angehalten
+//      und zurückgespult (IsMusicStreamPlaying ist dann false). Nach einem
+//      Stück der Spielmusik folgt ohne Einblenden das nächste (nach dem
+//      letzten wieder das erste), nach der Zielmusik blendet die Spiel- bzw.
+//      Piratenmusik wieder ein.
 // Die Lautstärke wird VOR dem Starten/Fortsetzen gesetzt: Sonst könnte der
 // Mischer im Audio-Thread den ersten Pufferrest noch mit der alten
 // Lautstärke abspielen (ein kurzes, lautes Knacken).
 void Audio::UpdateMusic(float dt) {
+    mix_.wanted = WantedSong();
     mix_.Step(dt);
     for (int i = 0; i < MusicMix::kTracks; ++i) {
         Track& t = songs_[i];
@@ -474,8 +523,26 @@ void Audio::UpdateMusic(float dt) {
                 t.playing = true;
             }
             UpdateMusicStream(t.music);
+            if (!kSongs[i].loop && !IsMusicStreamPlaying(t.music)) {
+                const float level = mix_.fade[i];
+                mix_.fade[i] = 0.0f;
+                t.started = false;
+                t.playing = false;
+                t.volume = 0.0f;
+                if (i == SONG_GOAL) {
+                    goalMusic_ = false;
+                } else if (i == SONG_GAME_1 + playlist_) {
+                    playlist_ = (playlist_ + 1) % kPlaylist;
+                    if (mix_.wanted == i) mix_.fade[SONG_GAME_1 + playlist_] = level;
+                }
+            }
         } else if (t.playing) {
-            PauseMusicStream(t.music);
+            if (kSongs[i].restart) {
+                StopMusicStream(t.music);
+                t.started = false;
+            } else {
+                PauseMusicStream(t.music);
+            }
             t.playing = false;
         }
     }
@@ -483,20 +550,33 @@ void Audio::UpdateMusic(float dt) {
 
 // Nur für die Testoption --music-test (main.cpp): eine Zeile, an der man
 // ablesen kann, ob die Musik wirklich läuft und wie sie überblendet.
-//   want   gewünschtes Stück (-1 keins, 0 Menü, 1 Spiel)
+//   track  gewünschte Musik (MusicTrack: -1 keine, 0 Menü, 1 Spiel, 2 Piraten)
+//   goal   Zielmusik angestoßen, list = aktuelles Stück der Spielmusik (0..2)
+//   want   gewünschtes Stück (Index in kSongs: 0 Menü, 1-3 Spiel,
+//          4 Piraten, 5 Ziel; -1 keins)
 //   on/vol Optionen (Musik an, Regler)
-//   fade   Blende Menü/Spiel, gain = fertige Lautstärke Menü/Spiel
-//   play   läuft der Stream laut raylib (1) oder ist er pausiert (0)
-//   pos    Position im Stück in Sekunden (wächst nur, solange es läuft)
+//   fade, gain, play, pos: je Stück in der Reihenfolge von kSongs, durch "/"
+//          getrennt: Blende, fertige Lautstärke, läuft der Stream laut raylib
+//          (1) oder ist er pausiert (0), Position im Stück in Sekunden
 //   ready  Audiogerät offen
 std::string Audio::MusicReport() const {
-    auto playing = [&](int i) { return songs_[i].valid && IsMusicStreamPlaying(songs_[i].music) ? 1 : 0; };
-    auto pos = [&](int i) { return songs_[i].valid ? GetMusicTimePlayed(songs_[i].music) : -1.0f; };
+    std::string fade, gain, play, pos;
     char buf[256];
-    snprintf(buf, sizeof(buf), "want=%d on=%d vol=%.2f fade=%.2f/%.2f gain=%.3f/%.3f play=%d/%d pos=%.1f/%.1f ready=%d",
-             static_cast<int>(mix_.wanted), mix_.enabled ? 1 : 0, mix_.volume, mix_.fade[0], mix_.fade[1], mix_.Gain(0),
-             mix_.Gain(1), playing(0), playing(1), pos(0), pos(1), ready_ ? 1 : 0);
-    return buf;
+    for (int i = 0; i < MusicMix::kTracks; ++i) {
+        const char* sep = i > 0 ? "/" : "";
+        const bool playing = songs_[i].valid && IsMusicStreamPlaying(songs_[i].music);
+        snprintf(buf, sizeof(buf), "%s%.2f", sep, mix_.fade[i]);
+        fade += buf;
+        snprintf(buf, sizeof(buf), "%s%.3f", sep, mix_.Gain(i));
+        gain += buf;
+        snprintf(buf, sizeof(buf), "%s%d", sep, playing ? 1 : 0);
+        play += buf;
+        snprintf(buf, sizeof(buf), "%s%.1f", sep, songs_[i].valid ? GetMusicTimePlayed(songs_[i].music) : -1.0f);
+        pos += buf;
+    }
+    snprintf(buf, sizeof(buf), "track=%d goal=%d list=%d want=%d on=%d vol=%.2f ", static_cast<int>(track_),
+             goalMusic_ ? 1 : 0, playlist_, mix_.wanted, mix_.enabled ? 1 : 0, mix_.volume);
+    return buf + ("fade=" + fade + " gain=" + gain + " play=" + play + " pos=" + pos) + (ready_ ? " ready=1" : " ready=0");
 }
 
 // Stummschalten über die Gesamtlautstärke: Effekte, Dauergeräusche und Musik

@@ -477,6 +477,7 @@ void MultiplayerScreen::HandleNetwork() {
             goalRound_ = g.round;
             burstT_ = 0.0f;
             g_audio.Play(Sfx::UiConfirm);   // die Sieges-Fanfare (Victory) schickt der Server als Ton-Ereignis
+            g_audio.PlayGoalMusic();
         } else if (net_.WorldReady()) {
             World& w = net_.GetWorld();
             for (const auto& p : net_.Players()) {
@@ -890,10 +891,18 @@ void MultiplayerScreen::UpdateAudio(float dt) {
         }
     }
     // Musik: Spielmusik beim Spielen (auch in Pause und Optionen) und beim
-    // Zuschauen, sonst (Adresse, Lobby, Anmeldung) die Menümusik. Beim
-    // Wechsel blendet g_audio.Update weich über.
-    const bool inGame = phase_ == Phase::Playing || phase_ == Phase::Spectating;
-    g_audio.SetMusicTrack(inGame ? MusicTrack::Game : MusicTrack::Menu);
+    // Zuschauen, solange die eigene Piraten-Mission läuft die Piratenmusik,
+    // sonst (Adresse, Lobby, Anmeldung) die Menümusik. Beim Wechsel blendet
+    // g_audio.Update weich über.
+    MusicTrack track = MusicTrack::Menu;
+    if (phase_ == Phase::Playing && net_.WorldReady()) {
+        const World& w = net_.GetWorld();
+        const Mission* m = w.FindMission(w.Me().mission);
+        track = m && m->type == MissionType::Pirates ? MusicTrack::Pirates : MusicTrack::Game;
+    } else if (phase_ == Phase::Playing || phase_ == Phase::Spectating) {
+        track = MusicTrack::Game;
+    }
+    g_audio.SetMusicTrack(track);
     g_audio.Update(dt, loops);
     g_clip.Update(dt, cue, showClip);
 }
