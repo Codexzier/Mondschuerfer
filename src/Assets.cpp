@@ -5,8 +5,9 @@
 // Inhalt dieser Datei:
 //   - LoadFilePatched: repariert die GLB-Dateien des Kits beim Einlesen.
 //   - MoonTone: färbt das orange Gestein des Kits grau oder blau.
-//   - kVertexShader / kFragmentShader: einfache Beleuchtung
-//     (Sonne + Himmel + Randlicht + Leuchten).
+//   - kVertexShader / kFragmentHead / kFragmentMain: einfache Beleuchtung
+//     (Sonne + Himmel + Randlicht + Leuchten), dazu Schatten, Blitze und
+//     Sandsturm (Grafikeffekte, Effects.hpp).
 //   - TRS: Welt-Matrizen bauen.
 //   - Assets: Init/Shutdown, Modelle bei Bedarf laden (Ensure), zeichnen.
 //
@@ -21,6 +22,7 @@
 // nach InitWindow().
 // ---------------------------------------------------------------------------
 #include "Assets.hpp"
+#include "Effects.hpp"
 #include "Models.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -158,6 +160,22 @@ Color MoonTone(Color original, MoonColor moon) {
 //   + emissive: eigenes Leuchten, unabhängig vom Licht (Kristalle, Treffer).
 //   Alpha = Alpha von Materialfarbe/tint · Vertexfarbe.
 //
+// Grafikeffekte (Optionen → Grafik, Effects.hpp):
+//   - Schatten: Shadow() rechnet den Bildpunkt mit lightVP in die
+//     Schattenkarte um (x/y = Stelle in der Karte, z = Abstand zur Sonne)
+//     und vergleicht mit der dort gespeicherten Tiefe. Liegt dort etwas
+//     Näheres, fehlt das Sonnenlicht (diff) zum Teil. Gemittelt über 3 x 3
+//     Nachbarpunkte (weiche Kante, "PCF"). Gegen "Schattenakne" (Flächen,
+//     die sich durch Rundungsfehler selbst beschatten) wird der Punkt etwas
+//     entlang der Normale verschoben und eine kleine Toleranz (bias)
+//     abgezogen. Am Rand der Karte läuft der Schatten weich aus.
+//   - Blitze: bis zu 4 Punktlichter von Explosionen (flashPos.w =
+//     Reichweite, 0 = aus). Das Licht nimmt zur Reichweite hin quadratisch ab.
+//   - Sandsturm: zuletzt wird die Farbe mit FogAmount (Effects.hpp) zur
+//     Staubfarbe hin gemischt.
+//   Die Schattenkarte wird nur mit textureLod gelesen (siehe TiltShift.cpp:
+//   in Verzweigungen sind die Ableitungen für texture() nicht festgelegt).
+//
 // Die Erklärungen stehen hier außerhalb: Alles zwischen R"( und )" ist Teil
 // des Shader-Textes (C++-Rohstring) und wird so an die Grafikkarte übergeben.
 // ---------------------------------------------------------------------------
@@ -181,7 +199,9 @@ void main() {
 }
 )";
 
-const char* kFragmentShader = R"(
+// Der Fragment-Shader besteht aus drei Teilen: Kopf, Nebelrechnung
+// (fx::kFogGlsl) und Hauptteil; Init() fügt sie zusammen.
+const char* kFragmentHead = R"(
 #version 330
 in vec3 fragPosition;
 in vec3 fragNormal;
@@ -190,18 +210,53 @@ uniform vec4 colDiffuse;
 uniform vec3 lightDir;
 uniform vec3 viewPos;
 uniform vec3 emissive;
+uniform sampler2D shadowMap;
+uniform mat4 lightVP;
+uniform vec2 shadowParams;   // x = Stärke 0..1 (0 = aus), y = Größe eines Bildpunkts der Karte
+uniform vec4 flashPos[4];
+uniform vec3 flashColor[4];
+uniform vec3 fogColor;
 out vec4 finalColor;
+)";
+
+const char* kFragmentMain = R"(
+float Shadow(vec3 n, vec3 l) {
+    if (shadowParams.x <= 0.0) return 0.0;
+    vec4 lp = lightVP * vec4(fragPosition + n * 0.06, 1.0);
+    vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
+    if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) return 0.0;
+    float bias = 0.0004 + 0.0012 * (1.0 - max(dot(n, l), 0.0));
+    float sum = 0.0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            float d = textureLod(shadowMap, p.xy + vec2(float(x), float(y)) * shadowParams.y, 0.0).r;
+            sum += p.z - bias > d ? 1.0 : 0.0;
+        }
+    }
+    vec2 e = min(p.xy, 1.0 - p.xy);
+    float edge = clamp(min(e.x, e.y) * 20.0, 0.0, 1.0);
+    return sum / 9.0 * shadowParams.x * edge;
+}
 void main() {
     vec3 n = normalize(fragNormal);
     vec3 l = normalize(-lightDir);
-    float diff = max(dot(n, l), 0.0);
+    float diff = max(dot(n, l), 0.0) * (1.0 - Shadow(n, l));
     float sky = 0.5 + 0.5 * n.y;
     vec3 base = colDiffuse.rgb * fragColor.rgb;
     vec3 col = base * (0.36 + 0.16 * sky + 0.62 * diff);
     vec3 v = normalize(viewPos - fragPosition);
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
     col += vec3(0.10, 0.12, 0.16) * rim;
+    for (int i = 0; i < 4; ++i) {
+        if (flashPos[i].w <= 0.0) continue;
+        vec3 dl = flashPos[i].xyz - fragPosition;
+        float dist = length(dl);
+        float att = clamp(1.0 - dist / flashPos[i].w, 0.0, 1.0);
+        float lam = 0.35 + 0.65 * max(dot(n, dl / max(dist, 0.001)), 0.0);
+        col += base * flashColor[i] * att * att * lam;
+    }
     col += emissive;
+    col = mix(col, fogColor, FogAmount(fragPosition));
     finalColor = vec4(col, colDiffuse.a * fragColor.a);
 }
 )";
@@ -252,17 +307,30 @@ bool Assets::Init() {
     // Shader übersetzen (passiert im Grafiktreiber). Schlägt das fehl (z. B.
     // kein OpenGL 3.3), nimmt raylib seinen Standard-Shader ohne Licht; die
     // Locations sind dann -1 und das Spiel läuft trotzdem, nur flacher.
-    lit_ = LoadShaderFromMemory(kVertexShader, kFragmentShader);
+    const std::string fragment = std::string(kFragmentHead) + fx::kFogGlsl + kFragmentMain;
+    lit_ = LoadShaderFromMemory(kVertexShader, fragment.c_str());
     locLightDir_ = GetShaderLocation(lit_, "lightDir");
     locViewPos_ = GetShaderLocation(lit_, "viewPos");
     locEmissive_ = GetShaderLocation(lit_, "emissive");
+    locShadowMap_ = GetShaderLocation(lit_, "shadowMap");
+    locLightVP_ = GetShaderLocation(lit_, "lightVP");
+    locShadowParams_ = GetShaderLocation(lit_, "shadowParams");
+    locFlashPos_ = GetShaderLocation(lit_, "flashPos");
+    locFlashColor_ = GetShaderLocation(lit_, "flashColor");
+    locFogColor_ = GetShaderLocation(lit_, "fogColor");
+    locFogCenter_ = GetShaderLocation(lit_, "fogCenter");
+    locFogParams_ = GetShaderLocation(lit_, "fogParams");
     // Richtung, in die das Sonnenlicht fällt: steil von oben, leicht schräg.
     // Die Sonne steht damit oben, etwas rechts (+X) und auf der Seite der
     // Spielkamera (+Z; die Kamera schaut von +Z nach -Z, siehe main.cpp).
     // So sind die Seiten, die man sieht, beleuchtet. Ein Uniform behält
     // seinen Wert, bis man ihn ändert – einmal setzen reicht.
-    Vector3 light = Vector3Normalize({-0.45f, -1.0f, -0.35f});
-    SetShaderValue(lit_, locLightDir_, &light, SHADER_UNIFORM_VEC3);
+    sun_ = Vector3Normalize({-0.45f, -1.0f, -0.35f});
+    SetShaderValue(lit_, locLightDir_, &sun_, SHADER_UNIFORM_VEC3);
+    // Grafikeffekte zunächst aus (Effects.cpp/Render.cpp setzen sie je Bild)
+    SetShadow(MatrixIdentity(), 0, 0.0f, 0.0f);
+    SetFlashes(nullptr, nullptr, 0);
+    SetFog({0, 0, 0}, {0, 0, 0}, {0, 0, 0, 0});
     ready_ = true;
     return true;
 }
@@ -341,6 +409,31 @@ BoundingBox Assets::Bounds(int id) {
 // Kameraposition für das Randlicht (viewPos im Fragment-Shader).
 void Assets::SetCamera(Vector3 camPos) {
     SetShaderValue(lit_, locViewPos_, &camPos, SHADER_UNIFORM_VEC3);
+}
+
+void Assets::SetShadow(const Matrix& lightVP, int slot, float strength, float texel) {
+    const float params[2] = {strength, texel};
+    SetShaderValueMatrix(lit_, locLightVP_, lightVP);
+    SetShaderValue(lit_, locShadowMap_, &slot, SHADER_UNIFORM_INT);
+    SetShaderValue(lit_, locShadowParams_, params, SHADER_UNIFORM_VEC2);
+}
+
+// Nicht benutzte Plätze bekommen Reichweite 0 (im Shader: kein Licht).
+void Assets::SetFlashes(const Vector4* pos, const Vector3* color, int count) {
+    Vector4 p[4] = {};
+    Vector3 c[4] = {};
+    for (int i = 0; i < count && i < 4; ++i) {
+        p[i] = pos[i];
+        c[i] = color[i];
+    }
+    SetShaderValueV(lit_, locFlashPos_, p, SHADER_UNIFORM_VEC4, 4);
+    SetShaderValueV(lit_, locFlashColor_, c, SHADER_UNIFORM_VEC3, 4);
+}
+
+void Assets::SetFog(Vector3 center, Vector3 color, Vector4 params) {
+    SetShaderValue(lit_, locFogCenter_, &center, SHADER_UNIFORM_VEC3);
+    SetShaderValue(lit_, locFogColor_, &color, SHADER_UNIFORM_VEC3);
+    SetShaderValue(lit_, locFogParams_, &params, SHADER_UNIFORM_VEC4);
 }
 
 // Zeichnet ein Modell. Dasselbe Model wird oft mehrmals pro Frame an

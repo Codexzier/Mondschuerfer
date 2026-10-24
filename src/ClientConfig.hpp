@@ -35,6 +35,11 @@
 //     msaa 4
 //     fxaa 0.00
 //     track_time 60
+//     shadows 2048
+//     sandstorm 0.00
+//     trail 2
+//     hit_flash 1.00
+//     pixel_look 0
 // Unbekannte Zeilen werden ignoriert (so bleiben ältere Spielversionen mit
 // neueren Dateien verträglich). Fehlende Zeilen behalten ihren Standardwert
 // (z. B. eine Datei aus der Zeit vor den Musik-Einstellungen).
@@ -59,6 +64,11 @@ struct ClientConfig {
     int msaa = 4;                             // Optionen: Kantenglättung 0/2/4/8/16-fach, 0 = aus (Zeile "msaa 4")
     float fxaa = 0.0f;                        // Optionen: FXAA-Stärke 0..1, 0 = aus (Zeile "fxaa 0.00")
     int trackTime = 60;                       // Optionen: Fahrspuren der Rover sichtbar in s: 0 (aus), 15, 30, 60, 120, 300 (Zeile "track_time 60")
+    int shadows = 2048;                       // Optionen: Schattenkarte 0 (aus), 1024, 2048, 4096 Bildpunkte (Zeile "shadows 2048")
+    float sandstorm = 0.0f;                   // Optionen: Sandsturm-Stärke 0..1, 0 = aus (Zeile "sandstorm 0.00")
+    int trail = 2;                            // Optionen: Triebwerksschweif 0 (aus), 1 kurz, 2 mittel, 3 lang (Zeile "trail 2")
+    float hitFlash = 1.0f;                    // Optionen: Treffer-Aufblitzen 0..1, 0 = aus (Zeile "hit_flash 1.00")
+    int pixelLook = 0;                        // Optionen: Stil-Look 0 (aus), Retro-Pixel 1 fein, 2 mittel, 3 grob (Zeile "pixel_look 0")
 
     // Steht NICHT in der Datei: true, wenn ein Wert geändert, aber noch nicht
     // gespeichert wurde. Setzt, wer ändert, ohne gleich zu speichern (die

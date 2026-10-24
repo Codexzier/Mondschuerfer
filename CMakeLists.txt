@@ -94,6 +94,7 @@ add_executable(Mondschuerfer
         src/ClientConfig.cpp
         src/Options.cpp
         src/TiltShift.cpp
+        src/Effects.cpp
         src/Controls.cpp
         src/MapFiles.cpp
         src/MapEditor.cpp

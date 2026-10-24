@@ -82,6 +82,7 @@
 #include "ClientConfig.hpp"
 #include "ClipPlayer.hpp"
 #include "Controls.hpp"
+#include "Effects.hpp"
 #include "Hud.hpp"
 #include "MapEditor.hpp"
 #include "Multiplayer.hpp"
@@ -1300,6 +1301,7 @@ int main(int argc, char** argv) {
     g_clip.Shutdown();
     g_audio.Shutdown();
     tiltshift::Shutdown();
+    fx::Shutdown();
     g_assets.Shutdown();
     CloseWindow();
     return 0;
