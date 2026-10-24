@@ -537,7 +537,7 @@ private:
             controls_.Reset();
             world_.outcomeT += dt;
             world_.UpdateAmbient(dt);
-            if (!endHandled_) { DeleteSave(); endHandled_ = true; }
+            if (!endHandled_) { DeleteSave(); g_audio.PlayGoalMusic(); endHandled_ = true; }
             return;
         }
         if (world_.outcome == Outcome::Dead) {
@@ -598,11 +598,13 @@ private:
     //     werden. LoopState gibt nur an, wie laut jede Schleife gerade sein
     //     soll; g_audio.Update blendet weich dorthin über und muss deshalb
     //     JEDES Frame laufen (auch im Menü, dann mit allem auf 0 = ausblenden).
-    //   - Musik: SetMusicTrack wählt das Stück für den aktuellen Bildschirm,
+    //   - Musik: SetMusicTrack wählt die Musik für den aktuellen Bildschirm,
     //     g_audio.Update blendet beim Wechsel über (Audio.cpp, MusicMix.hpp).
     //     Menümusik im Hauptmenü und in den Optionen daraus, Spielmusik im
     //     Spiel, in der Pause (auch in deren Optionen), auf den
-    //     Endbildschirmen und in der Simulation.
+    //     Endbildschirmen und in der Simulation – dort, solange die eigene
+    //     Piraten-Mission läuft, die Piratenmusik. Die Zielmusik stößt
+    //     UpdatePlaying beim Sieg an (PlayGoalMusic).
     // ========================================================================
     void UpdateAudio(float dt) {
         if (screen_ == Screen::Multiplayer) {
@@ -631,7 +633,12 @@ private:
         // Ereignisse sind "einmalig": nach dem Abspielen (oder Verwerfen im
         // Menü/in der Pause) leeren, sonst kämen sie im nächsten Frame wieder.
         world_.sounds.clear();
-        g_audio.SetMusicTrack(MenuBackground() || screen_ == Screen::Editor ? MusicTrack::Menu : MusicTrack::Game);
+        MusicTrack track = MusicTrack::Menu;
+        if (!MenuBackground() && screen_ != Screen::Editor) {
+            const Mission* m = world_.FindMission(world_.Me().mission);
+            track = m && m->type == MissionType::Pirates ? MusicTrack::Pirates : MusicTrack::Game;
+        }
+        g_audio.SetMusicTrack(track);
         g_audio.Update(dt, loops);
         // Funkspruch-Clip der Mission (Bild zeichnet Hud.cpp): läuft nur im
         // Flug, hält in der Pause und angedockt an.
