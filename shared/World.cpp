@@ -1994,6 +1994,12 @@ void World::Explosion(Vector3 pos, float size) {
     flash.color = {255, 240, 200, 255};
     flash.glow = true;
     particles.push_back(flash);
+    // Licht der Explosion (ohne Zufallszahlen, die Folge von rng bleibt gleich)
+    Flash light;
+    light.pos = pos;
+    light.life = light.maxLife;
+    light.size = size;
+    flashes.push_back(light);
 }
 
 // n kurzlebige Funken (0,2–0,45 s) in Farbe c, z. B. bei Treffern, beim
@@ -2034,6 +2040,8 @@ void World::UpdateParticles(float dt) {
     // Notbremse für die Bildrate: Bei sehr vielen Partikeln (große Schlacht)
     // die 1000 ältesten auf einmal löschen (vorne in der Liste stehen die ältesten).
     if (particles.size() > 4000) particles.erase(particles.begin(), particles.begin() + 1000);
+    for (auto& f : flashes) f.life -= dt;
+    flashes.erase(std::remove_if(flashes.begin(), flashes.end(), [](const Flash& f) { return f.life <= 0; }), flashes.end());
     shake = std::max(0.0f, shake - dt * 2.5f);   // Wackeln klingt in 0,4 s von 1 auf 0 ab
 }
 

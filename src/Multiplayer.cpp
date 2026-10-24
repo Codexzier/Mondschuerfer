@@ -29,6 +29,7 @@
 #include "Assets.hpp"
 #include "Audio.hpp"
 #include "ClipPlayer.hpp"
+#include "Effects.hpp"
 #include "Hud.hpp"
 #include "TiltShift.hpp"
 #include "raylib.h"
@@ -1262,6 +1263,7 @@ void MultiplayerScreen::DrawShipNames(const World& w) {
         if (&sh == &w.Player() || sh.dead || sh.hidden) continue;
         if (sh.playerId < 0 && sh.kind != ShipKind::Player) continue;
         if (Dist2D(sh.pos, cam_.target) > w.drawRange) continue;   // wird gar nicht gezeichnet
+        if (fx::Visibility(sh.pos) < 0.3f) continue;                // im Sandsturm verschwunden (Effects.hpp)
         const std::string name = NameForShip(sh);
         if (name.empty()) continue;
         Vector2 p = GetWorldToScreen(Vector3Add(sh.pos, {0.0f, 2.4f, 0.0f}), cam_);

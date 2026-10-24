@@ -11,7 +11,9 @@
 //   g_clientConfig.tiltShift und wird von dort jedes Frame gelesen. Ebenso
 //   die Kantenglättung (g_clientConfig.msaa: 0, 2, 4, 8, 16 Abtastpunkte) und
 //   die FXAA-Stärke (g_clientConfig.fxaa 0..1, 0 = aus). Beides lässt sich
-//   gleichzeitig einschalten.
+//   gleichzeitig einschalten. Dazu der Stil-Look "Retro-Pixel"
+//   (g_clientConfig.pixelLook) sowie Bildblitz und Hintergrund im
+//   Sandsturm (Effects.hpp).
 //
 // Wie funktioniert das?
 //   Begin() lenkt das Zeichnen der 3D-Welt in ein eigenes Bild um (mit
@@ -45,6 +47,11 @@ void Begin(Color clear);
 // Nach EndMode3D: zeichnet das Bild mit Weichzeichner auf den Bildschirm
 // (nur wenn Begin() umgelenkt hat).
 void End();
+
+// true zwischen Begin() und End(), wenn umgelenkt wurde. Render.cpp zeichnet
+// den Sandsturm nur dann (also nicht im Karteneditor, der ohne
+// Kameraeffekte zeichnet).
+bool Active();
 
 // Höchste MSAA-Stufe, die die Grafikkarte kann (0 = keine). Für die Anzeige
 // in den Optionen; höhere Einstellungen werden darauf begrenzt.

@@ -15,6 +15,12 @@
 //     - der Kantenglättung (Regler: Aus, 2x, 4x, 8x, 16x) und der Stärke
 //       von FXAA (Glätten per Shader, 10-%-Schritte, 0 = aus); beides
 //       lässt sich gleichzeitig einschalten,
+//     - dem Stil-Look (Regler: Aus, Retro-Pixel fein, mittel, grob; nur die
+//       3D-Welt, siehe TiltShift.hpp),
+//     - den Grafikeffekten aus Effects.hpp/Render.cpp: Schatten (Aus,
+//       Niedrig, Mittel, Hoch), Sandsturm (10-%-Schritte, 0 = aus),
+//       Triebwerksschweif (Aus, Kurz, Mittel, Lang) und Treffer-Aufblitzen
+//       (10-%-Schritte, 0 = aus),
 //     - der Dauer der Fahrspuren der Rover (Regler: Aus, 15 s, 30 s, 1 min,
 //       2 min, 5 min; siehe Render.cpp).
 //   Seite "Steuerung":
@@ -57,6 +63,7 @@
 //             A klickt (Regler: A halten und ziehen), Steuerkreuz wie die
 //             Pfeiltasten, B = zurück (PlayStation: L1/R1, Kreuz, Kreis). Siehe "Controller in Menüs" in Ui.hpp.
 // ---------------------------------------------------------------------------
+#include <string>
 
 class OptionsScreen {
 public:
@@ -86,10 +93,15 @@ private:
     enum Tab { TAB_SOUND, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
     // Wählbare Zeilen (Tastatursteuerung); welche davon zu sehen sind, hängt
     // von der Seite ab (RowsOf). ROW_TABS = die Karteireiter selbst.
-    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_TRACKS, ROW_BACK };
+    // ROW_PIXEL .. ROW_FLASH sind die Grafikeffekte (EffectLevel usw.).
+    enum Row {
+        ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA,
+        ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_TRACKS, ROW_BACK
+    };
+    static constexpr int kEffectRows = ROW_FLASH - ROW_PIXEL + 1;
 
     // Wählbare Zeilen der Seite tab von oben nach unten; liefert die Anzahl
-    // (rows braucht Platz für 6).
+    // (rows braucht Platz für 12).
     static int RowsOf(int tab, int* rows);
     // Seite wechseln (siehe Options.cpp).
     void SetTab(int tab, bool keepTabsRow);
@@ -114,6 +126,20 @@ private:
     static int TrackLevel(int seconds);
     void SetTrackLevel(int level, bool save);
 
+    // Grafikeffekte (Zeilen ROW_PIXEL .. ROW_FLASH), alle als Regler mit
+    // Stufen: EffectLevels = Anzahl der Stufen, EffectLevel = aktuelle Stufe
+    // aus g_clientConfig, EffectText = Anzeige neben dem Regler,
+    // SetEffectLevel setzt die Stufe (save wie bei SetVolume).
+    //   Stil-Look:          Aus, Retro-Pixel fein, mittel, grob
+    //   Schatten:           Aus, Niedrig (1024), Mittel (2048), Hoch (4096)
+    //   Sandsturm:          Aus, 10 % .. 100 %
+    //   Triebwerksschweif:  Aus, Kurz, Mittel, Lang
+    //   Treffer-Aufblitzen: Aus, 10 % .. 100 %
+    static int EffectLevels(int row);
+    static int EffectLevel(int row);
+    static std::string EffectText(int row);
+    void SetEffectLevel(int row, int level, bool save);
+
     int tab_ = TAB_SOUND;    // gewählte Seite
     int sel_ = ROW_MUSIC;    // per Tastatur ausgewählte Zeile
     int frames_ = 0;         // Frames seit Open() (Tasten erst ab dem 2. Frame, siehe Draw)
@@ -123,4 +149,5 @@ private:
     bool draggingMsaa_ = false;   // ... den Kantenglättungs-Regler
     bool draggingFxaa_ = false;   // ... den FXAA-Regler
     bool draggingTracks_ = false; // ... den Fahrspuren-Regler
+    bool draggingEffect_[kEffectRows] = {};   // ... die Regler der Grafikeffekte
 };

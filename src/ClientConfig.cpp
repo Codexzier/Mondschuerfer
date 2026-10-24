@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // ClientConfig.cpp: Laden und Speichern der Einstellungsdatei (Serveradresse,
-// Spielername, Musik an/aus und Musiklautstärke).
+// Spielername, Musik an/aus und Musiklautstärke, Grafikoptionen).
 //
 // Ablauf:
 //   Load(): Datei zeilenweise lesen, jede Zeile an der ersten Leerstelle in
@@ -152,6 +152,21 @@ bool ClientConfig::Load() {
             // nur die Stufen aus den Optionen (Sekunden); alles andere: Standard behalten
             const std::string v = Clean(value, 8);
             if (v == "0" || v == "15" || v == "30" || v == "60" || v == "120" || v == "300") trackTime = std::stoi(v);
+        } else if (key == "shadows") {
+            const std::string v = Clean(value, 8);
+            if (v == "0" || v == "1024" || v == "2048" || v == "4096") shadows = std::stoi(v);
+        } else if (key == "sandstorm") {
+            float v = 0.0f;
+            if (ParseNumber(Clean(value, 16), v)) sandstorm = v > 1.0f ? 1.0f : v;
+        } else if (key == "trail") {
+            const std::string v = Clean(value, 8);
+            if (v == "0" || v == "1" || v == "2" || v == "3") trail = std::stoi(v);
+        } else if (key == "hit_flash") {
+            float v = 0.0f;
+            if (ParseNumber(Clean(value, 16), v)) hitFlash = v > 1.0f ? 1.0f : v;
+        } else if (key == "pixel_look") {
+            const std::string v = Clean(value, 8);
+            if (v == "0" || v == "1" || v == "2" || v == "3") pixelLook = std::stoi(v);
         }
         // andere Schlüssel: ignorieren (z. B. aus einer neueren Spielversion)
     }
@@ -174,6 +189,11 @@ bool ClientConfig::Save() {
     f << "msaa " << msaa << '\n';
     f << "fxaa " << FormatVolume(fxaa) << '\n';
     f << "track_time " << trackTime << '\n';
+    f << "shadows " << shadows << '\n';
+    f << "sandstorm " << FormatVolume(sandstorm) << '\n';
+    f << "trail " << trail << '\n';
+    f << "hit_flash " << FormatVolume(hitFlash) << '\n';
+    f << "pixel_look " << pixelLook << '\n';
     // Absichtlich KEIN Passwort (siehe ClientConfig.hpp).
     f.close();   // erst beim Schließen ist sicher alles geschrieben
     if (!f) return false;
