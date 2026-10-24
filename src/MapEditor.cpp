@@ -194,7 +194,7 @@ MapEditorScreen::~MapEditorScreen() {
 }
 
 void MapEditorScreen::Update(float dt) {
-    world_.time += dt;   // Zug fährt (Render.cpp), Stationen drehen ihre Antennen
+    world_.time += dt;   // Züge fahren, Raketen starten, Tore leuchten (Render.cpp); Rover stehen hier still
     if (uploadNet_) UpdateUpload(dt);
     if (msgT_ > 0.0f) msgT_ -= dt;
     if (backArmed_ > 0.0f) backArmed_ -= dt;
@@ -371,9 +371,11 @@ void MapEditorScreen::Place(const Placement& p) {
 }
 
 // "Zufall generieren": dieselbe Mondoberfläche wie in einer Zufallswelt
-// (World::GenerateTerrain: Krater, Felsen, Meteoriten, Fundstücke), mit
-// Abstand zu allen Bauplätzen. Ersetzt die Teile der Gruppen Gelände,
-// Felsen und Sonstiges; Straßen, Monorail und Gebäude bleiben stehen.
+// (World::GenerateTerrain: Krater, Felsen, Meteoriten, Fundstücke, Rover), mit
+// Abstand zu allen Bauplätzen und den Schienen zwischen ihnen. Ersetzt die
+// Teile der Gruppen Gelände, Felsen und Sonstiges; Straßen, Monorail und
+// Gebäude bleiben stehen. Die Tore der Zufallswelt (Gruppe Gebäude) kommen
+// nicht mit, sonst würden es bei jedem Klick mehr.
 void MapEditorScreen::RandomFill() {
     static unsigned int counter = 0;
     World tmp;
@@ -387,7 +389,8 @@ void MapEditorScreen::RandomFill() {
     for (const Deco& d : tmp.decos) {
         if (fabsf(d.pos.x) > cfg::WORLD_HALF || fabsf(d.pos.z) > cfg::WORLD_HALF) continue;   // Felswall
         const std::string name = ModelName(d.model);
-        if (!FindSegment(name) || static_cast<int>(pieces.size()) >= mapgrid::MAX_PIECES) continue;
+        const MapSegment* seg = FindSegment(name);
+        if (!seg || seg->group == SegmentGroup::Buildings || static_cast<int>(pieces.size()) >= mapgrid::MAX_PIECES) continue;
         pieces.push_back({name, d.pos.x, d.pos.z, d.yaw, d.scale});
     }
     map_.pieces = std::move(pieces);

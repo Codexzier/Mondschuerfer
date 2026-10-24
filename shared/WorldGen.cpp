@@ -159,8 +159,8 @@ void World::GenerateTerrain() {
         add(Rand(0, 1) < 0.5f ? "meteor" : "meteor_detailed", p, Rand(0, 2 * PI), Rand(2.2f, 3.6f));
     }
     // Kleinigkeiten zum Entdecken (Knochen, ein Alien mit Mondfahrzeug,
-    // verlassene Fahrzeuge mit Fässern) – ohne Spielfunktion, nur als
-    // Belohnung fürs Herumfliegen.
+    // Fahrzeuge mit Fässern) – ohne Spielfunktion, nur als Belohnung fürs
+    // Herumfliegen. Die Mondfahrzeuge fahren später los (MapAnim.cpp).
     for (int i = 0; i < 5; ++i) {
         Vector3 p{Rand(-lim, lim), 0.0f, Rand(-lim, lim)};
         if (farFromStations(p, 40.0f)) add("bones", p, Rand(0, 2 * PI), 3.0f);
@@ -191,6 +191,10 @@ void World::GenerateTerrain() {
         add(r, {-edge + Rand(-2, 2), 0, t + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));   // Westrand
         add(r, {edge + Rand(-2, 2), 0, t + Rand(-2, 2)}, Rand(0, 2 * PI), Rand(6.0f, 9.0f));    // Ostrand
     }
+
+    // Kartenanimation (MapAnim.cpp): Schienen frei räumen, mehr Geröll und
+    // kleine Krater, Tore und fahrende Rover. Zieht nur Zahlen aus animRng.
+    AddTerrainLife();
 }
 
 // ===========================================================================
@@ -209,6 +213,8 @@ void World::ApplyMap(const GameMap& m) {
     decos = std::move(keep);
     for (const MapPiece& p : m.pieces) decos.push_back({ModelId(p.model), {p.x, MapPieceY(p), p.z}, p.yaw, p.scale, 0.0f});
     monorails = FindMonorailLoops(m.pieces);
+    // Gesetzte Mondfahrzeuge fahren los (MapAnim.cpp); ohne Rover in der Karte fährt keiner.
+    SpawnRovers();
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +342,8 @@ void World::BuildStations() {
         }
         for (auto& tu : st.turrets) tu.offset = Vector3Scale(tu.offset, STATION_SCALE);
     }
+    // Monorail zwischen den Stationen und Raketenstartplätze (MapAnim.cpp)
+    BuildStationExtras();
 }
 
 namespace {

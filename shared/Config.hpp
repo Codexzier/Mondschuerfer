@@ -56,6 +56,11 @@ constexpr float WORLD_HALF = 300.0f;        // Spielfeld geht von -WORLD_HALF bi
 // Kollisionsobjekte, Schiffe fliegen hindurch.
 constexpr float SHIP_ALTITUDE = 3.2f;
 
+// Kartenanimation (shared/MapAnim.cpp, nur Kulisse ohne Einfluss aufs Spiel)
+constexpr int MAP_ROVERS = 14;            // zusätzliche fahrende Mondfahrzeuge in der Zufallskarte
+constexpr int MAP_GATES = 5;              // Tore in der Zufallskarte; jedes leuchtet einmal pro Minute auf
+constexpr float TRACK_TIME_MAX = 300.0f;  // längste einstellbare Dauer der Fahrspuren in Sekunden (Optionen, Seite "Grafik")
+
 // Scanner (Taste E)
 // Voll geladen reicht der Scanner 10 s (MAX_ENERGY / DRAIN). Ausgeschaltet
 // lädt er sich in 10 s wieder voll auf. Einschalten geht erst ab 1 Einheit.

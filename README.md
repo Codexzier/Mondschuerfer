@@ -167,6 +167,12 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 Gibt es eigene Karten, fragt *Neues Spiel* zuerst nach der Karte: *Standardkarte (Zufall)* wie
 bisher oder eine Karte aus dem Karteneditor. Der Spielstand merkt sich die Karte.
 
+Auf der Karte ist Leben (nur Kulisse, ohne Einfluss aufs Spiel, auch im Mehrspieler): Rover fahren
+um Felsen und Krater herum und hinterlassen Reifenspuren, die nach einer einstellbaren Zeit
+verblassen (Optionen → Grafik). Eine Monorail verbindet die Stationen; der Zug hält an jedem Ende
+10 Sekunden. Neben jeder Station startet oder landet alle 20 bis 30 Sekunden eine Rakete. Fünf Tore
+öffnen einmal pro Minute kurz ein leuchtendes Wurmloch, und entdeckte Kristalle glimmen.
+
 - **Scanner (E):** Kristall-Lagerstätten sind unsichtbar, bis der Scanner sie erfasst.
   Der Scanner hat 10 Energieeinheiten und verbraucht 1 pro Sekunde, er läuft also höchstens
   10 Sekunden und schaltet sich dann ab. Ausgeschaltet lädt er 1 Einheit pro Sekunde nach.
@@ -221,6 +227,8 @@ bisher oder eine Karte aus dem Karteneditor. Der Spielstand merkt sich die Karte
   Links im Werkzeugfenster wählst du ein Segment, *Zufall generieren* füllt die Karte mit Kratern,
   Felsen und Fundstücken (Straßen, Monorail und Gebäude bleiben stehen). Bilden die
   Monorail-Schienen einen geschlossenen Kreis, fährt darauf ein Zug, im Editor und im Spiel.
+  Gesetzte Mondfahrzeuge fahren im Spiel los, gesetzte Tore leuchten einmal pro Minute auf. Die
+  Monorail zwischen den Stationen und die Raketenstartplätze zeigt der Editor mit an.
   Gespeichert wird im Ordner `karten` neben der ausführbaren Datei.
   *An Server senden* schickt die Karte an einen Mehrspieler-Server (Anmeldung mit Spielername und
   Passwort). Das geht nur, wenn der Betreiber es dem Spieler auf der Verwaltungsseite erlaubt hat;
@@ -351,6 +359,8 @@ später an derselben Stelle fort. Beide Stücke laufen in einer Endlosschleife.
   kann, und es wird diese Stufe benutzt.
 - **FXAA** – glättet Kanten zusätzlich per Shader; Regler in 10-%-Schritten, ganz links „Aus“
   (Standard). Lässt sich zusammen mit der Kantenglättung einschalten.
+- **Fahrspuren (Rover)** – wie lange die Reifenspuren der Rover sichtbar bleiben: Aus, 15 s, 30 s,
+  1 min (Standard), 2 min oder 5 min. Danach verblassen sie; „Aus“ spart am meisten Leistung.
 
 *Steuerung*
 - Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
@@ -379,12 +389,14 @@ subtitles 1
 tilt_shift 0.50
 msaa 4
 fxaa 0.00
+track_time 60
 ```
 
 `music` und `subtitles` sind `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift` und `fxaa` je eine Zahl von `0` bis `1`
-(Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`. Fehlt die Datei
+(Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`, `track_time` die
+Sekunden der Fahrspuren (`0`, `15`, `30`, `60`, `120`, `300`). Fehlt die Datei
 oder eine Zeile, gelten die Standardwerte (Musik an, Musiklautstärke 50 %, Clip-Lautstärke 100 %, Untertitel an, Tilt-Shift 50 %,
-Kantenglättung 4x, FXAA aus).
+Kantenglättung 4x, FXAA aus, Fahrspuren 1 min).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
 `src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/TiltShift.*`
@@ -410,6 +422,7 @@ Mondschuerfer/
 │   ├── Config.hpp        Balancing (auch die Mehrspieler-Werte MP_*)
 │   ├── World.hpp/.cpp    Spiellogik: Flug, Scanner, Abbau, Kampf, Stationen, Mehrspieler-Regeln
 │   ├── WorldGen.cpp      Mondoberfläche, Stationsaufbau (alle Ausbaustufen), Lagerstätten
+│   ├── MapAnim.cpp       Kartenanimation: Rover und Fahrspuren, Monorail zwischen Stationen, Raketen, Tore
 │   ├── GameMap.*         Eigene Karten: Dateiformat, Segmente, Monorail-Kreise
 │   ├── Ai.cpp            Verhalten von Piraten und Händlern, Autopilot für die Simulation
 │   ├── GameSettings.*    Spielparameter des Servers (Schwierigkeit, Stationen, Mondfarbe ...)

@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Ton" (Musik
-// an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA) und "Steuerung"
+// an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA, Fahrspuren) und "Steuerung"
 // (Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
@@ -26,7 +26,8 @@
 //   4. Inhalt der gewählten Seite:
 //      "Ton":       zwei Umschalter und zwei Schieberegler (Maus wird dabei ausgewertet)
 //      "Grafik":    Schieberegler für Tilt-Shift, Kantenglättung (MSAA) und
-//                   FXAA (alle umgesetzt in TiltShift.cpp)
+//                   FXAA (alle umgesetzt in TiltShift.cpp) sowie für die
+//                   Dauer der Fahrspuren der Rover (Render.cpp)
 //      "Steuerung": feste Tabelle (kControls unten)
 //   5. Knopf "Zurück".
 // Das Fenster ist immer so hoch wie die längste Seite, damit es beim
@@ -114,10 +115,16 @@ constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Höhe des Inhalts der einzelnen Seiten (in derselben Reihenfolge wie in Draw):
 //   Ton:       vier Zeilen, Hinweiszeile 42
-//   Grafik:    drei Zeilen, Hinweiszeile 42
+//   Grafik:    vier Zeilen, Hinweiszeile 42
 //   Steuerung: Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
 float SoundHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
-float GraphicsHeight() { return 3.0f * (kRowH + kRowGap) + 42.0f; }
+float GraphicsHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
+
+// Stufen des Reglers "Fahrspuren": so viele Sekunden bleiben die Reifenspuren
+// der Rover sichtbar (0 = keine Spuren). Die letzte Stufe ist
+// cfg::TRACK_TIME_MAX; länger merkt sich die Welt die Spur nicht.
+constexpr int kTrackTimes[] = {0, 15, 30, 60, 120, 300};
+constexpr int kTrackLevels = 6;
 float ControlsHeight() { return 30.0f + 30.0f + kControlCount * kTableRowH; }
 
 // Gesamthöhe des Fensters: Rand 24, Überschrift 64, Karteireiter, Abstand 20,
@@ -160,6 +167,7 @@ void OptionsScreen::Open() {
     draggingTilt_ = false;
     draggingMsaa_ = false;
     draggingFxaa_ = false;
+    draggingTracks_ = false;
 }
 
 void OptionsScreen::Close() {
@@ -168,6 +176,7 @@ void OptionsScreen::Close() {
     draggingTilt_ = false;
     draggingMsaa_ = false;
     draggingFxaa_ = false;
+    draggingTracks_ = false;
     g_clientConfig.SaveIfChanged();   // z. B. Lautstärke per Pfeiltasten geändert
     g_audio.Play(Sfx::UiBack);
 }
@@ -245,6 +254,22 @@ void OptionsScreen::SetFxaa(float v, bool save) {
     else g_clientConfig.unsaved = true;
 }
 
+// Fahrspuren: Stufe 0..5 aus kTrackTimes. In der Datei stehen die Sekunden;
+// TrackLevel rechnet zurück (unbekannte Werte: nächstkleinere Stufe).
+// Render.cpp liest den Wert jedes Frame aus g_clientConfig.
+int OptionsScreen::TrackLevel(int seconds) {
+    int level = 0;
+    while (level < kTrackLevels - 1 && kTrackTimes[level + 1] <= seconds) ++level;
+    return level;
+}
+
+void OptionsScreen::SetTrackLevel(int level, bool save) {
+    level = std::clamp(level, 0, kTrackLevels - 1);
+    g_clientConfig.trackTime = kTrackTimes[level];
+    if (save) g_clientConfig.Save();
+    else g_clientConfig.unsaved = true;
+}
+
 // Wie SetMusicOn; Hud.cpp liest den Wert jedes Frame aus g_clientConfig.
 void OptionsScreen::SetSubtitlesOn(bool on) {
     g_clientConfig.subtitles = on;
@@ -268,6 +293,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_TILT;
         rows[n++] = ROW_MSAA;
         rows[n++] = ROW_FXAA;
+        rows[n++] = ROW_TRACKS;
     }
     rows[n++] = ROW_BACK;
     return n;
@@ -278,7 +304,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
 // sonst springt sie auf die erste Zeile der neuen Seite (Tab, LB/RB).
 void OptionsScreen::SetTab(int tab, bool keepTabsRow) {
     tab_ = (tab + TAB_COUNT) % TAB_COUNT;
-    dragging_ = draggingClip_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = false;
+    dragging_ = draggingClip_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = draggingTracks_ = false;
     g_clientConfig.SaveIfChanged();
     int rows[6];
     RowsOf(tab_, rows);
@@ -320,7 +346,7 @@ bool OptionsScreen::Draw() {
     const bool keys = frames_ > 1;
     bool toggle = false, toggleSubs = false, close = false;
     float volStep = 0.0f, clipStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
-    int msaaStep = 0;
+    int msaaStep = 0, trackStep = 0;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
     if (keys) {
         if (IsKeyPressed(KEY_TAB))
@@ -350,6 +376,7 @@ bool OptionsScreen::Draw() {
         if (sel_ == ROW_TILT) tiltStep = 0.1f * dir;
         if (sel_ == ROW_MSAA) msaaStep = dir;
         if (sel_ == ROW_FXAA) fxaaStep = 0.1f * dir;
+        if (sel_ == ROW_TRACKS) trackStep = dir;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
             else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
@@ -542,9 +569,31 @@ bool OptionsScreen::Draw() {
         Text(fxaaText, fxaaSlider.x + fxaaSlider.width + 30 * s, y + labelY, label, g_clientConfig.fxaa > 0.0f ? TEXT : MUTED);
         y += (kRowH + kRowGap) * s;
 
+        // Zeile "Fahrspuren": Regler mit sechs Stufen (kTrackTimes), Wert
+        // 0, 0.2, ... 1 wie bei der Kantenglättung.
+        const Rectangle rowTracks{x, y, iw, kRowH * s};
+        const bool overTracks = CheckCollisionPointRec(mouse, rowTracks);
+        if (overTracks && MouseMoved()) sel_ = ROW_TRACKS;
+        DrawRow(rowTracks, sel_ == ROW_TRACKS || draggingTracks_);
+        Text("Fahrspuren (Rover)", x + 22 * s, y + labelY, label, TEXT);
+        const Rectangle trackSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+        const float trackStepSize = 1.0f / (kTrackLevels - 1);
+        float trackValue = TrackLevel(g_clientConfig.trackTime) * trackStepSize;
+        const bool wasDraggingTracks = draggingTracks_;
+        if (Slider(trackSlider, trackValue, draggingTracks_, sel_ == ROW_TRACKS, trackStepSize)) {
+            SetTrackLevel(static_cast<int>(std::lround(trackValue * (kTrackLevels - 1))), false);
+            g_audio.Play(Sfx::UiMove, 0.6f);
+        }
+        if (draggingTracks_) sel_ = ROW_TRACKS;
+        if (wasDraggingTracks && !draggingTracks_) g_clientConfig.SaveIfChanged();
+        const int tt = g_clientConfig.trackTime;
+        const std::string trackText = tt <= 0 ? std::string("Aus") : tt < 60 ? std::to_string(tt) + " s" : std::to_string(tt / 60) + " min";
+        Text(trackText, trackSlider.x + trackSlider.width + 30 * s, y + labelY, label, tt > 0 ? TEXT : MUTED);
+        y += (kRowH + kRowGap) * s;
+
         Text("Wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf. Kantenglättung und FXAA gehen auch zusammen.", x, y + 4 * s,
              17 * s, MUTED);
-        overRow = overTilt || overMsaa || overFxaa;
+        overRow = overTilt || overMsaa || overFxaa || overTracks;
     } else {
         // Steuerung: nur Anzeige
         Text("Tastatur, Maus und Controller gehen jederzeit, auch gemischt.", x, y + 2 * s, 17 * s, MUTED);
@@ -612,6 +661,10 @@ bool OptionsScreen::Draw() {
     }
     if (fxaaStep != 0.0f) {
         SetFxaa(g_clientConfig.fxaa + fxaaStep, false);
+        g_audio.Play(Sfx::UiMove, 0.6f);
+    }
+    if (trackStep != 0) {
+        SetTrackLevel(TrackLevel(g_clientConfig.trackTime) + trackStep, false);
         g_audio.Play(Sfx::UiMove, 0.6f);
     }
     if (toggle) {

@@ -30,6 +30,7 @@
 //   World.hpp      diese Datei: alle Datentypen und die Schnittstelle
 //   World.cpp      Spielregeln (Update, Scanner, Abbau, Kampf, Stationen)
 //   WorldGen.cpp   Aufbau: Mondoberfläche, Stationen, Lagerstätten
+//   MapAnim.cpp    Kartenanimation: Rover, Monorail zwischen Stationen, Raketen (nur Kulisse)
 //   Ai.cpp         KI der Piraten/Händler und der Autopilot (Simulation)
 //   src/Render.cpp World::Draw (nur im Client)
 //
@@ -60,6 +61,7 @@
 #include "GameSettings.hpp"
 #include "SoundEvents.hpp"
 #include "Util.hpp"
+#include <deque>
 #include <random>
 #include <string>
 #include <vector>
@@ -214,6 +216,75 @@ struct Deco {
     float scale = 1.0f;
     float yScale = 0.0f; // 0 = gleich scale (für flache, große Krater)
 };
+
+// ---------------------------------------------------------------------------
+// Kartenanimation (MapAnim.cpp): reine Kulisse ohne Einfluss aufs Spiel. Der
+// Server legt keine Rover an; Einzelspieler und Mehrspieler-Client erzeugen
+// alles selbst (eigener Zufallsgenerator World::animRng).
+// ---------------------------------------------------------------------------
+// Ein Punkt der Reifenspur eines Rovers. Zwischen zwei Punkten zeichnet
+// Render.cpp je Radseite einen schmalen Streifen.
+struct TrackPoint {
+    float x = 0.0f, z = 0.0f;
+    float sx = 0.0f, sz = 0.0f;   // Querrichtung (Länge 1): dort liegen links und rechts die Räder
+    float t = 0.0f;               // Weltzeit, zu der der Punkt entstand (die Spur verblasst danach)
+};
+
+// Ein fahrendes Mondfahrzeug (Modell "rover"). Es fährt von Ziel zu Ziel um
+// Hindernisse herum (World::UpdateMapAnim).
+struct Rover {
+    Vector3 pos{};
+    float yaw = 0.0f;              // Fahrtrichtung (Nase/Fahrerhaus nach -z wie bei den Schiffen)
+    float scale = 3.0f;
+    float speed = 0.0f;            // aktuelle Geschwindigkeit (m/s)
+    float topSpeed = 3.0f;
+    Vector3 target{};              // nächstes Ziel
+    float wait = 0.0f;             // Restzeit einer Pause (steht still)
+    float legT = 0.0f;             // Sekunden seit dem letzten neuen Ziel (gegen Festfahren)
+    std::deque<TrackPoint> track;  // Reifenspur, älteste Punkte vorne
+};
+
+// Hindernis für Rover: Kapsel (Strecke a-b mit Radius r) auf dem Boden; bei
+// runden Hindernissen ist a = b.
+struct RoverBlock {
+    Vector2 a{}, b{};
+    float r = 1.0f;
+};
+
+// Monorail-Strecke zwischen zwei Stationen (gerade, von Ende a nach Ende b).
+// Auf jeder Strecke pendelt ein Zug (RailTrainPos).
+struct StationRail {
+    Vector3 a{}, b{};
+    int from = 0, to = 0;          // Stationen (Index in World::stations) an den Enden a und b
+    int cargo = 0;                 // Mittelwagen: 0 Personen, 1 Fracht, 2 Container
+    float phase = 0.0f;            // Versatz im Fahrplan (Sekunden), damit nicht alle Züge gleichzeitig fahren
+};
+
+// Raketenstartplatz neben einer Station. Abwechselnd startet und landet eine
+// Rakete (RocketAt).
+struct RocketPad {
+    Vector3 pos{};
+    Vector3 out{};                 // waagerecht, Länge 1: von der Station weg; dorthin kippt die Rakete beim Aufstieg
+    bool typeB = false;            // Bauteile der Rakete B statt A
+    float stand = 25.0f;           // Sekunden auf dem Startplatz (20..30)
+    float away = 25.0f;            // Sekunden unterwegs (20..30)
+    float phase = 0.0f;            // Versatz im Ablauf (Sekunden)
+};
+
+// Lage einer Rakete zu einem Zeitpunkt (RocketAt).
+struct RocketPose {
+    bool visible = false;          // false = gerade unterwegs (nicht zu sehen)
+    Vector3 pos{};                 // Fußpunkt der Rakete
+    float tilt = 0.0f;             // Neigung in Richtung RocketPad::out (Bogenmaß)
+    float size = 1.0f;             // 0..1: wird ganz oben kleiner, als flöge sie in die Ferne
+    float thrust = 0.0f;           // 0..1: Triebwerksflamme
+};
+
+// Mitte des Zugs auf einer Strecke zur Weltzeit t: Abstand von StationRail::a
+// in Metern; -1 = Strecke zu kurz für einen Zug. Der Zug hält an jedem Ende
+// 10 Sekunden und fährt dann zur anderen Station.
+float RailTrainPos(const StationRail& r, float t);
+RocketPose RocketAt(const RocketPad& p, float t);
 
 // Ein Bauteil einer Station (ein Modell aus dem Kenney-Kit).
 struct StationPart {
@@ -383,8 +454,9 @@ public:
     void NewServerWorld(unsigned int seed, const GameSettings& s); // Server (noch ohne Spieler)
     void BuildMirror(unsigned int seed, const GameSettings& s);    // Mehrspieler-Client: nur Kulisse
     // Eigene Karte aus dem Karteneditor: ersetzt die Zufalls-Deko im Spielfeld
-    // (der Felswall am Rand bleibt) und sucht die Monorail-Kreise. Nach
-    // NewGame/BuildMirror aufrufen; zieht keine Zufallszahlen (WorldGen.cpp).
+    // (der Felswall am Rand bleibt), sucht die Monorail-Kreise und lässt die
+    // Rover der Karte fahren. Nach NewGame/BuildMirror aufrufen; zieht keine
+    // Zufallszahlen aus rng (WorldGen.cpp).
     void ApplyMap(const GameMap& m);
     // Ein Zeitschritt der Spielregeln (Einzelspieler: einmal pro Bild mit dem
     // dt des Bildes; Server: fest 1/30 s). Danach liegen in sounds, fx, goals
@@ -394,6 +466,13 @@ public:
     void Update(float dt, const ShipInput& input) { Me().input = input; Update(dt); }   // Einzelspieler
     void UpdateAmbient(float dt);   // während angedockt (Einzelspieler): nur Effekte
     void UpdateCosmetics(float dt); // Mehrspieler-Client: Rauch, Abbau-Partikel aus dem Zustand erzeugen
+    // Kartenanimation (MapAnim.cpp): Rover fahren und hinterlassen Spuren.
+    // Aufgerufen von Update (nicht auf dem Server), UpdateAmbient und UpdateCosmetics.
+    void UpdateMapAnim(float dt);
+    // Rover aus der Deko (Modell "rover") neu anlegen, Hindernisse sammeln.
+    // Nach jedem Austausch der Deko (GenerateTerrain, ApplyMap, Mehrspieler:
+    // Wechsel zurück zur Standardkarte). Auf dem Server: keine Rover.
+    void SpawnRovers();
 
     // --- Spieler -----------------------------------------------------------
     // Einzelspieler und Client: der eigene Spieler ist players[0], sein Schiff ships[0].
@@ -510,6 +589,9 @@ public:
     // Darauf beruht, dass Client und Server dieselbe Mondoberfläche erzeugen,
     // ohne sie zu übertragen.
     std::mt19937 rng;
+    // Eigener Zufallsgenerator für die Kartenanimation (MapAnim.cpp). So
+    // bleibt die Zahlenfolge von rng unverändert, egal wie viele Rover fahren.
+    std::mt19937 animRng;
 
     std::vector<PlayerState> players;
     std::vector<Ship> ships;
@@ -519,6 +601,12 @@ public:
     std::vector<Particle> particles;
     std::vector<Deco> decos;
     std::vector<MonorailLoop> monorails;   // geschlossene Monorail-Kreise der eigenen Karte (Render.cpp: Züge)
+    // Kartenanimation (MapAnim.cpp). Die Rover stehen zusätzlich als Deko in
+    // decos (Startplatz); Render.cpp zeichnet sie nur aus rovers.
+    std::vector<Rover> rovers;
+    std::vector<RoverBlock> roverBlocks;   // Hindernisse, um die die Rover herumfahren
+    std::vector<StationRail> rails;        // Monorail zwischen den Stationen
+    std::vector<RocketPad> pads;           // Raketenstartplätze, einer je Station
     std::string mapFile;                   // Einzelspieler: Datei der eigenen Karte (leer = Zufallskarte), für den Spielstand
     std::vector<Station> stations;   // erst alle Bauplätze in fester Reihenfolge (siehe WorldGen.cpp)
     std::vector<Mission> missions;   // Angebote und laufende Mini-Missionen
@@ -572,6 +660,13 @@ public:
     void ResolveModels();            // WorldGen.cpp: Modellnamen -> IDs (mdl)
     void GenerateTerrain();          // WorldGen.cpp
     void BuildStations();            // WorldGen.cpp
+    // MapAnim.cpp: Monorail zwischen den Stationen und Raketenstartplätze
+    // (Ende von BuildStations), mehr Geröll, Tore und Rover (Ende von GenerateTerrain)
+    void BuildStationExtras();
+    void AddTerrainLife();
+    bool NearRail(Vector3 p, float margin) const;   // näher als margin an einer Strecke oder einem Startplatz?
+    void PickRoverTarget(Rover& r);
+    bool RoverPathClear(Vector2 a, Vector2 b) const;
     void SpawnDeposit(bool initial); // WorldGen.cpp
     int DepositTarget() const;       // gewünschte Anzahl Lagerstätten
     Vector3 RandomFreePos(float minDistStations, float minDistPlayer);   // WorldGen.cpp

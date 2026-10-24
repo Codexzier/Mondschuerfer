@@ -843,12 +843,14 @@ void NetClient::Impl::HandleMapUploadResult(const net::MapUploadResultMsg& m) {
 // Aktive Karte des Servers: kommt nach jedem Welcome und wenn der Betreiber
 // die Karte wechselt. Erst die Zufalls-Deko aus BuildMirror zurückholen, dann
 // die Karte darüberlegen (World::ApplyMap); die Standardkarte ist nur die
-// Zufalls-Deko.
+// Zufalls-Deko. Die Rover kommen jeweils aus der Deko (SpawnRovers, das macht
+// ApplyMap selbst).
 void NetClient::Impl::HandleMapData(const net::MapDataMsg& m) {
     if (!worldReady) return;
     world.decos = baseDecos;
     world.monorails.clear();
     if (m.custom) world.ApplyMap(m.map);
+    else world.SpawnRovers();
 }
 
 // Begrüßung: Anmeldung/Zuschauen hat geklappt, oder der Server hat die Welt

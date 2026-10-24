@@ -14,7 +14,9 @@
 //       10-%-Schritten, 0 = aus; siehe TiltShift.hpp),
 //     - der Kantenglättung (Regler: Aus, 2x, 4x, 8x, 16x) und der Stärke
 //       von FXAA (Glätten per Shader, 10-%-Schritte, 0 = aus); beides
-//       lässt sich gleichzeitig einschalten.
+//       lässt sich gleichzeitig einschalten,
+//     - der Dauer der Fahrspuren der Rover (Regler: Aus, 15 s, 30 s, 1 min,
+//       2 min, 5 min; siehe Render.cpp).
 //   Seite "Steuerung":
 //     - einer Übersicht der Steuerung als Tabelle: Tastatur/Maus, Xbox- und
 //       PlayStation-Controller (nur zum Nachlesen, nicht änderbar).
@@ -84,7 +86,7 @@ private:
     enum Tab { TAB_SOUND, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
     // Wählbare Zeilen (Tastatursteuerung); welche davon zu sehen sind, hängt
     // von der Seite ab (RowsOf). ROW_TABS = die Karteireiter selbst.
-    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_BACK };
+    enum Row { ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA, ROW_TRACKS, ROW_BACK };
 
     // Wählbare Zeilen der Seite tab von oben nach unten; liefert die Anzahl
     // (rows braucht Platz für 6).
@@ -107,6 +109,11 @@ private:
     void SetMsaaLevel(int level, bool save);
     void SetFxaa(float v, bool save);
 
+    // Fahrspuren: Stufe 0..5 = Aus, 15 s, 30 s, 1 min, 2 min, 5 min
+    // (TrackLevel: aus den Sekunden die Stufe); save wie bei SetVolume.
+    static int TrackLevel(int seconds);
+    void SetTrackLevel(int level, bool save);
+
     int tab_ = TAB_SOUND;    // gewählte Seite
     int sel_ = ROW_MUSIC;    // per Tastatur ausgewählte Zeile
     int frames_ = 0;         // Frames seit Open() (Tasten erst ab dem 2. Frame, siehe Draw)
@@ -115,4 +122,5 @@ private:
     bool draggingTilt_ = false;   // dasselbe für den Tilt-Shift-Regler
     bool draggingMsaa_ = false;   // ... den Kantenglättungs-Regler
     bool draggingFxaa_ = false;   // ... den FXAA-Regler
+    bool draggingTracks_ = false; // ... den Fahrspuren-Regler
 };
