@@ -277,7 +277,8 @@ void PrintSettings(const GameSettings& s) {
               << "   Max. Spieler    : " << s.maxPlayers << " (Obergrenze " << limits::MAX_PLAYERS_LIMIT
               << "), dazu bis zu " << limits::MAX_SPECTATORS << " Zuschauer\n"
               << "   Leben pro Spieler: " << s.lives << " (höchstens " << limits::MAX_LIVES << ")\n"
-              << "   Mini-Missionen  : " << s.missions << " gleichzeitig (höchstens " << limits::MAX_MISSIONS << ")\n";
+              << "   Mini-Missionen  : " << s.missions << " gleichzeitig (höchstens " << limits::MAX_MISSIONS << ")\n"
+              << "   Neue Konten     : " << (s.allowRegistration ? "erlaubt" : "nicht erlaubt") << "\n";
 }
 
 } // namespace

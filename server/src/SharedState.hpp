@@ -13,9 +13,10 @@
 //   - Der Spiel-Thread veröffentlicht einmal pro Sekunde eine KOPIE seines
 //     Zustands (PublishStatus). Die Webseite liest nur diese Kopie.
 //   - Die Webseite legt geänderte Einstellungen hier ab (RequestSettings,
-//     Schiffe getrennt mit RequestShips, Karten mit RequestMapCommand); der
-//     Spiel-Thread holt sie zu Beginn des nächsten Schritts ab und wendet sie
-//     an (TakeSettingsRequest, TakeShipsRequest, TakeMapCommands).
+//     Schiffe getrennt mit RequestShips, Karten mit RequestMapCommand, Sperren
+//     mit RequestBanCommand); der Spiel-Thread holt sie zu Beginn des nächsten
+//     Schritts ab und wendet sie an (TakeSettingsRequest, TakeShipsRequest,
+//     TakeMapCommands, TakeBanCommands).
 // So greift der Web-Thread nie direkt auf die Spielwelt zu.
 // ---------------------------------------------------------------------------
 #include "GameSettings.hpp"
@@ -41,6 +42,7 @@ struct PlayerStatus {
     bool alive = false;
     bool docked = false;
     int pingMs = 0;
+    std::string ip;                 // Adresse der aktuellen Verbindung (für "Sperren")
 };
 
 struct HighscoreStatus {
@@ -64,6 +66,26 @@ struct MapCommand {
     enum class Kind { Activate, Delete, Allow, Deny };
     Kind kind = Kind::Activate;
     std::string arg;                // Activate/Delete: Datei ("" = Standardkarte), Allow/Deny: Spielername
+};
+
+// Eine Sperre (Bereich "Sperren" der Webseite), Kopie von Ban aus Accounts.hpp
+struct BanStatus {
+    bool isIp = false;
+    std::string target;             // Konto oder Adresse/Bereich ("203.0.113.0/24")
+    std::string reason;
+    int64_t created = 0;            // Unix-Zeit
+    int64_t until = 0;              // Unix-Zeit, 0 = dauerhaft
+};
+
+// Auftrag der Webseite für den Bereich "Sperren"
+struct BanCommand {
+    enum class Kind { BanAccount, BanIp, Unban, Kick };
+    Kind kind = Kind::BanAccount;
+    bool isIp = false;              // nur Unban: Adresse statt Konto
+    std::string target;             // Spielername bzw. Adresse/Bereich (vom Web-Thread geprüft)
+    std::string reason;
+    int days = 0;                   // Dauer in Tagen, 0 = dauerhaft
+    bool withIp = false;            // BanAccount: auch die Adresse der aktuellen Verbindung sperren
 };
 
 struct ServerStatus {
@@ -99,6 +121,10 @@ struct ServerStatus {
     std::string mapNotice;          // Ergebnis des letzten Karten-Auftrags (z. B. "Konto nicht gefunden")
     int mapNoticeSeq = 0;           // zählt bei jeder neuen Meldung hoch
     bool mapNoticeError = false;    // Meldung ist ein Fehler (rot anzeigen)
+    std::vector<BanStatus> bans;
+    std::string banNotice;          // wie mapNotice, für den Bereich "Sperren"
+    int banNoticeSeq = 0;
+    bool banNoticeError = false;
 };
 
 class SharedState {
@@ -139,6 +165,15 @@ public:
         return true;
     }
 
+    // Holt alle Aufträge für den Bereich "Sperren" (älteste zuerst).
+    bool TakeBanCommands(std::vector<BanCommand>& out) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (banCommands_.empty()) return false;
+        out.swap(banCommands_);
+        banCommands_.clear();
+        return true;
+    }
+
     // --- Web-Thread -------------------------------------------------------------
     bool GetStatus(ServerStatus& out) const {
         std::lock_guard<std::mutex> lock(m_);
@@ -171,6 +206,14 @@ public:
         return true;
     }
 
+    // false, wenn schon zu viele Aufträge warten (der Spiel-Thread hängt)
+    bool RequestBanCommand(const BanCommand& c) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (banCommands_.size() >= 32) return false;
+        banCommands_.push_back(c);
+        return true;
+    }
+
 private:
     mutable std::mutex m_;
     ServerStatus status_;
@@ -181,4 +224,5 @@ private:
     std::vector<ShipType> pendingShipList_;
     bool pendingShips_ = false;
     std::vector<MapCommand> mapCommands_;
+    std::vector<BanCommand> banCommands_;
 };

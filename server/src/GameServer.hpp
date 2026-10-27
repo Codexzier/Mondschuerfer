@@ -198,6 +198,8 @@ private:
     void ApplyMapCommands();    // Bereich "Karten" der Webseite: aktivieren, löschen, Berechtigung
     void UpdateMapData();       // mapData_ aus der aktiven Karte bauen
     void MapNotice(const std::string& text, bool error = false);   // Ergebnis für die Webseite (und das Protokoll)
+    void ApplyBanCommands();    // Bereich "Sperren" der Webseite: Konto/Adresse sperren, entsperren, trennen
+    void BanNotice(const std::string& text, bool error = false);   // wie MapNotice
     void RemoveSurplusPirates();
     int NewPlayerId();
     void RestoreProgress(PlayerState& ps, const PlayerProgress& p);
@@ -232,7 +234,7 @@ private:
     void HandleChatTyping(Client& c, const net::ChatTypingMsg& m);
     void HandleLeave(Client& c);
     void BadPacket(Client& c, const char* what);
-    void FailLogin(Client& c, net::ErrorCode code);
+    void FailLogin(Client& c, net::ErrorCode code, const std::string& text = std::string());
 
     // resumePlayerId >= 0: das noch in der Welt verbliebene Schiff übernehmen (Departing)
     void LoginPlayer(Client& c, Account* account, const std::string& name, int resumePlayerId = -1);
@@ -268,6 +270,15 @@ private:
     void RememberTrustedIp(const std::string& lowerName, uint32_t ip);
     bool RegistrationAllowed(uint32_t ip, double now);
     void RecordRegistration(uint32_t ip, double now);
+    // Sperren (Accounts::Bans): gültige Sperre für diese Adresse (wie ENet) bzw.
+    // dieses Konto, sonst nullptr. Abgelaufene gelten nicht mehr.
+    const Ban* FindIpBan(uint32_t ip) const;
+    const Ban* FindAccountBan(const std::string& name) const;
+    std::string BanText(const Ban& b) const;   // Grund und Dauer für die Meldung im Spiel
+    void ExpireBans();                         // einmal pro Minute: abgelaufene entfernen
+    // Spieler oder Zuschauer vom Betreiber entfernen: Schiff sofort aus der
+    // Welt (keine 10 s Frist), Meldung schicken, Verbindung trennen.
+    void RemoveByOperator(Client& c, net::ErrorCode code, const std::string& text, const char* reason);
 
     // --- Status für die Webseite ---------------------------------------------------------
     void PublishStatus();
@@ -310,6 +321,10 @@ private:
     std::map<std::string, std::vector<uint32_t>> trustedIps_;   // erfolgreiche Anmeldungen seit Serverstart
     std::map<uint32_t, std::deque<double>> registrations_;
     double lastTableFullLog_ = -1e9;
+    std::map<uint32_t, double> bannedLogAt_;   // gesperrte Adresse -> letzte Meldung im Log (höchstens 1/min)
+    std::string banNotice_;             // für den Status (ServerStatus::banNotice)
+    int banNoticeSeq_ = 0;
+    bool banNoticeError_ = false;
     uint64_t halfOpenDropped_ = 0;      // verworfene halboffene Verbindungen (Meldung 1x pro Minute)
 
     // Messwerte für den Status (werden jede Sekunde ausgewertet und geleert)

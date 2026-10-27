@@ -64,7 +64,8 @@ namespace net {
 //            Kanonen bis 5, Modellvariante craft_racer.
 // Version 7: Karten aus dem Karteneditor (MapUpload, MapUploadResult, MapData).
 // Version 8: Chat (Chat, ChatTyping, ChatLine; SnapShip::chatting).
-constexpr uint16_t PROTOCOL_VERSION = 8;
+// Version 9: Sperren über die Verwaltungsseite (ErrorCode Banned, Kicked, RegistrationClosed).
+constexpr uint16_t PROTOCOL_VERSION = 9;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -136,6 +137,9 @@ enum class ErrorCode : uint8_t {
     SpectatorsFull = 8,
     BadRequest = 9,
     ServerShutdown = 10,
+    Banned = 11,              // Konto oder Adresse gesperrt (Verwaltungsseite, Bereich "Sperren")
+    Kicked = 12,              // vom Betreiber getrennt
+    RegistrationClosed = 13,  // Server nimmt keine neuen Konten an (Spielparameter)
 };
 
 // Deutsche Beschreibung eines Fehlers (für die Anzeige im Spiel)

@@ -726,6 +726,7 @@ Container `/data` (Docker-Volume), einstellbar mit `MONDSCHUERFER_DATA` oder `--
 | `highscores.txt` | jede erreichte Zielrunde eine Zeile |
 | `server.txt` | Server-Salz, Welt-Seed, insgesamt abgelieferte Ressourcen (Ausbaustufe der Stationen) |
 | `settings.txt` | nur, wenn auf der Webseite Einstellungen gespeichert wurden |
+| `bans.txt` | gesperrte Konten und IP-Adressen (Bereich „Sperren“ der Webseite) mit Grund, Anlage und Ende |
 | `*.defekt-…` | Kopie einer Datei, in der beim Laden kaputte Zeilen übersprungen wurden |
 
 Gestaltungsentscheidungen, die man im Code sieht:
@@ -765,6 +766,7 @@ Die Webseite besteht aus drei statischen Dateien ([server/web/](../server/web/):
 | `POST /api/settings/reset` | zurück auf die Standardwerte aus `docker-compose.yml` |
 | `POST /api/ships` | Schiffe des Raumschiffsverkäufers ändern oder hinzufügen (gespeichert in `ships.txt`) |
 | `POST /api/maps` | Bereich „Karten“: Karte aktivieren/löschen, Hochladen für einen Spieler erlauben/entziehen |
+| `POST /api/bans` | Bereich „Sperren“: Konto oder IP-Adresse/-Bereich sperren, entsperren, Spieler trennen |
 
 Der Browser lädt die Seite einmal und fragt danach alle 2 Sekunden `/api/status` ab. Der Spiel-Thread
 wird dabei nie berührt (Abschnitt 5).
@@ -779,7 +781,7 @@ bestimmte Gefahr:
 | nach 5 Fehlversuchen ist die IP-Adresse 60 s gesperrt (Antwort 429), jede weitere Sperre doppelt so lang, höchstens 15 min | Passwort durchprobieren |
 | POST nur mit Header `X-Requested-With: mondschuerfer` und passendem `Origin`/`Host` | **CSRF**: eine fremde Webseite, die im Browser des angemeldeten Betreibers heimlich ein Formular abschickt |
 | Sicherheits-Header: `Content-Security-Policy`, `X-Frame-Options: DENY`, `nosniff`, `Cache-Control: no-store` | eingeschleuste Skripte, Einbetten in fremde Seiten (Clickjacking), Zwischenspeichern von Daten |
-| genau sieben feste Pfade, kein allgemeines Ausliefern eines Ordners | Lesen fremder Dateien mit `/../` |
+| genau zehn feste Pfade, kein allgemeines Ausliefern eines Ordners | Lesen fremder Dateien mit `/../` |
 | `docker-compose.yml` gibt Port 8080 nur auf `127.0.0.1` frei | Mitlesen im Netz: Basic Auth schickt das Passwort bei jeder Anfrage nur Base64-kodiert, und der Server spricht kein HTTPS |
 | optionaler HTTPS-Vorbau (Caddy, Profil `online`) | Zugriff über das Internet ohne Klartext-Passwort |
 

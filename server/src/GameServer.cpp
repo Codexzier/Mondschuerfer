@@ -159,6 +159,20 @@ std::string IpText(const ENetAddress& a) {
     return buf;
 }
 
+// ENet-Adresse -> Lesereihenfolge wie in Ban::net (192.168.1.5 = 0xC0A80105)
+uint32_t ReadableIp(uint32_t hostNetworkOrder) {
+    uint8_t b[4];
+    std::memcpy(b, &hostNetworkOrder, sizeof(b));
+    return (static_cast<uint32_t>(b[0]) << 24) | (static_cast<uint32_t>(b[1]) << 16) | (static_cast<uint32_t>(b[2]) << 8) |
+           static_cast<uint32_t>(b[3]);
+}
+
+// Dauer einer Sperre für Meldungen: "dauerhaft", "1 Tag", "7 Tage"
+std::string DaysText(int days) {
+    if (days <= 0) return "dauerhaft";
+    return days == 1 ? std::string("1 Tag") : std::to_string(days) + " Tage";
+}
+
 // Listen von Zeitpunkten (Fehlversuche, neue Konten) je Schlüssel, z. B.
 // Name oder Adresse. Die Schablone (template) funktioniert für jede
 // Schlüsselart, die std::map kennt.
@@ -475,6 +489,7 @@ void GameServer::Step() {
     ApplySettingsRequest();
     ApplyShipsRequest();
     ApplyMapCommands();
+    ApplyBanCommands();
 
     for (auto& up : clients_)
         if (up->isBot) BotThink(*up);
@@ -809,6 +824,9 @@ void GameServer::Housekeeping() {
         PruneTimes(failuresByName_, now, LOGIN_FAILURE_WINDOW);
         PruneTimes(failuresByIp_, now, LOGIN_FAILURE_WINDOW);
         PruneTimes(registrations_, now, REGISTRATION_WINDOW);
+        for (auto it = bannedLogAt_.begin(); it != bannedLogAt_.end();)
+            it = now - it->second >= 60.0 ? bannedLogAt_.erase(it) : std::next(it);
+        ExpireBans();
 
         // Für den Betreiber: Hinweise auf einen Angriff auf die Verbindungsplätze
         // (höchstens eine Meldung pro Minute, nicht eine pro Paket).
@@ -947,6 +965,19 @@ void GameServer::OnConnect(ENetPeer* peer, uint32_t data) {
                       static_cast<unsigned>(data)));
         Log(Fmt("Verbindung #%u (%s) abgelehnt: falsche Protokollversion %u", c.connId, c.ipText.c_str(),
                 static_cast<unsigned>(data)));
+        Disconnect(c);
+        return;
+    }
+    if (const Ban* b = FindIpBan(c.ip)) {
+        SendError(c, net::ErrorCode::Banned, BanText(*b));
+        // Höchstens eine Meldung pro Minute und Adresse: Wer es ständig neu
+        // versucht, würde sonst das Log füllen.
+        const double now = Now();
+        auto it = bannedLogAt_.find(c.ip);
+        if (it == bannedLogAt_.end() || now - it->second >= 60.0) {
+            Log(Fmt("Verbindung #%u (%s) abgelehnt: Adresse gesperrt (%s)", c.connId, c.ipText.c_str(), b->target.c_str()));
+            bannedLogAt_[c.ip] = now;
+        }
         Disconnect(c);
         return;
     }
@@ -1102,6 +1133,10 @@ void GameServer::HandleSpectate(Client& c) {
 
 void GameServer::HandleRegister(Client& c, const net::RegisterMsg& m) {
     if (c.role != Role::Lobby) return;
+    if (!settings_.allowRegistration) {
+        SendError(c, net::ErrorCode::RegistrationClosed);
+        return;
+    }
     if (!net::ValidPlayerName(m.name)) {
         SendError(c, net::ErrorCode::NameInvalid);
         return;
@@ -1147,7 +1182,7 @@ void GameServer::HandleLoginStart(Client& c, const net::LoginStartMsg& m) {
     Send(c, net::Encode(ch), true);
 }
 
-void GameServer::FailLogin(Client& c, net::ErrorCode code) {
+void GameServer::FailLogin(Client& c, net::ErrorCode code, const std::string& text) {
     if (++c.failedLogins >= MAX_LOGIN_FAILURES_PER_CONNECTION) {
         SendError(c, net::ErrorCode::TooManyAttempts);
         Log(Fmt("Verbindung #%u (%s): %d Fehlversuche bei der Anmeldung – getrennt", c.connId, c.ipText.c_str(),
@@ -1155,7 +1190,7 @@ void GameServer::FailLogin(Client& c, net::ErrorCode code) {
         Disconnect(c);
         return;
     }
-    SendError(c, code);
+    SendError(c, code, text);
 }
 
 Account* GameServer::CheckProof(Client& c, const net::Key32& proof, const char* what) {
@@ -1186,6 +1221,15 @@ Account* GameServer::CheckProof(Client& c, const net::Key32& proof, const char* 
     if (!ok) {
         RecordLoginFailure(lower, acc != nullptr, c, now);
         FailLogin(c, net::ErrorCode::WrongLogin);
+        return nullptr;
+    }
+    // Gesperrt? Erst nach dem richtigen Passwort prüfen: So erfährt nur der
+    // Besitzer von der Sperre, nicht jeder, der den Namen ausprobiert.
+    // Zählt wie ein Fehlversuch (höchstens 5 pro Verbindung, dann Trennung).
+    if (const Ban* b = FindAccountBan(acc->name)) {
+        Log(Fmt("Verbindung #%u (%s): Anmeldung als %s abgelehnt (Konto gesperrt)", c.connId, c.ipText.c_str(),
+                acc->name.c_str()));
+        FailLogin(c, net::ErrorCode::Banned, BanText(*b));
         return nullptr;
     }
     return acc;
@@ -2011,9 +2055,10 @@ void GameServer::ApplySettings(const GameSettings& s) {
     const GameSettings old = settings_;
     settings_ = s;
     const bool rebuild = NeedsWorldRebuild(old, s);
-    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben, %d Missionen%s",
+    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben, %d Missionen, neue Konten %s%s",
             s.serverName.c_str(), DifficultyName(s.difficulty), s.enemyShips, s.tradeStations, s.shipyards,
-            MoonColorName(s.moon), s.maxPlayers, s.lives, s.missions, rebuild ? " – Karte wird neu aufgebaut" : ""));
+            MoonColorName(s.moon), s.maxPlayers, s.lives, s.missions, s.allowRegistration ? "erlaubt" : "nicht erlaubt",
+            rebuild ? " – Karte wird neu aufgebaut" : ""));
     if (rebuild) {
         RebuildWorld();
     } else {
@@ -2107,6 +2152,183 @@ void GameServer::MapNotice(const std::string& text, bool error) {
     mapNoticeError_ = error;
     ++mapNoticeSeq_;
     Log("Karten: " + text);
+}
+
+// Bereich "Sperren" der Webseite. Eine neue Sperre wirkt sofort: Wer
+// betroffen und verbunden ist, wird getrennt. Der Web-Thread hat Namen und
+// Adressen schon geprüft; hier wird trotzdem nichts ungeprüft übernommen.
+void GameServer::ApplyBanCommands() {
+    std::vector<BanCommand> cmds;
+    if (!shared_ || !shared_->TakeBanCommands(cmds)) return;
+    const int64_t now = UnixNow();
+    const std::string full = "Es gibt schon " + std::to_string(Accounts::MAX_BANS) + " Sperren. Bitte zuerst alte entfernen.";
+
+    // Alle Verbindungen aus dem Bereich einer IP-Sperre trennen; Anzahl zurück
+    auto removeInRange = [&](const Ban& b) {
+        int n = 0;
+        for (auto& up : clients_) {
+            Client& c = *up;
+            if (c.closing || !c.peer || !IpInRange(ReadableIp(c.ip), b.net, b.prefix)) continue;
+            RemoveByOperator(c, net::ErrorCode::Banned, BanText(b), "Adresse gesperrt");
+            ++n;
+        }
+        return n;
+    };
+
+    for (const BanCommand& cmd : cmds) {
+        if (!cmd.reason.empty() && !net::ValidChatText(cmd.reason)) {   // wird im Spiel angezeigt
+            BanNotice("Der Grund enthält Zeichen, die das Spiel nicht anzeigen kann.", true);
+            continue;
+        }
+        switch (cmd.kind) {
+            case BanCommand::Kind::BanAccount: {
+                const Account* acc = accounts_.Find(cmd.target);
+                if (!acc) {
+                    BanNotice("Es gibt kein Konto \"" + cmd.target + "\".", true);
+                    break;
+                }
+                Ban b;
+                b.target = acc->name;
+                b.reason = cmd.reason;
+                b.created = now;
+                b.until = cmd.days > 0 ? now + static_cast<int64_t>(cmd.days) * 86400 : 0;
+                if (!accounts_.AddBan(b)) {
+                    BanNotice(full, true);
+                    break;
+                }
+                std::string text = acc->name + " ist gesperrt (" + DaysText(cmd.days) + ").";
+                Client* online = nullptr;
+                for (auto& up : clients_)
+                    if (!up->closing && up->role == Role::Player && up->account == acc) online = up.get();
+                // Auf Wunsch auch die Adresse der aktuellen Verbindung sperren
+                Ban ipBan;
+                bool ipBanned = false;
+                if (cmd.withIp) {
+                    if (!online || !online->peer) {
+                        text += " Die Adresse wurde nicht gesperrt, weil " + acc->name + " gerade nicht online ist.";
+                    } else {
+                        ipBan.isIp = true;
+                        ipBan.net = ReadableIp(online->ip);
+                        ipBan.target = IpRangeText(ipBan.net, ipBan.prefix);
+                        ipBan.reason = cmd.reason;
+                        ipBan.created = now;
+                        ipBan.until = b.until;
+                        if (IpRangeProtected(ipBan.net, ipBan.prefix)) {
+                            text += " Die Adresse " + ipBan.target + " wurde nicht gesperrt (Docker-Netz oder dieser Rechner).";
+                        } else if (!accounts_.AddBan(ipBan)) {
+                            text += " Die Adresse wurde nicht gesperrt: " + full;
+                        } else {
+                            text += " Adresse " + ipBan.target + " ebenfalls gesperrt.";
+                            ipBanned = true;
+                        }
+                    }
+                }
+                if (online) {
+                    RemoveByOperator(*online, net::ErrorCode::Banned, BanText(b), "Konto gesperrt");
+                    text += " Die Verbindung wurde getrennt.";
+                }
+                // Weitere Verbindungen von der eben gesperrten Adresse (z. B. ein Zweitkonto)
+                if (ipBanned) removeInRange(ipBan);
+                accounts_.SaveBans();
+                BanNotice(text);
+                break;
+            }
+            case BanCommand::Kind::BanIp: {
+                Ban b;
+                b.isIp = true;
+                if (!ParseIpRange(cmd.target, b.net, b.prefix) || IpRangeProtected(b.net, b.prefix)) {
+                    BanNotice("Diese Adresse kann nicht gesperrt werden.", true);
+                    break;
+                }
+                b.target = IpRangeText(b.net, b.prefix);
+                b.reason = cmd.reason;
+                b.created = now;
+                b.until = cmd.days > 0 ? now + static_cast<int64_t>(cmd.days) * 86400 : 0;
+                if (!accounts_.AddBan(b)) {
+                    BanNotice(full, true);
+                    break;
+                }
+                accounts_.SaveBans();
+                const int n = removeInRange(b);
+                BanNotice(b.target + " ist gesperrt (" + DaysText(cmd.days) + ")." +
+                          (n > 0 ? " " + std::to_string(n) + " Verbindung(en) getrennt." : std::string()));
+                break;
+            }
+            case BanCommand::Kind::Unban:
+                if (accounts_.RemoveBan(cmd.isIp, cmd.target)) {
+                    accounts_.SaveBans();
+                    BanNotice(cmd.target + " ist wieder freigegeben.");
+                } else {
+                    BanNotice("Diese Sperre gibt es nicht mehr.", true);
+                }
+                break;
+            case BanCommand::Kind::Kick: {
+                const std::string lower = ToLowerAscii(cmd.target);
+                Client* found = nullptr;
+                for (auto& up : clients_)
+                    if (!up->closing && up->role == Role::Player && ToLowerAscii(up->name) == lower) found = up.get();
+                if (!found) {
+                    BanNotice(cmd.target + " ist nicht online.", true);
+                    break;
+                }
+                const std::string name = found->name;
+                RemoveByOperator(*found, net::ErrorCode::Kicked, std::string(), "vom Betreiber getrennt");
+                BanNotice(name + " wurde vom Server getrennt.");
+                break;
+            }
+        }
+    }
+}
+
+void GameServer::BanNotice(const std::string& text, bool error) {
+    banNotice_ = text;
+    banNoticeError_ = error;
+    ++banNoticeSeq_;
+    Log("Sperren: " + text);
+}
+
+void GameServer::RemoveByOperator(Client& c, net::ErrorCode code, const std::string& text, const char* reason) {
+    if (c.closing) return;
+    if (c.role == Role::Player) LogoutPlayer(c, reason, true, false);
+    else if (c.role == Role::Spectator) Log(Fmt("Zuschauer #%u (%s): %s", c.connId, c.ipText.c_str(), reason));
+    SendError(c, code, text);
+    Disconnect(c);
+}
+
+const Ban* GameServer::FindIpBan(uint32_t ip) const {
+    const uint32_t readable = ReadableIp(ip);
+    const int64_t now = UnixNow();
+    for (const Ban& b : accounts_.Bans())
+        if (b.isIp && (b.until == 0 || b.until > now) && IpInRange(readable, b.net, b.prefix)) return &b;
+    return nullptr;
+}
+
+const Ban* GameServer::FindAccountBan(const std::string& name) const {
+    const std::string lower = ToLowerAscii(name);
+    const int64_t now = UnixNow();
+    for (const Ban& b : accounts_.Bans())
+        if (!b.isIp && (b.until == 0 || b.until > now) && ToLowerAscii(b.target) == lower) return &b;
+    return nullptr;
+}
+
+// Text für den Spieler, z. B. "Grund: Beleidigungen im Chat, noch 7 Tage".
+// Nur Zeichen, die die Schrift des Spiels kennt (kein Gedankenstrich).
+std::string GameServer::BanText(const Ban& b) const {
+    std::string text = b.reason.empty() ? std::string() : "Grund: " + b.reason + ", ";
+    if (b.until == 0) return text + "dauerhaft";
+    const int64_t left = std::max<int64_t>(1, b.until - UnixNow());
+    if (left >= 2 * 86400) return text + "noch " + std::to_string((left + 86399) / 86400) + " Tage";
+    if (left >= 2 * 3600) return text + "noch " + std::to_string((left + 3599) / 3600) + " Stunden";
+    const int64_t minutes = (left + 59) / 60;
+    return text + "noch " + std::to_string(minutes) + (minutes == 1 ? " Minute" : " Minuten");
+}
+
+void GameServer::ExpireBans() {
+    std::vector<Ban> removed;
+    accounts_.RemoveExpiredBans(UnixNow(), removed);
+    if (removed.empty()) return;
+    for (const Ban& b : removed) Log("Sperren: Sperre für " + b.target + " ist abgelaufen.");
+    accounts_.SaveBans();
 }
 
 void GameServer::BroadcastSettings() {
@@ -2315,6 +2537,7 @@ void GameServer::PublishStatus() {
         p.alive = world_.PlayerAlive(*ps);
         p.docked = ps->dockedAt >= 0;
         p.pingMs = c.peer ? static_cast<int>(c.peer->roundTripTime) : 0;
+        p.ip = c.peer ? c.ipText : std::string();
         st.players.push_back(p);
     }
     SortByProgress(st.players);
@@ -2337,6 +2560,20 @@ void GameServer::PublishStatus() {
     st.mapNotice = mapNotice_;
     st.mapNoticeSeq = mapNoticeSeq_;
     st.mapNoticeError = mapNoticeError_;
+    const int64_t unixNow = UnixNow();
+    for (const Ban& b : accounts_.Bans()) {
+        if (b.until > 0 && b.until <= unixNow) continue;   // abgelaufen, wird beim nächsten ExpireBans entfernt
+        BanStatus bs;
+        bs.isIp = b.isIp;
+        bs.target = b.target;
+        bs.reason = b.reason;
+        bs.created = b.created;
+        bs.until = b.until;
+        st.bans.push_back(bs);
+    }
+    st.banNotice = banNotice_;
+    st.banNoticeSeq = banNoticeSeq_;
+    st.banNoticeError = banNoticeError_;
     shared_->PublishStatus(st);
 }
 

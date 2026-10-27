@@ -7,7 +7,7 @@
 //      (ein deutsches System würde sonst "3,5" statt "3.5" schreiben und die
 //      Datei wäre auf einem anderen System nicht mehr lesbar).
 //   3. Die Klasse Accounts: Laden, Konten, Bestenliste, Serverdaten,
-//      Einstellungen, Karten.
+//      Einstellungen, Karten, Sperren.
 //
 // Threads: Alle öffentlichen Funktionen laufen im Spiel-Thread. Nur das
 // eigentliche Schreiben der Dateien (WriteFileAtomic, inkl. fsync) erledigt
@@ -49,6 +49,7 @@ constexpr const char* HIGHSCORES_FILE = "highscores.txt";
 constexpr const char* SERVER_FILE = "server.txt";
 constexpr const char* SETTINGS_FILE = "settings.txt";
 constexpr const char* SHIPS_FILE = "ships.txt";
+constexpr const char* BANS_FILE = "bans.txt";
 constexpr const char* MAPS_DIR = "karten";
 constexpr const char* MAP_EXT = ".karte";
 
@@ -244,6 +245,38 @@ double ClampSeconds(double v) { return std::clamp(v, 0.0, 100.0 * 365.0 * 24.0 *
 bool HighscoreLess(const HighscoreRecord& a, const HighscoreRecord& b) {
     if (a.seconds != b.seconds) return a.seconds < b.seconds;
     return a.when < b.when;
+}
+
+// Eine Zeile aus bans.txt, Aufbau siehe SaveBans. false = beschädigt.
+bool ParseBanLine(const std::string& line, Ban& b) {
+    if (line.rfind("ban=", 0) != 0) return false;
+    std::string part[5];
+    size_t start = 4;
+    int n = 0;
+    while (n < 4) {
+        const size_t bar = line.find('|', start);
+        if (bar == std::string::npos) return false;
+        part[n++] = line.substr(start, bar - start);
+        start = bar + 1;
+    }
+    part[4] = line.substr(start);   // Grund am Ende: darf selbst "|" enthalten
+    long long until = 0, created = 0;
+    if (!ParseI64(part[1], until) || until < 0 || !ParseI64(part[2], created) || created < 0) return false;
+    b.until = until;
+    b.created = created;
+    if (part[0] == "ip") {
+        b.isIp = true;
+        if (!ParseIpRange(part[3], b.net, b.prefix) || IpRangeProtected(b.net, b.prefix)) return false;
+        b.target = IpRangeText(b.net, b.prefix);
+    } else if (part[0] == "konto") {
+        if (!net::ValidPlayerName(part[3])) return false;
+        b.target = part[3];
+    } else {
+        return false;
+    }
+    // Der Grund wird im Spiel angezeigt: nur Zeichen, die die Schrift kennt
+    b.reason = part[4].empty() || net::ValidChatText(part[4]) ? part[4] : std::string();
+    return true;
 }
 
 } // namespace
@@ -524,6 +557,21 @@ bool Accounts::Load(std::string& error) {
         activeMap_.clear();
     }
 
+    // --- bans.txt: Sperren ------------------------------------------------------------
+    rr = ReadLines(PathOf(BANS_FILE), lines, error);
+    if (rr == ReadResult::Error) return false;
+    skipped = 0;
+    for (const auto& line : lines) {
+        if (IsCommentOrEmpty(line)) continue;
+        Ban b;
+        if (!ParseBanLine(line, b) || bans_.size() >= MAX_BANS) { ++skipped; continue; }
+        bans_.push_back(std::move(b));
+    }
+    if (skipped > 0) {
+        std::cerr << "Warnung: " << skipped << " beschädigte Zeile(n) in " << BANS_FILE << " übersprungen\n";
+        BackupDamagedFile(PathOf(BANS_FILE));
+    }
+
     // server.txt immer einmal schreiben: legt beim ersten Start das Salz ab und
     // prüft gleich, ob der Ordner beschreibbar ist (sonst lieber gar nicht starten,
     // als stundenlang zu spielen und dann nichts speichern zu können).
@@ -677,6 +725,7 @@ bool Accounts::LoadSettings(GameSettings& inOut) const {
         else if (key == "maxPlayers") ParseInt(value, inOut.maxPlayers, 1, limits::MAX_PLAYERS_LIMIT);
         else if (key == "lives") ParseInt(value, inOut.lives, 1, limits::MAX_LIVES);
         else if (key == "missions") ParseInt(value, inOut.missions, 0, limits::MAX_MISSIONS);
+        else if (key == "registration") inOut.allowRegistration = value != "0";
     }
     Sanitize(inOut);
     return true;
@@ -696,6 +745,7 @@ void Accounts::SaveSettings(const GameSettings& s) {
     out += "maxPlayers=" + std::to_string(s.maxPlayers) + "\n";
     out += "lives=" + std::to_string(s.lives) + "\n";
     out += "missions=" + std::to_string(s.missions) + "\n";
+    out += std::string("registration=") + (s.allowRegistration ? "1" : "0") + "\n";
     QueueWrite(PathOf(SETTINGS_FILE), std::move(out), false, "Einstellungen");
 }
 
@@ -820,4 +870,56 @@ std::vector<std::string> Accounts::MapUploaders() const {
     for (const auto& entry : accounts_)   // std::map: schon nach (kleingeschriebenem) Namen sortiert
         if (entry.second.mapUpload) out.push_back(entry.second.name);
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Sperren
+// ---------------------------------------------------------------------------
+bool Accounts::AddBan(const Ban& b) {
+    for (Ban& old : bans_) {
+        const bool same = old.isIp == b.isIp &&
+                          (b.isIp ? old.net == b.net && old.prefix == b.prefix : ToLowerAscii(old.target) == ToLowerAscii(b.target));
+        if (same) {
+            old = b;
+            return true;
+        }
+    }
+    if (bans_.size() >= MAX_BANS) return false;
+    bans_.push_back(b);
+    return true;
+}
+
+bool Accounts::RemoveBan(bool isIp, const std::string& target) {
+    const std::string lower = ToLowerAscii(target);
+    auto it = std::find_if(bans_.begin(), bans_.end(),
+                           [&](const Ban& b) { return b.isIp == isIp && ToLowerAscii(b.target) == lower; });
+    if (it == bans_.end()) return false;
+    bans_.erase(it);
+    return true;
+}
+
+void Accounts::RemoveExpiredBans(int64_t now, std::vector<Ban>& removed) {
+    for (size_t i = 0; i < bans_.size();) {
+        if (bans_[i].until > 0 && bans_[i].until <= now) {
+            removed.push_back(bans_[i]);
+            bans_.erase(bans_.begin() + static_cast<long>(i));
+        } else {
+            ++i;
+        }
+    }
+}
+
+// bans.txt: eine Zeile je Sperre
+//   ban=Art|Ende|Anlage|Ziel|Grund
+// Art "konto" oder "ip", Ende und Anlage als Unix-Zeit (Ende 0 = dauerhaft).
+// Der Grund steht am Ende, weil er selbst "|" enthalten darf.
+void Accounts::SaveBans() {
+    if (dir_.empty()) return;
+    std::string out = "# Mondschürfer – Sperren (Verwaltungsseite, Bereich \"Sperren\").\n";
+    out += "# ban=Art (konto/ip)|Ende (Unix-Zeit, 0 = dauerhaft)|Anlage (Unix-Zeit)|Konto oder Adresse|Grund\n";
+    for (const Ban& b : bans_) {
+        out += std::string("ban=") + (b.isIp ? "ip" : "konto") + "|" + std::to_string(b.until) + "|" +
+               std::to_string(b.created) + "|" + b.target + "|" + b.reason + "\n";
+    }
+    QueueWrite(PathOf(BANS_FILE), std::move(out), false, "Sperren");
 }

@@ -61,6 +61,9 @@ const char* ErrorText(ErrorCode c) {
         case ErrorCode::SpectatorsFull: return "Keine Zuschauerplätze mehr frei.";
         case ErrorCode::BadRequest: return "Ungültige Anfrage.";
         case ErrorCode::ServerShutdown: return "Der Server wird beendet.";
+        case ErrorCode::Banned: return "Du bist auf diesem Server gesperrt.";
+        case ErrorCode::Kicked: return "Der Betreiber hat dich vom Server getrennt.";
+        case ErrorCode::RegistrationClosed: return "Dieser Server nimmt zurzeit keine neuen Konten an.";
     }
     return "Unbekannter Fehler";
 }
