@@ -168,6 +168,7 @@ private:
 
         // --- Statistik (Benchmark) ---
         uint64_t bytesSent = 0, packetsSent = 0, snapshotBytes = 0, snapshotCount = 0, eventBytes = 0;
+        uint64_t bytesSentMinuteStart = 0;  // bytesSent zu Beginn der Minute (Lastprotokoll: meiste Daten)
 
         bool isBot = false;
         BotBrain bot;
@@ -282,6 +283,10 @@ private:
 
     // --- Status für die Webseite ---------------------------------------------------------
     void PublishStatus();
+    // Lastprotokoll: die Messwerte jeder Sekunde (aus PublishStatus) zu einer
+    // Minute zusammenfassen und je Minute eine Zeile schreiben (Accounts::AppendLoadLog).
+    void RecordLoad(const ServerStatus& st);
+    void FinishLoadMinute();
 
     // --- Benchmark --------------------------------------------------------------------------
     void AddBot(int index);
@@ -330,6 +335,15 @@ private:
     // Messwerte für den Status (werden jede Sekunde ausgewertet und geleert)
     std::chrono::steady_clock::time_point startTime_;
     std::vector<double> tickMs_;
+    // Lastprotokoll: Summen und Höchstwerte der laufenden Minute
+    struct LoadMinute {
+        int64_t minute = -1;            // Unix-Zeit / 60
+        int samples = 0;                // Anzahl Sekundenwerte
+        double tickSum = 0.0, tickMax = 0.0, cpuSum = 0.0, cpuMax = 0.0, memMax = 0.0;
+        double inSum = 0.0, inMax = 0.0, outSum = 0.0, outMax = 0.0;
+        int players = 0, spectators = 0, connections = 0;   // Höchstwerte
+    };
+    LoadMinute load_;
     double lastStatusAt_ = 0.0;
     double lastCpuSeconds_ = 0.0;
 };

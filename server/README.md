@@ -179,6 +179,10 @@ Die Seite aktualisiert sich alle 2 Sekunden selbst und zeigt:
 
 - **Auslastung:** Rechenzeit pro Simulationsschritt (Durchschnitt/Maximum; das Budget sind
   33,3 ms), Auslastung in Prozent, CPU, Arbeitsspeicher, Netzwerk ein/aus, Laufzeit.
+- **Verlauf:** Diagramme der letzten 24 Stunden (längster Schritt, CPU, gesendete Daten, Spieler),
+  die zehn größten Lastspitzen und das Lastprotokoll als CSV-Datei je Tag zum Herunterladen.
+  Eine Minute gilt als Lastspitze, wenn ein Schritt länger als 16,7 ms dauerte (halbes Budget) oder
+  die CPU über 80 % lag; das Server-Log nennt dann auch den Client mit den meisten Daten.
 - **Spieler:** Name, Fortschritt zum Ziel (100.000), Kontostand, Runde, Aufrüstungen, Schiffszeit,
   Sitzungsdauer, gesamte Anmeldezeit, Abschüsse, Abstürze, Ziele, Ping, IP-Adresse; dazu die Knöpfe
   **Trennen** und **Sperren**.
@@ -442,6 +446,8 @@ Alles Wichtige liegt im Docker-Volume **`mondschuerfer-data`** (im Container `/d
 | `settings.txt` | nur vorhanden, wenn auf der Webseite Einstellungen gespeichert wurden |
 | `ships.txt` | nur vorhanden, wenn auf der Webseite Schiffe gespeichert wurden |
 | `karten/` | hochgeladene Karten aus dem Karteneditor (eine `.karte`-Datei je Karte) |
+| `bans.txt` | gesperrte Konten und IP-Adressen (Bereich **Sperren** der Webseite) |
+| `logs/` | Lastprotokoll, eine Datei `last-JJJJ-MM-TT.csv` je Tag; der Server löscht Dateien nach 30 Tagen |
 | `*.defekt-…` | Kopien von Dateien, in denen beim Laden kaputte Zeilen übersprungen wurden |
 
 Die Dateien sind einfacher Text. Ansehen ja – **bearbeiten nur bei gestopptem Server**, sonst

@@ -50,6 +50,7 @@ constexpr const char* SERVER_FILE = "server.txt";
 constexpr const char* SETTINGS_FILE = "settings.txt";
 constexpr const char* SHIPS_FILE = "ships.txt";
 constexpr const char* BANS_FILE = "bans.txt";
+constexpr const char* LOGS_DIR = "logs";
 constexpr const char* MAPS_DIR = "karten";
 constexpr const char* MAP_EXT = ".karte";
 
@@ -119,6 +120,38 @@ bool WriteFileAtomic(const fs::path& target, const std::string& content, std::st
     SyncPath(target.parent_path());
 #endif
     return true;
+}
+
+// Hängt text an eine Datei an (Lastprotokoll); eine neue oder leere Datei
+// beginnt mit header. Ohne fsync und ohne Umbenennen: Geht bei einem
+// Stromausfall die letzte Zeile verloren, ist das bei einem Protokoll egal.
+bool AppendToFile(const fs::path& p, const std::string& header, const std::string& text, std::string& error) {
+    std::error_code ec;
+    const bool fresh = !fs::exists(p, ec) || fs::file_size(p, ec) == 0;
+    std::ofstream out(p, std::ios::binary | std::ios::app);
+    if (!out) {
+        error = "Datei kann nicht geschrieben werden: " + PathText(p);
+        return false;
+    }
+    if (fresh) out << header;
+    out << text;
+    out.flush();
+    if (!out) {
+        error = "Schreibfehler (Datenträger voll?): " + PathText(p);
+        return false;
+    }
+    return true;
+}
+
+// Löscht in dir alle Dateien last-JJJJ-MM-TT.csv mit einem Tag vor "before"
+// (JJJJ-MM-TT: Texte in dieser Form lassen sich einfach vergleichen).
+void PruneLoadLogs(const fs::path& dir, const std::string& before) {
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        const std::string name = entry.path().filename().u8string();
+        if (name.size() != 19 || name.rfind("last-", 0) != 0 || name.substr(15) != ".csv") continue;
+        if (name.substr(5, 10) < before) fs::remove(entry.path(), ec);
+    }
 }
 
 enum class ReadResult { Ok, Missing, Error };
@@ -308,6 +341,7 @@ void Accounts::QueueWrite(const std::string& path, std::string content, bool rem
     // Pro Datei nur der neueste Auftrag: ein älterer, noch nicht geschriebener
     // Stand wird einfach ersetzt (er wäre sowieso sofort überschrieben worden).
     WriteJob& job = pendingWrites_[path];
+    job = WriteJob{};
     job.content = std::move(content);
     job.remove = remove;
     job.what = what;
@@ -341,6 +375,11 @@ void Accounts::WriterLoop() {
             fs::path tmp = path;
             tmp += ".tmp";
             fs::remove(tmp, ec);
+        } else if (job.pruneLogs) {
+            PruneLoadLogs(path, job.content);
+        } else if (job.append) {
+            ok = AppendToFile(path, job.header, job.content, error);
+            if (!ok) std::cerr << "FEHLER beim Speichern (" << job.what << "): " << error << std::endl;
         } else {
             ok = WriteFileAtomic(path, job.content, error);
             if (!ok) std::cerr << "FEHLER beim Speichern (" << job.what << "): " << error << std::endl;
@@ -555,6 +594,13 @@ bool Accounts::Load(std::string& error) {
     if (!activeMap_.empty() && !FindMap(activeMap_)) {
         std::cerr << "Warnung: aktive Karte \"" << activeMap_ << "\" fehlt, verwende die Standardkarte\n";
         activeMap_.clear();
+    }
+
+    // --- logs/: Lastprotokoll --------------------------------------------------------------
+    fs::create_directories(dir / LOGS_DIR, ec);
+    if (ec) {
+        error = "Ordner für das Lastprotokoll kann nicht angelegt werden (" + ec.message() + "): " + PathText(dir / LOGS_DIR);
+        return false;
     }
 
     // --- bans.txt: Sperren ------------------------------------------------------------
@@ -922,4 +968,34 @@ void Accounts::SaveBans() {
                std::to_string(b.created) + "|" + b.target + "|" + b.reason + "\n";
     }
     QueueWrite(PathOf(BANS_FILE), std::move(out), false, "Sperren");
+}
+
+// ---------------------------------------------------------------------------
+// Lastprotokoll
+// ---------------------------------------------------------------------------
+std::string Accounts::LoadLogDir() const { return dir_.empty() ? std::string() : (fs::path(dir_) / LOGS_DIR).string(); }
+
+void Accounts::AppendLoadLog(const std::string& day, const std::string& pruneBefore, const std::string& header,
+                             const std::string& line) {
+    if (dir_.empty()) return;
+    std::lock_guard<std::mutex> lock(writeMutex_);
+    if (day != loadLogDay_) {
+        loadLogDay_ = day;
+        WriteJob& prune = pendingWrites_[LoadLogDir()];
+        prune = WriteJob{};
+        prune.pruneLogs = true;
+        prune.content = pruneBefore;
+        prune.what = "Lastprotokoll";
+    }
+    // Liegt für die Datei schon ein Auftrag bereit, die Zeile einfach anhängen
+    WriteJob& job = pendingWrites_[(fs::path(LoadLogDir()) / ("last-" + day + ".csv")).string()];
+    if (!job.append) {
+        job = WriteJob{};
+        job.append = true;
+        job.header = header;
+        job.what = "Lastprotokoll";
+    }
+    job.content += line;
+    if (!writer_.joinable()) writer_ = std::thread(&Accounts::WriterLoop, this);
+    writeCv_.notify_one();
 }

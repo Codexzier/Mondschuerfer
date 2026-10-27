@@ -33,6 +33,9 @@ struct WebConfig {
     // keiner. Nur von dieser Adresse wird der Header "X-Real-IP" (echte
     // Adresse des Besuchers) übernommen, siehe WebContext::ClientAddress.
     std::string trustedProxy;
+    // Ordner des Lastprotokolls (Accounts::LoadLogDir, Tagesdateien last-JJJJ-MM-TT.csv);
+    // leer = kein Lastprotokoll. Nur gelesen (Bereich "Verlauf").
+    std::string logDir;
 };
 
 class WebServer {

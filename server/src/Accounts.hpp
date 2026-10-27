@@ -22,6 +22,9 @@
 //                   Datei <besitzer>-<stamm>.karte (Format: shared/GameMap.hpp)
 //   bans.txt        gesperrte Konten und IP-Adressen (Verwaltungsseite,
 //                   Bereich "Sperren"); nur vorhanden, wenn es Sperren gab
+//   logs/           Lastprotokoll: je Tag eine Datei last-JJJJ-MM-TT.csv mit
+//                   einer Zeile pro Minute (GameServer::RecordLoad); Dateien
+//                   älter als LOAD_LOG_DAYS werden gelöscht
 //
 // Format: einfacher Text, eine Angabe pro Zeile bzw. pro Konto, "name=wert".
 // So kann man die Dateien zur Not mit einem Texteditor ansehen (bei
@@ -232,6 +235,16 @@ public:
     void RemoveExpiredBans(int64_t now, std::vector<Ban>& removed);
     void SaveBans();
 
+    // --- Lastprotokoll ---------------------------------------------------------------
+    static constexpr int LOAD_LOG_DAYS = 30;
+    std::string LoadLogDir() const;   // Ordner der Tagesdateien ("" = nur im Arbeitsspeicher)
+    // Hängt line an logs/last-<day>.csv an (day = "JJJJ-MM-TT"); eine neue Datei
+    // beginnt mit header. Beim ersten Eintrag eines Tages werden Dateien gelöscht,
+    // die älter als LOAD_LOG_DAYS sind (pruneBefore = ältester Tag, der bleibt).
+    // Schreibt über den Schreib-Thread, ohne fsync (eine verlorene Zeile ist egal).
+    void AppendLoadLog(const std::string& day, const std::string& pruneBefore, const std::string& header,
+                       const std::string& line);
+
     // Wartet, bis der Schreib-Thread alle Aufträge erledigt hat (beim Start
     // und beim Beenden). false, wenn seit dem letzten Flush etwas nicht
     // geschrieben werden konnte (Meldung steht dann schon auf stderr).
@@ -247,6 +260,9 @@ private:
     struct WriteJob {
         std::string content;
         bool remove = false;
+        bool append = false;      // content anhängen statt die Datei zu ersetzen (header bei neuer Datei)
+        bool pruneLogs = false;   // Pfad = Ordner logs/, content = ältester Tag, der bleibt
+        std::string header;
         std::string what;   // für Fehlermeldungen ("Konten", "Bestenliste" ...)
     };
     std::mutex writeMutex_;
@@ -268,4 +284,5 @@ private:
     std::vector<ServerMap> maps_;           // nach Kartenname sortiert
     std::string activeMap_;
     std::vector<Ban> bans_;                 // Reihenfolge: älteste zuerst
+    std::string loadLogDay_;                // Tag des letzten Eintrags im Lastprotokoll
 };

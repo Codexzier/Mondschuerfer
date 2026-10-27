@@ -48,7 +48,8 @@
 //      b) Basic-Auth korrekt?    -> weiter zu 3. (POST ohne Content-Length -> 411)
 //      c) sonst                  -> 401 (Browser zeigt Anmeldedialog),
 //                                   falsche Daten zählen als Fehlversuch.
-//   3. Routing auf genau zehn feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten, Sperren).
+//   3. Routing auf genau elf feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten, Sperren,
+//      Verlauf) und die Tagesdateien des Lastprotokolls (/api/logs/last-JJJJ-MM-TT.csv).
 //      Alles andere ergibt 404. Es gibt KEIN allgemeines Ausliefern eines
 //      Ordners, daher kann niemand mit "/../" andere Dateien lesen.
 //   4. Jede Antwort bekommt Sicherheits-Header (set_default_headers).
@@ -73,6 +74,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -1152,6 +1155,80 @@ std::string JoinPath(const std::string& dir, const char* file) {
     return (last == '/' || last == '\\') ? dir + file : dir + "/" + file;
 }
 
+// ---------------------------------------------------------------------------
+// Bereich "Verlauf" (GET /api/history, GET /api/logs/...): Lastprotokoll lesen
+//
+// Der Spiel-Thread schreibt je Minute eine Zeile in logs/last-JJJJ-MM-TT.csv
+// (GameServer::FinishLoadMinute). Hier werden die Dateien nur gelesen. Eine
+// gerade erst halb geschriebene letzte Zeile (ohne Zeilenende) wird übersprungen.
+// ---------------------------------------------------------------------------
+// Schwellen einer Lastspitze wie PEAK_TICK_MS / PEAK_CPU_PERCENT in
+// GameServer.cpp (dort wird entschieden, ob eine Minute "ja" bekommt). Hier
+// nur für die Linien in den Diagrammen und die Reihenfolge der Spitzen.
+constexpr double kPeakTickMs = 1000.0 / 30.0 / 2.0;   // halbes Zeitbudget bei 30 Schritten/s
+constexpr double kPeakCpuPercent = 80.0;
+constexpr int64_t kHistorySeconds = 24 * 60 * 60;
+constexpr size_t kTopPeaks = 10;
+constexpr size_t kLoadLogColumns = 15;   // Spalten wie LOAD_LOG_HEADER in GameServer.cpp
+
+// Eine Zeile des Lastprotokolls. v: Spieler, Zuschauer, Verbindungen,
+// Schrittzeit Ø/max, CPU Ø/max, RAM, Empfangen Ø/max, Gesendet Ø/max.
+struct LoadRow {
+    int64_t unix = 0;
+    double v[12] = {};
+    bool peak = false;
+};
+
+// Nur "last-JJJJ-MM-TT.csv": Der Name aus der Anfrage kann so nie aus dem
+// Ordner herausführen.
+bool IsLoadLogName(const std::string& name) {
+    if (name.size() != 19 || name.compare(0, 5, "last-") != 0 || name.compare(15, 4, ".csv") != 0) return false;
+    for (size_t i = 5; i < 15; ++i) {
+        const bool dash = i == 9 || i == 12;
+        if (dash ? name[i] != '-' : (name[i] < '0' || name[i] > '9')) return false;
+    }
+    return true;
+}
+
+// "3,25" -> 3.25 (Dezimalkomma wie in der Datei), unabhängig von der Spracheinstellung
+bool ParseDecimalComma(std::string text, double& out) {
+    std::replace(text.begin(), text.end(), ',', '.');
+    const char* last = text.data() + text.size();
+    const auto r = std::from_chars(text.data(), last, out);
+    return !text.empty() && r.ec == std::errc() && r.ptr == last && std::isfinite(out);
+}
+
+// Hängt alle vollständigen Zeilen ab Unix-Zeit "from" an rows an. Kopfzeile
+// und kaputte Zeilen fallen heraus, weil die zweite Spalte keine Zahl ist.
+void ReadLoadLog(const std::string& path, int64_t from, std::vector<LoadRow>& rows) {
+    std::string text;
+    if (!ReadWholeFile(path, text)) return;
+    std::vector<std::string> f;
+    for (size_t start = 0, nl; (nl = text.find('\n', start)) != std::string::npos; start = nl + 1) {
+        std::string line = text.substr(start, nl - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        f.clear();
+        for (size_t s = 0;;) {
+            const size_t sep = line.find(';', s);
+            f.push_back(line.substr(s, sep == std::string::npos ? std::string::npos : sep - s));
+            if (sep == std::string::npos) break;
+            s = sep + 1;
+        }
+        if (f.size() != kLoadLogColumns) continue;
+        LoadRow row;
+        const auto r = std::from_chars(f[1].data(), f[1].data() + f[1].size(), row.unix);
+        if (r.ec != std::errc() || r.ptr != f[1].data() + f[1].size() || row.unix < from) continue;
+        bool ok = true;
+        for (size_t i = 0; i < 12 && ok; ++i) ok = ParseDecimalComma(f[i + 2], row.v[i]);
+        if (!ok) continue;
+        row.peak = f[14] == "ja";
+        rows.push_back(row);
+    }
+}
+
+// Wie stark eine Spitze war: Vielfaches der Schwelle (Schrittzeit oder CPU)
+double PeakSeverity(const LoadRow& r) { return std::max(r.v[4] / kPeakTickMs, r.v[6] / kPeakCpuPercent); }
+
 
 // ===========================================================================
 // WebContext – alles, was die Handler (in den Arbeits-Threads) brauchen.
@@ -1508,6 +1585,79 @@ public:
                                        "Auf die Standardwerte aus docker-compose.yml zurückgesetzt."));
     }
 
+    // --- GET /api/history -------------------------------------------------------
+    // Lastprotokoll der letzten 24 Stunden (Diagramme), die größten Spitzen
+    // daraus und die Tagesdateien zum Herunterladen (neueste zuerst).
+    void HandleHistory(httplib::Response& res) const {
+        namespace fs = std::filesystem;
+        std::vector<std::pair<std::string, uintmax_t>> files;
+        if (!config_.logDir.empty()) {
+            std::error_code ec;
+            for (const auto& entry : fs::directory_iterator(config_.logDir, ec)) {
+                const std::string name = entry.path().filename().u8string();
+                if (!IsLoadLogName(name)) continue;
+                const uintmax_t size = entry.file_size(ec);
+                files.emplace_back(name, ec ? 0 : size);
+            }
+            std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        }
+
+        // 24 Stunden liegen in höchstens drei Tagesdateien (Zeitumstellung).
+        const int64_t now = static_cast<int64_t>(std::time(nullptr));
+        std::vector<LoadRow> rows;
+        for (size_t i = std::min<size_t>(files.size(), 3); i-- > 0;)
+            ReadLoadLog(JoinPath(config_.logDir, files[i].first.c_str()), now - kHistorySeconds, rows);
+        std::stable_sort(rows.begin(), rows.end(), [](const LoadRow& a, const LoadRow& b) { return a.unix < b.unix; });
+
+        std::vector<const LoadRow*> peaks;
+        for (const LoadRow& r : rows)
+            if (r.peak) peaks.push_back(&r);
+        std::stable_sort(peaks.begin(), peaks.end(),
+                         [](const LoadRow* a, const LoadRow* b) { return PeakSeverity(*a) > PeakSeverity(*b); });
+        if (peaks.size() > kTopPeaks) peaks.resize(kTopPeaks);
+
+        // Zeile als Array: Unix-Zeit, dann v[0..11], dann 1 = Lastspitze
+        auto writeRow = [](JsonWriter& w, const LoadRow& r) {
+            static const int kDecimals[12] = {0, 0, 0, 2, 2, 1, 1, 1, 1, 1, 1, 1};
+            w.BeginArray().Int(r.unix);
+            for (size_t i = 0; i < 12; ++i) w.Number(r.v[i], kDecimals[i]);
+            w.Int(r.peak ? 1 : 0).EndArray();
+        };
+
+        JsonWriter w;
+        w.BeginObject();
+        w.Key("enabled").Bool(!config_.logDir.empty());
+        w.Key("now").Int(now);
+        w.Key("peakTickMs").Number(kPeakTickMs, 1);
+        w.Key("peakCpu").Number(kPeakCpuPercent, 0);
+        w.Key("rows").BeginArray();
+        for (const LoadRow& r : rows) writeRow(w, r);
+        w.EndArray();
+        w.Key("peaks").BeginArray();
+        for (const LoadRow* r : peaks) writeRow(w, *r);
+        w.EndArray();
+        w.Key("files").BeginArray();
+        for (const auto& f : files)
+            w.BeginObject().Key("name").String(f.first).Key("size").Int(static_cast<long long>(f.second)).EndObject();
+        w.EndArray();
+        w.EndObject();
+        res.set_content(w.Result(), kJsonType);
+    }
+
+    // --- GET /api/logs/last-JJJJ-MM-TT.csv -----------------------------------------
+    // Eine Tagesdatei des Lastprotokolls herunterladen.
+    void HandleLogFile(const std::string& name, httplib::Response& res) const {
+        std::string body;
+        if (config_.logDir.empty() || !IsLoadLogName(name) ||
+            !ReadWholeFile(JoinPath(config_.logDir, name.c_str()), body)) {
+            res.status = 404;
+            res.set_content("Datei nicht gefunden.\n", kTextType);
+            return;
+        }
+        res.set_header("Content-Disposition", "attachment; filename=\"" + name + "\"");
+        res.set_content(body, "text/csv; charset=utf-8");
+    }
+
 private:
     bool CredentialsMatch(const std::string& user, const std::string& password) const {
         const crypto::Digest u = crypto::Sha256(user);
@@ -1709,6 +1859,11 @@ void ConfigureServer(httplib::Server& svr, const std::shared_ptr<WebContext>& ct
     svr.Post(R"(/api/ships)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleShips(req, res); });
     svr.Post(R"(/api/maps)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleMaps(req, res); });
     svr.Post(R"(/api/bans)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleBans(req, res); });
+    svr.Get(R"(/api/history)", [ctx](const httplib::Request&, httplib::Response& res) { ctx->HandleHistory(res); });
+    // Tagesdateien des Lastprotokolls: Der Name steht fest im Muster (nur Ziffern).
+    svr.Get(R"(/api/logs/(last-\d{4}-\d{2}-\d{2}\.csv))", [ctx](const httplib::Request& req, httplib::Response& res) {
+        ctx->HandleLogFile(req.matches[1].str(), res);
+    });
 
     // Fehlerantworten ohne eigenen Text (z. B. 404 von httplib) bekommen
     // einen kurzen deutschen Text. Eigene Texte bleiben unverändert.

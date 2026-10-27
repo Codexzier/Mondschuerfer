@@ -130,6 +130,26 @@ constexpr size_t MAX_SNAP_WRECKS = 48;
 constexpr size_t MAX_SPECTATOR_LIST = 512;
 constexpr size_t MAX_EVENTS_PER_MSG = 1024;       // Client lehnt > 4096 ab (Protocol.cpp)
 
+// --- Lastprotokoll (logs/last-JJJJ-MM-TT.csv, siehe RecordLoad) ---
+// Eine Minute gilt als Lastspitze, wenn ein Schritt länger als das halbe
+// Zeitbudget (33,3 ms / 2 = 16,7 ms) dauerte oder die CPU über 80 % lag.
+constexpr double PEAK_TICK_MS = 1000.0 / net::TICK_RATE / 2.0;
+constexpr double PEAK_CPU_PERCENT = 80.0;   // eines Kerns
+// Kopfzeile der Tagesdateien. Trennzeichen ";", Dezimalkomma und die
+// UTF-8-Kennung (BOM) am Anfang, damit eine deutsche Tabellenkalkulation die
+// Datei direkt richtig öffnet (auch die Umlaute und "Ø").
+constexpr const char* LOAD_LOG_HEADER =
+    "\xEF\xBB\xBF"
+    "Zeit;Unix-Zeit;Spieler;Zuschauer;Verbindungen;Schrittzeit Ø ms;Schrittzeit max ms;CPU Ø %;CPU max %;"
+    "RAM MB;Empfangen Ø KB/s;Empfangen max KB/s;Gesendet Ø KB/s;Gesendet max KB/s;Lastspitze\n";
+
+// Zahl mit Dezimalkomma für das Lastprotokoll: 3.25 -> "3,25"
+std::string DecimalComma(double v, int digits) {
+    std::string s = Fmt("%.*f", digits, v);
+    std::replace(s.begin(), s.end(), '.', ',');
+    return s;
+}
+
 // --- Benchmark ---
 constexpr double PACKET_OVERHEAD_BYTES = 40.0;    // UDP 8 + IPv4 20 + ENet-Kopf/Befehl ~12
 
@@ -441,6 +461,7 @@ void GameServer::Shutdown() {
     accounts_.SaveAccounts();
     accounts_.SaveHighscores();
     accounts_.SaveServerData();
+    if (load_.samples > 0) FinishLoadMinute();   // angefangene Minute ins Lastprotokoll
     const bool saved = accounts_.Flush();   // warten, bis wirklich alles auf der Platte ist
 
     // Allen Clients Bescheid sagen und die Verbindung ordentlich beenden.
@@ -2574,7 +2595,90 @@ void GameServer::PublishStatus() {
     st.banNotice = banNotice_;
     st.banNoticeSeq = banNoticeSeq_;
     st.banNoticeError = banNoticeError_;
+    RecordLoad(st);
     shared_->PublishStatus(st);
+}
+
+void GameServer::RecordLoad(const ServerStatus& st) {
+    const int64_t minute = UnixNow() / 60;
+    if (minute != load_.minute) {
+        if (load_.samples > 0) FinishLoadMinute();
+        load_ = LoadMinute{};
+        load_.minute = minute;
+    }
+    LoadMinute& m = load_;
+    ++m.samples;
+    m.tickSum += st.avgTickMs;
+    m.tickMax = std::max(m.tickMax, st.maxTickMs);
+    m.cpuSum += st.cpuPercent;
+    m.cpuMax = std::max(m.cpuMax, st.cpuPercent);
+    m.memMax = std::max(m.memMax, st.memoryMB);
+    m.inSum += st.netInKBs;
+    m.inMax = std::max(m.inMax, st.netInKBs);
+    m.outSum += st.netOutKBs;
+    m.outMax = std::max(m.outMax, st.netOutKBs);
+    m.players = std::max(m.players, st.playersOnline);
+    m.spectators = std::max(m.spectators, st.spectators);
+    int connections = 0;
+    for (const auto& up : clients_)
+        if (up->peer) ++connections;
+    m.connections = std::max(m.connections, connections);
+}
+
+// Eine Zeile je Minute (Durchschnitt und Höchstwert der Sekundenwerte). Bei
+// einer Lastspitze zusätzlich eine Meldung im Log, mit dem Client, an den in
+// dieser Minute die meisten Daten gingen.
+void GameServer::FinishLoadMinute() {
+    const LoadMinute& m = load_;
+    const double n = static_cast<double>(std::max(1, m.samples));
+    const bool peak = m.tickMax > PEAK_TICK_MS || m.cpuMax > PEAK_CPU_PERCENT;
+
+    const std::time_t t = static_cast<std::time_t>(m.minute * 60);
+    const std::time_t oldest = t - static_cast<std::time_t>(Accounts::LOAD_LOG_DAYS) * 86400;
+    std::tm tm{}, tmOld{};
+#if defined(_WIN32)
+    tm = *std::localtime(&t);
+    tmOld = *std::localtime(&oldest);
+#else
+    localtime_r(&t, &tm);
+    localtime_r(&oldest, &tmOld);
+#endif
+    char day[16], oldestDay[16], clock[8];
+    std::strftime(day, sizeof(day), "%Y-%m-%d", &tm);
+    std::strftime(oldestDay, sizeof(oldestDay), "%Y-%m-%d", &tmOld);
+    std::strftime(clock, sizeof(clock), "%H:%M", &tm);
+
+    const std::string line = std::string(day) + " " + clock + ";" + std::to_string(static_cast<long long>(t)) + ";" +
+                             std::to_string(m.players) + ";" + std::to_string(m.spectators) + ";" +
+                             std::to_string(m.connections) + ";" + DecimalComma(m.tickSum / n, 2) + ";" +
+                             DecimalComma(m.tickMax, 2) + ";" + DecimalComma(m.cpuSum / n, 1) + ";" +
+                             DecimalComma(m.cpuMax, 1) + ";" + DecimalComma(m.memMax, 1) + ";" +
+                             DecimalComma(m.inSum / n, 1) + ";" + DecimalComma(m.inMax, 1) + ";" +
+                             DecimalComma(m.outSum / n, 1) + ";" + DecimalComma(m.outMax, 1) + ";" +
+                             (peak ? "ja" : "") + "\n";
+    accounts_.AppendLoadLog(day, oldestDay, LOAD_LOG_HEADER, line);
+
+    if (peak) {
+        const Client* top = nullptr;
+        uint64_t topBytes = 0;
+        for (const auto& up : clients_) {
+            const uint64_t sent = up->bytesSent - up->bytesSentMinuteStart;
+            if (up->peer && sent > topBytes) {
+                top = up.get();
+                topBytes = sent;
+            }
+        }
+        std::string who = "–";
+        if (top) {
+            const char* role = top->role == Role::Player ? top->name.c_str()
+                               : top->role == Role::Spectator ? "Zuschauer" : "ohne Anmeldung";
+            who = Fmt("%s (%s, %.0f KB)", role, top->ipText.c_str(), static_cast<double>(topBytes) / 1024.0);
+        }
+        Log(Fmt("Lastspitze um %s: Schritt max. %.1f ms (Ø %.2f ms), CPU max. %.0f %%, %d Spieler, %d Zuschauer, "
+                "%d Verbindungen; meiste Daten an: %s",
+                clock, m.tickMax, m.tickSum / n, m.cpuMax, m.players, m.spectators, m.connections, who.c_str()));
+    }
+    for (auto& up : clients_) up->bytesSentMinuteStart = up->bytesSent;
 }
 
 // ===========================================================================
