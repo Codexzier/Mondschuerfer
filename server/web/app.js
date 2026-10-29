@@ -11,6 +11,8 @@
         /api/ships (eigenes Speichern, unabhängig von den Spielparametern).
      4. Der Bereich "Karten" schickt jede Aktion (Karte aktivieren/löschen,
         Hochladen erlauben/entziehen) einzeln per POST an /api/maps.
+     5. Der Bereich "Verlauf" fragt einmal pro Minute GET /api/history ab
+        (Lastprotokoll der letzten 24 Stunden) und zeichnet daraus Diagramme.
 
    WOHER KOMMEN DIE DATEN?
      Der Spiel-Thread des Servers legt einmal pro Sekunde eine Kopie seines
@@ -82,6 +84,11 @@
         bansKey: '',           // Vergleichswert für den Bereich "Sperren"
         bansBusy: false,       // läuft gerade ein POST /api/bans?
         banNoticeSeq: null,    // wie mapNoticeSeq, für den Bereich "Sperren"
+        historyTimer: 0,       // nächste Abfrage von /api/history
+        historyAt: 0,          // Zeitpunkt (ms) der letzten Abfrage von /api/history
+        charts: [],            // Diagramme im Bereich "Verlauf" (siehe buildChart)
+        history: null,         // letzte Antwort von /api/history (für Neuzeichnen bei anderer Fensterbreite)
+        resizeTimer: 0,
         playersKey: '',        // Vergleichswert, um die Tabelle nur bei Änderungen neu zu bauen
         highscoreKey: '',
     };
@@ -1239,6 +1246,250 @@
     }
 
     // =========================================================================
+    // Bereich "Verlauf": Lastprotokoll der letzten 24 Stunden
+    // GET /api/history liefert je Minute eine Zeile (Höchstwerte der Minute),
+    // die größten Lastspitzen und die Tagesdateien (CSV). Abgefragt wird nur
+    // einmal pro Minute: Öfter kommt keine neue Zeile dazu.
+    // =========================================================================
+    const HISTORY_MS = 60000;
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const LOG_NAME_RE = /^last-\d{4}-\d{2}-\d{2}\.csv$/;
+    // Spalten einer Zeile (Reihenfolge wie in WebContext::HandleHistory)
+    const H = {
+        time: 0, players: 1, spectators: 2, connections: 3, tickAvg: 4, tickMax: 5, cpuAvg: 6, cpuMax: 7,
+        ram: 8, inAvg: 9, inMax: 10, outAvg: 11, outMax: 12, peak: 13,
+    };
+    // Vier kleine Diagramme mit je EINER Größe (statt eines Diagramms mit zwei
+    // y-Achsen). limit = Name der Schwelle im JSON, min = kleinste y-Achse.
+    const CHARTS = [
+        { title: 'Längster Schritt', col: H.tickMax, unit: 'ms', limit: 'peakTickMs', min: 5 },
+        { title: 'CPU (Höchstwert)', col: H.cpuMax, unit: '%', limit: 'peakCpu', min: 10 },
+        { title: 'Gesendet (Höchstwert)', col: H.outMax, unit: 'KB/s', min: 10 },
+        { title: 'Spieler online', col: H.players, unit: '', min: 4, integer: true },
+    ];
+    const CH = 150;                               // Höhe eines Diagramms (Pixel); die Breite passt sich an
+    const PAD = { l: 40, r: 8, t: 10, b: 22 };    // Rand für die Achsenbeschriftung
+    const GAP_S = 150;                            // längere Lücke (Server aus) = Linie unterbrechen
+
+    function svgEl(tag, className, attrs) {
+        const node = document.createElementNS(SVG_NS, tag);
+        if (className) node.setAttribute('class', className);
+        for (const k of Object.keys(attrs || {})) node.setAttribute(k, attrs[k]);
+        return node;
+    }
+
+    // Obere Grenze der y-Achse: runde Zahl (1; 2; 2,5; 5 × 10^n) ab v
+    function niceMax(v) {
+        const p = Math.pow(10, Math.floor(Math.log10(v)));
+        for (const m of [1, 2, 2.5, 5]) if (m * p >= v) return m * p;
+        return 10 * p;
+    }
+
+    const fmtHM = (unix) => new Date(unix * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+
+    function fmtChartValue(c, v) {
+        const text = (c.integer ? nf0 : nf1).format(v);
+        return c.unit ? `${text} ${c.unit}` : text;
+    }
+
+    // Ein Diagramm in figure bauen, so breit wie figure (1 Einheit = 1 Pixel,
+    // damit die Schrift auch auf dem Handy lesbar bleibt). Liefert die Teile,
+    // die beim Zeigen mit der Maus (setHistoryHover) verschoben werden.
+    function buildChart(c, d, rows, figure) {
+        const CW = Math.max(260, Math.round(figure.clientWidth));
+        const t1 = Number(d.now) || Math.floor(Date.now() / 1000);
+        const t0 = t1 - 86400;
+        const plotW = CW - PAD.l - PAD.r;
+        const x = (t) => PAD.l + ((t - t0) / (t1 - t0)) * plotW;
+        const limit = c.limit ? Number(d[c.limit]) || 0 : 0;
+        let top = c.min;
+        for (const r of rows) top = Math.max(top, Number(r[c.col]) || 0);
+        top = niceMax(Math.max(top, limit * 1.15));
+        const y = (v) => PAD.t + (1 - Math.max(0, Math.min(top, v)) / top) * (CH - PAD.t - PAD.b);
+
+        const svg = svgEl('svg', 'chart-svg', { viewBox: `0 0 ${CW} ${CH}`, role: 'img', 'aria-label': `${c.title}, letzte 24 Stunden` });
+
+        // Raster mit Beschriftung: 0, Mitte, oben
+        for (const v of [0, top / 2, top]) {
+            svg.appendChild(svgEl('line', v === 0 ? 'chart-base' : 'chart-grid', { x1: PAD.l, x2: CW - PAD.r, y1: y(v), y2: y(v) }));
+            const label = svgEl('text', 'chart-axis', { x: PAD.l - 6, y: y(v) + 4, 'text-anchor': 'end' });
+            label.textContent = (c.integer || top >= 10 ? nf0 : nf1).format(v);
+            svg.appendChild(label);
+        }
+
+        // Zeitachse: volle Stunden 0, 6, 12, 18 Uhr (Uhrzeit des Browsers)
+        const tick = new Date(t0 * 1000);
+        tick.setMinutes(0, 0, 0);
+        tick.setHours(Math.ceil(tick.getHours() / 6) * 6);
+        for (; tick.getTime() <= t1 * 1000; tick.setHours(tick.getHours() + 6)) {
+            if (tick.getTime() < t0 * 1000) continue;
+            const tx = x(tick.getTime() / 1000);
+            svg.appendChild(svgEl('line', 'chart-grid', { x1: tx, x2: tx, y1: PAD.t, y2: CH - PAD.b }));
+            const label = svgEl('text', 'chart-axis', { x: tx, y: CH - 6, 'text-anchor': 'middle' });
+            label.textContent = `${pad2(tick.getHours())}:00`;
+            svg.appendChild(label);
+        }
+
+        // Schwelle der Lastspitze
+        if (limit > 0) {
+            svg.appendChild(svgEl('line', 'chart-limit', { x1: PAD.l, x2: CW - PAD.r, y1: y(limit), y2: y(limit) }));
+            const label = svgEl('text', 'chart-limit-label', { x: CW - PAD.r, y: y(limit) - 5, 'text-anchor': 'end' });
+            label.textContent = `Spitze ab ${fmtChartValue(c, limit)}`;
+            svg.appendChild(label);
+        }
+
+        // Linie; bei einer Lücke (Server war aus) neu ansetzen
+        let path = '';
+        let prev = null;
+        for (const r of rows) {
+            const t = Number(r[H.time]);
+            path += `${prev !== null && t - prev <= GAP_S ? 'L' : 'M'}${x(t).toFixed(1)},${y(Number(r[c.col]) || 0).toFixed(1)}`;
+            prev = t;
+        }
+        if (path) svg.appendChild(svgEl('path', 'chart-line', { d: path }));
+
+        // Fadenkreuz und Punkt für die Minute unter der Maus
+        const cross = svgEl('line', 'chart-cross', { x1: 0, x2: 0, y1: PAD.t, y2: CH - PAD.b, visibility: 'hidden' });
+        const dot = svgEl('circle', 'chart-dot', { cx: 0, cy: 0, r: 4, visibility: 'hidden' });
+        svg.appendChild(cross);
+        svg.appendChild(dot);
+
+        // Mausposition -> nächste Minute (Zeilen sind nach Zeit sortiert)
+        const pick = (ev) => {
+            const box = svg.getBoundingClientRect();
+            if (!rows.length || box.width <= 0) return null;
+            const t = t0 + (((ev.clientX - box.left) / box.width) * CW - PAD.l) / plotW * (t1 - t0);
+            let lo = 0, hi = rows.length - 1;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (Number(rows[mid][H.time]) < t) lo = mid + 1; else hi = mid;
+            }
+            if (lo > 0 && Math.abs(rows[lo - 1][H.time] - t) < Math.abs(rows[lo][H.time] - t)) lo--;
+            return Math.abs(rows[lo][H.time] - t) <= GAP_S ? lo : null;
+        };
+        svg.addEventListener('pointermove', (ev) => setHistoryHover(pick(ev)));
+        svg.addEventListener('pointerleave', () => setHistoryHover(null));
+
+        const head = el('figcaption', 'chart-head');
+        head.appendChild(el('span', 'chart-title', c.title));
+        const readout = el('span', 'chart-readout muted small');
+        head.appendChild(readout);
+        figure.appendChild(head);
+        figure.appendChild(svg);
+        return { c, cross, dot, readout, x, y, rows };
+    }
+
+    // Zeigt in ALLEN Diagrammen dieselbe Minute (oder ohne Maus den Höchstwert).
+    function setHistoryHover(idx) {
+        for (const ch of state.charts) {
+            const r = idx === null ? null : ch.rows[idx];
+            if (!r) {
+                ch.cross.setAttribute('visibility', 'hidden');
+                ch.dot.setAttribute('visibility', 'hidden');
+                let best = null;
+                for (const row of ch.rows) if (!best || Number(row[ch.c.col]) > Number(best[ch.c.col])) best = row;
+                ch.readout.textContent = best ? `max. ${fmtChartValue(ch.c, Number(best[ch.c.col]))} um ${fmtHM(best[H.time])}` : '';
+                continue;
+            }
+            const v = Number(r[ch.c.col]) || 0;
+            const px = ch.x(Number(r[H.time]));
+            ch.cross.setAttribute('x1', px);
+            ch.cross.setAttribute('x2', px);
+            ch.dot.setAttribute('cx', px);
+            ch.dot.setAttribute('cy', ch.y(v));
+            ch.cross.setAttribute('visibility', 'visible');
+            ch.dot.setAttribute('visibility', 'visible');
+            let text = `${fmtHM(r[H.time])} · ${fmtChartValue(ch.c, v)}`;
+            if (ch.c.col === H.players) text += `, ${r[H.spectators]} Zuschauer`;
+            ch.readout.textContent = text;
+        }
+    }
+
+    function peakRow(r, d) {
+        const tr = document.createElement('tr');
+        const [date, time] = fmtDate(r[H.time]);
+        tr.appendChild(twoLineCell('', time, date));
+        const over = (v, limit) => (limit > 0 && v > limit ? 'num text-bad' : 'num');
+        tr.appendChild(el('td', over(r[H.tickMax], d.peakTickMs), `${nf1.format(r[H.tickMax])} ms`));
+        tr.appendChild(el('td', over(r[H.cpuMax], d.peakCpu), `${nf0.format(r[H.cpuMax])} %`));
+        tr.appendChild(el('td', 'num', `${nf1.format(r[H.outMax])} KB/s`));
+        tr.appendChild(el('td', 'num', String(r[H.players])));
+        tr.appendChild(el('td', 'num', String(r[H.spectators])));
+        tr.appendChild(el('td', 'num', String(r[H.connections])));
+        return tr;
+    }
+
+    function fileItem(f) {
+        const li = el('li');
+        const a = el('a', '', f.name);
+        a.href = `/api/logs/${f.name}`;
+        a.download = f.name;
+        li.appendChild(a);
+        li.appendChild(el('span', 'muted small', ` ${nf0.format(Math.max(1, Math.round(f.size / 1024)))} KB`));
+        return li;
+    }
+
+    function renderHistory(d) {
+        const rows = Array.isArray(d.rows) ? d.rows : [];
+        const charts = $('history-charts');
+        state.history = d;
+        state.charts = [];
+        charts.replaceChildren();
+        const empty = $('history-empty');
+        if (!d.enabled) {
+            empty.textContent = 'Kein Lastprotokoll: Der Server läuft ohne Datenordner.';
+        } else if (!rows.length) {
+            empty.textContent = 'Noch keine Daten. Die erste Zeile erscheint etwa eine Minute nach dem Start des Servers.';
+        }
+        empty.hidden = d.enabled && rows.length > 0;
+        charts.hidden = !empty.hidden;
+        if (!charts.hidden) {
+            for (const c of CHARTS) {
+                const figure = el('figure', 'chart');
+                charts.appendChild(figure);   // erst einfügen, dann ist die Breite bekannt
+                state.charts.push(buildChart(c, d, rows, figure));
+            }
+            setHistoryHover(null);
+        }
+        setText('history-info', `${nf0.format(rows.length)} Minuten · Stand: ${fmtHM(Number(d.now) || Date.now() / 1000)}`);
+
+        const peaks = Array.isArray(d.peaks) ? d.peaks : [];
+        $('peaks-body').replaceChildren(...peaks.map((r) => peakRow(r, d)));
+        $('peaks-empty').hidden = peaks.length > 0;
+
+        const files = (Array.isArray(d.files) ? d.files : []).filter((f) => LOG_NAME_RE.test(f.name));
+        $('log-files').replaceChildren(...files.map(fileItem));
+        $('log-files-empty').hidden = files.length > 0;
+    }
+
+    // Wie poll(), aber nur einmal pro Minute und nicht im Hintergrund-Tab.
+    // Fehler zeigt schon die Statusabfrage an, hier bleibt einfach der alte Stand.
+    async function pollHistory() {
+        clearTimeout(state.historyTimer);
+        if (document.hidden) {
+            state.historyTimer = setTimeout(pollHistory, HISTORY_MS);
+            return;
+        }
+        state.historyAt = Date.now();
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+        try {
+            const res = await fetch('/api/history', {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { Accept: 'application/json' },
+                signal: ctrl.signal,
+            });
+            if (res.ok) renderHistory(await res.json());
+        } catch (err) {
+            // Netzwerkfehler oder Zeitüberschreitung: beim nächsten Mal erneut
+        } finally {
+            clearTimeout(timeout);
+            state.historyTimer = setTimeout(pollHistory, HISTORY_MS);
+        }
+    }
+
+    // =========================================================================
     // Start: Ereignisse verbinden, erste Abfrage
     // =========================================================================
     function init() {
@@ -1270,8 +1521,18 @@
         $('ban-ip-form').addEventListener('submit', onBanIp);
 
         // Tab wieder sichtbar: sofort aktualisieren statt bis zu 10 s zu warten
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) return;
+            poll();
+            if (Date.now() - state.historyAt >= HISTORY_MS) pollHistory();
+        });
+        // Andere Fensterbreite: Diagramme passend neu zeichnen
+        window.addEventListener('resize', () => {
+            clearTimeout(state.resizeTimer);
+            state.resizeTimer = setTimeout(() => { if (state.history) renderHistory(state.history); }, 200);
+        });
         poll();
+        pollHistory();
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

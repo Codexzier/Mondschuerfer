@@ -133,6 +133,52 @@
         </div>
     </section>
 
+    <!-- ============================== Verlauf ============================== -->
+    <!-- Lastprotokoll (GET /api/history, einmal pro Minute). Die Diagramme baut app.js als SVG. -->
+    <section class="panel" id="history-panel" aria-labelledby="history-title">
+        <div class="panel-head">
+            <h2 id="history-title">Verlauf (letzte 24 Stunden)</h2>
+            <span class="muted small" id="history-info">–</span>
+        </div>
+        <div class="settings">
+            <p class="muted small ships-help">
+                Der Server schreibt jede Minute eine Zeile ins Lastprotokoll, mit den Höchstwerten dieser Minute.
+                Eine Minute gilt als Lastspitze, wenn ein Simulationsschritt länger als die Hälfte seines Zeitbudgets
+                dauerte oder die CPU über 80 % lag (gestrichelte Linie). Den Client, an den in einer Spitzen-Minute die
+                meisten Daten gingen, nennt das Server-Log (<code>docker compose logs</code>).
+            </p>
+            <div id="history-charts" class="charts"></div>
+            <p id="history-empty" class="empty" hidden></p>
+
+            <h3 class="form-title">Größte Lastspitzen</h3>
+            <div class="table-wrap">
+                <table class="data-table peaks-table">
+                    <thead>
+                    <tr>
+                        <th scope="col">Zeit</th>
+                        <th scope="col" class="num" title="Längster Simulationsschritt in dieser Minute">Schritt max.</th>
+                        <th scope="col" class="num">CPU max.</th>
+                        <th scope="col" class="num" title="Höchste Senderate in dieser Minute">Gesendet max.</th>
+                        <th scope="col" class="num">Spieler</th>
+                        <th scope="col" class="num">Zuschauer</th>
+                        <th scope="col" class="num">Verbindungen</th>
+                    </tr>
+                    </thead>
+                    <tbody id="peaks-body"></tbody>
+                </table>
+            </div>
+            <p id="peaks-empty" class="empty" hidden>Keine Lastspitze in den letzten 24 Stunden.</p>
+
+            <h3 class="form-title">Tagesdateien (CSV)</h3>
+            <p class="muted small ships-help">
+                Eine Datei je Tag, Trennzeichen Semikolon, öffnet direkt in Excel oder LibreOffice.
+                Der Server löscht Dateien, die älter als 30 Tage sind.
+            </p>
+            <ul id="log-files" class="log-files"></ul>
+            <p id="log-files-empty" class="empty" hidden>Noch keine Dateien.</p>
+        </div>
+    </section>
+
     <!-- ========================= Eingeloggte Spieler ========================= -->
     <section class="panel" aria-labelledby="players-title">
         <div class="panel-head">

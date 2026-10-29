@@ -499,6 +499,31 @@ fieldset { border: 0; padding: 0; }
 .bans-table td.name { font-weight: 600; }
 .bans-table td.reason { white-space: normal; overflow-wrap: anywhere; min-width: 160px; }
 
+/* Bereich "Verlauf": vier kleine Diagramme (app.js zeichnet sie als SVG,
+   1 Einheit = 1 Pixel). Die Abschnitte haben keinen seitlichen Innenabstand,
+   damit app.js die Breite direkt aus clientWidth nehmen kann. */
+.charts { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
+.chart {
+    margin: 0;
+    min-width: 0;
+    padding: 10px 0 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+}
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; padding: 0 12px 4px; }
+.chart-title { font-weight: 600; font-size: 0.9rem; }
+.chart-svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.chart-grid { stroke: var(--line); stroke-width: 1; }
+.chart-base { stroke: var(--line-strong); stroke-width: 1; }
+.chart-axis, .chart-limit-label { fill: var(--muted); font-family: var(--font); font-size: 11px; }
+.chart-limit { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 4; }
+.chart-line { fill: none; stroke: var(--info); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-cross { stroke: var(--muted); stroke-width: 1; }
+.chart-dot { fill: var(--info); stroke: var(--panel-2); stroke-width: 2; }
+.log-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.log-files a { color: var(--accent); font-weight: 600; }
+
 /* Bereich "Schiffe": Eingabefelder in der Tabelle */
 .ships-help { margin: 0; }
 .ships-table input[type="text"] { min-width: 150px; }

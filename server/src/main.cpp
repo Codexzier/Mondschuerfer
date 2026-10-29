@@ -334,6 +334,7 @@ int main(int argc, char** argv) {
     wc.user = opt.adminUser;
     wc.password = opt.adminPassword;
     wc.trustedProxy = opt.trustedProxy;
+    wc.logDir = accounts.LoadLogDir();
     wc.webRoot = opt.webRoot.empty() ? (ExecutableDir(argc > 0 ? argv[0] : nullptr) / "web").string() : opt.webRoot;
     if (!opt.noWeb) {
         // WebServer::Start prüft selbst, ob Benutzer/Passwort sicher genug sind,
