@@ -48,7 +48,7 @@
 //      b) Basic-Auth korrekt?    -> weiter zu 3. (POST ohne Content-Length -> 411)
 //      c) sonst                  -> 401 (Browser zeigt Anmeldedialog),
 //                                   falsche Daten zählen als Fehlversuch.
-//   3. Routing auf genau neun feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten).
+//   3. Routing auf genau zehn feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten, Sperren).
 //      Alles andere ergibt 404. Es gibt KEIN allgemeines Ausliefern eines
 //      Ordners, daher kann niemand mit "/../" andere Dateien lesen.
 //   4. Jede Antwort bekommt Sicherheits-Header (set_default_headers).
@@ -57,6 +57,7 @@
 
 #include "Crypto.hpp"
 #include "GameSettings.hpp"
+#include "IpRange.hpp"
 
 // httplib.h bindet unter Windows winsock2.h/ws2tcpip.h ein (und setzt vorher
 // NOMINMAX, damit std::min/std::max nicht von Windows-Makros zerstört werden).
@@ -321,6 +322,7 @@ void WriteSettings(JsonWriter& w, const GameSettings& g) {
     w.Key("maxPlayers").Int(g.maxPlayers);
     w.Key("lives").Int(g.lives);
     w.Key("missions").Int(g.missions);
+    w.Key("allowRegistration").Bool(g.allowRegistration);
     w.EndObject();
 }
 
@@ -393,6 +395,7 @@ std::string BuildStatusJson(const ServerStatus& s) {
         w.Key("alive").Bool(p.alive);
         w.Key("docked").Bool(p.docked);
         w.Key("ping").Int(p.pingMs);
+        w.Key("ip").String(p.ip);
         w.EndObject();
     }
     w.EndArray();
@@ -438,6 +441,21 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("mapNotice").String(s.mapNotice);
     w.Key("mapNoticeSeq").Int(s.mapNoticeSeq);
     w.Key("mapNoticeError").Bool(s.mapNoticeError);
+
+    w.Key("bans").BeginArray();
+    for (const BanStatus& b : s.bans) {
+        w.BeginObject();
+        w.Key("ip").Bool(b.isIp);
+        w.Key("target").String(b.target);
+        w.Key("reason").String(b.reason);
+        w.Key("created").Int(static_cast<long long>(b.created));
+        w.Key("until").Int(static_cast<long long>(b.until));
+        w.EndObject();
+    }
+    w.EndArray();
+    w.Key("banNotice").String(s.banNotice);
+    w.Key("banNoticeSeq").Int(s.banNoticeSeq);
+    w.Key("banNoticeError").Bool(s.banNoticeError);
 
     w.Key("limits").BeginObject();
     w.Key("maxEnemyShips").Int(limits::MAX_ENEMY_SHIPS);
@@ -867,7 +885,8 @@ bool ParseIntInRange(const std::string& text, int minValue, int maxValue, int& o
 // fehlende Felder bleiben also unverändert). false + error bei ungültigen Werten.
 bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& next, std::string& error) {
     static const char* const kKnown[] = {"serverName", "difficulty", "enemyShips", "tradeStations",
-                                         "shipyards",  "moon",       "maxPlayers", "lives", "missions"};
+                                         "shipyards",  "moon",       "maxPlayers", "lives", "missions",
+                                         "allowRegistration"};
     for (const auto& kv : fields) {
         const bool known = std::any_of(std::begin(kKnown), std::end(kKnown), [&](const char* k) { return kv.first == k; });
         if (!known) {
@@ -947,6 +966,13 @@ bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& n
             error = "Mini-Missionen: bitte eine ganze Zahl von 0 bis " + std::to_string(limits::MAX_MISSIONS) + ".";
             return false;
         }
+    }
+    if (const std::string* v = field("allowRegistration")) {
+        if (*v != "0" && *v != "1") {
+            error = "Neue Konten erlauben: bitte 0 oder 1.";
+            return false;
+        }
+        next.allowRegistration = *v == "1";
     }
     return true;
 }
@@ -1073,7 +1099,8 @@ bool SameShips(const std::vector<ShipType>& a, const std::vector<ShipType>& b) {
 bool SameSettings(const GameSettings& a, const GameSettings& b) {
     return a.serverName == b.serverName && a.difficulty == b.difficulty && a.enemyShips == b.enemyShips &&
            a.tradeStations == b.tradeStations && a.shipyards == b.shipyards && a.moon == b.moon &&
-           a.maxPlayers == b.maxPlayers && a.lives == b.lives && a.missions == b.missions;
+           a.maxPlayers == b.maxPlayers && a.lives == b.lives && a.missions == b.missions &&
+           a.allowRegistration == b.allowRegistration;
 }
 
 // Erfolgsantwort für beide Einstellungs-Routen.
@@ -1140,6 +1167,35 @@ std::string JoinPath(const std::string& dir, const char* file) {
 //     - Der Zeiger auf SharedState (gehört main.cpp!) wird in Stop() unter
 //       einem Mutex auf nullptr gesetzt. Danach greift kein Handler mehr darauf zu.
 // ===========================================================================
+// ---------------------------------------------------------------------------
+// Bereich "Sperren" (POST /api/bans): Eingaben prüfen
+// ---------------------------------------------------------------------------
+constexpr size_t kMaxBanReason = 100;   // Zeichen, wie eine Chat-Nachricht (net::MAX_CHAT)
+constexpr int kMaxBanDays = 3650;
+
+// Spielername: 3–16 Zeichen A-Z a-z 0-9 _ - (wie net::ValidPlayerName)
+bool IsPlayerName(const std::string& name) {
+    return name.size() >= 3 && name.size() <= 16 && std::all_of(name.begin(), name.end(), [](char c) {
+               return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+           });
+}
+
+// Der Grund wird im Spiel angezeigt. Die Schrift des Spiels kennt nur die
+// Zeichen 32..126 und 160..255 (wie net::ValidChatText; Protocol.hpp darf
+// hier wegen raylib.h nicht eingebunden werden). Leer ist erlaubt.
+bool IsBanReason(const std::string& text) {
+    if (!IsValidUtf8(text) || Utf8CodePoints(text) > kMaxBanReason) return false;
+    for (size_t i = 0; i < text.size();) {
+        const size_t n = Utf8SequenceLength(text, i);
+        if (n > 2) return false;   // Zeichen ab 0x800 kennt die Schrift nicht
+        const int cp = n == 1 ? static_cast<unsigned char>(text[i])
+                              : ((static_cast<unsigned char>(text[i]) & 0x1F) << 6) | (static_cast<unsigned char>(text[i + 1]) & 0x3F);
+        if (!((cp >= 32 && cp <= 126) || (cp >= 160 && cp <= 255))) return false;
+        i += n;
+    }
+    return true;
+}
+
 class WebContext {
 public:
     WebContext(const WebConfig& cfg, SharedState* shared)
@@ -1340,6 +1396,92 @@ public:
         }
         bool queued = false;
         if (!WithShared(res, [&](SharedState& s) { queued = s.RequestMapCommand(cmd); })) return;
+        if (!queued) {
+            SendJsonError(res, 503, "Der Server ist gerade beschäftigt. Bitte gleich noch einmal versuchen.");
+            return;
+        }
+        JsonWriter w;
+        w.BeginObject().Key("ok").Bool(true).Key("message").String("Wird übernommen …").EndObject();
+        res.status = 200;
+        res.set_content(w.Result(), kJsonType);
+    }
+
+    // --- POST /api/bans -------------------------------------------------------------
+    // Bereich "Sperren": action = banAccount (name, days, reason, withIp 0/1),
+    // banIp (address, days, reason), unban (kind = account|ip, target) oder
+    // kick (name). Wie bei den Karten führt der Spiel-Thread den Auftrag im
+    // nächsten Schritt aus (TakeBanCommands); das Ergebnis steht danach als
+    // banNotice im Status.
+    void HandleBans(const httplib::Request& req, httplib::Response& res) {
+        if (!CheckSameOriginPost(req, res)) return;
+        if (LowerAscii(req.get_header_value("Content-Type")).rfind("application/x-www-form-urlencoded", 0) != 0) {
+            SendJsonError(res, 400, "Formulardaten (application/x-www-form-urlencoded) erwartet.");
+            return;
+        }
+        std::map<std::string, std::string> fields;
+        std::string error;
+        if (!ParseFormBody(req.body, fields, error)) {
+            SendJsonError(res, 400, error);
+            return;
+        }
+        auto text = [&](const char* key) { return TrimSpaces(fields.count(key) ? fields[key] : std::string()); };
+        const std::string action = text("action");
+        BanCommand cmd;
+        if (action == "banAccount" || action == "banIp") {
+            cmd.kind = action == "banAccount" ? BanCommand::Kind::BanAccount : BanCommand::Kind::BanIp;
+            if (!ParseIntInRange(text("days"), 0, kMaxBanDays, cmd.days)) {
+                SendJsonError(res, 400, "Ungültige Dauer.");
+                return;
+            }
+            cmd.reason = text("reason");
+            if (!IsBanReason(cmd.reason)) {
+                SendJsonError(res, 400, "Der Grund ist zu lang (höchstens " + std::to_string(kMaxBanReason) +
+                                            " Zeichen) oder enthält Zeichen, die das Spiel nicht anzeigen kann.");
+                return;
+            }
+            if (cmd.kind == BanCommand::Kind::BanAccount) {
+                cmd.target = text("name");
+                cmd.withIp = text("withIp") == "1";
+                if (!IsPlayerName(cmd.target)) {
+                    SendJsonError(res, 400, "Ungültiger Spielername (3–16 Zeichen: Buchstaben, Ziffern, _ und -).");
+                    return;
+                }
+            } else {
+                uint32_t net = 0;
+                int prefix = 32;
+                if (!ParseIpRange(text("address"), net, prefix)) {
+                    SendJsonError(res, 400, "Ungültige Adresse. Beispiele: 203.0.113.45 oder 203.0.113.0/24 (Präfix " +
+                                                std::to_string(MIN_BAN_PREFIX) + " bis 32).");
+                    return;
+                }
+                if (IpRangeProtected(net, prefix)) {
+                    SendJsonError(res, 400, "Adressen von diesem Rechner (127.x) und aus dem Docker-Netz (172.16–172.31) "
+                                            "lassen sich nicht sperren: Dahinter können alle Spieler stecken.");
+                    return;
+                }
+                cmd.target = IpRangeText(net, prefix);
+            }
+        } else if (action == "unban") {
+            cmd.kind = BanCommand::Kind::Unban;
+            cmd.isIp = text("kind") == "ip";
+            cmd.target = text("target");
+            if (cmd.target.empty() || cmd.target.size() > 32) {
+                SendJsonError(res, 400, "Unbekannte Sperre.");
+                return;
+            }
+        } else if (action == "kick") {
+            cmd.kind = BanCommand::Kind::Kick;
+            cmd.target = text("name");
+            if (!IsPlayerName(cmd.target)) {
+                SendJsonError(res, 400, "Ungültiger Spielername.");
+                return;
+            }
+        } else {
+            SendJsonError(res, 400, "Unbekannte Aktion.");
+            return;
+        }
+        bool queued = false;
+        if (!WithShared(res, [&](SharedState& s) { queued = s.RequestBanCommand(cmd); })) return;
         if (!queued) {
             SendJsonError(res, 503, "Der Server ist gerade beschäftigt. Bitte gleich noch einmal versuchen.");
             return;
@@ -1566,6 +1708,7 @@ void ConfigureServer(httplib::Server& svr, const std::shared_ptr<WebContext>& ct
              [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleReset(req, res); });
     svr.Post(R"(/api/ships)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleShips(req, res); });
     svr.Post(R"(/api/maps)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleMaps(req, res); });
+    svr.Post(R"(/api/bans)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleBans(req, res); });
 
     // Fehlerantworten ohne eigenen Text (z. B. 404 von httplib) bekommen
     // einen kurzen deutschen Text. Eigene Texte bleiben unverändert.

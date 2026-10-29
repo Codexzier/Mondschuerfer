@@ -130,6 +130,10 @@ struct GameSettings {
     int lives = cfg::START_LIVES;   // Leben pro Spieler (1..limits::MAX_LIVES)
     int missions = cfg::MISSION_SLOTS;   // Mini-Missionen gleichzeitig auf der Karte (0..limits::MAX_MISSIONS)
     std::vector<ShipType> ships = DefaultShipTypes();   // Index = Schiffstyp (PlayerState::shipType), 1..limits::MAX_SHIP_TYPES
+    // Nur Server (Verwaltungsseite): Dürfen sich neue Konten anmelden? Wird
+    // nicht an die Clients geschickt; der Server lehnt "Konto anlegen" dann
+    // mit ErrorCode::RegistrationClosed ab. Keine Umgebungsvariable: Standard ist "ja".
+    bool allowRegistration = true;
 
     int ShipCount() const { return static_cast<int>(ships.size()); }
     // Schiffstyp über den Index; ungültige Indizes werden zum Startschiff

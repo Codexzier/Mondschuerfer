@@ -437,6 +437,9 @@ const char* ErrorCodeName(net::ErrorCode c) {
         case net::ErrorCode::SpectatorsFull: return "SpectatorsFull";
         case net::ErrorCode::BadRequest: return "BadRequest";
         case net::ErrorCode::ServerShutdown: return "ServerShutdown";
+        case net::ErrorCode::Banned: return "Banned";
+        case net::ErrorCode::Kicked: return "Kicked";
+        case net::ErrorCode::RegistrationClosed: return "RegistrationClosed";
     }
     return "?";
 }

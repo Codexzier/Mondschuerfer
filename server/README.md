@@ -180,14 +180,17 @@ Die Seite aktualisiert sich alle 2 Sekunden selbst und zeigt:
 - **Auslastung:** Rechenzeit pro Simulationsschritt (Durchschnitt/Maximum; das Budget sind
   33,3 ms), Auslastung in Prozent, CPU, Arbeitsspeicher, Netzwerk ein/aus, Laufzeit.
 - **Spieler:** Name, Fortschritt zum Ziel (100.000), Kontostand, Runde, Aufrüstungen, Schiffszeit,
-  Sitzungsdauer, gesamte Anmeldezeit, Abschüsse, Abstürze, Ziele, Ping.
+  Sitzungsdauer, gesamte Anmeldezeit, Abschüsse, Abstürze, Ziele, Ping, IP-Adresse; dazu die Knöpfe
+  **Trennen** und **Sperren**.
 - **Bestenliste:** die 20 schnellsten Zielrunden.
 - **Einstellungen:** Servername, Schwierigkeit, Piratenanzahl, Stationen, Mondfarbe, max. Spieler.
   - Änderungen an **Stationen oder Mondfarbe** bauen die Karte neu auf: Alle Spieler starten an
     einer Handelsstation neu, ihr Fortschritt (Kontostand, Aufrüstungen …) bleibt erhalten.
   - **Weniger Piraten** wirken sofort (die am weitesten entfernten verschwinden zuerst).
   - **Weniger max. Spieler** gilt für neue Anmeldungen; wer schon spielt, bleibt.
+  - **Neue Konten erlauben** (Standard: an): ausgeschaltet können sich nur Spieler mit Konto anmelden.
   - **Zurücksetzen** stellt die Werte aus `.env`/`docker-compose.yml` wieder her.
+- **Sperren:** Konten und IP-Adressen sperren (siehe [Sicherheit](#konten-und-adressen-sperren)).
 
 ---
 
@@ -382,6 +385,25 @@ Gut zu wissen:
   Dann ist der Spielport nicht offen im Internet, alles ist verschlüsselt, und die
   Verwaltungsseite ist über die VPN-Adresse erreichbar. Spieler sollten für das Spiel ein
   **eigenes Passwort** verwenden, das sie sonst nirgends benutzen.
+
+### Konten und Adressen sperren
+
+Im Bereich **Sperren** der Verwaltungsseite (gespeichert in `/data/bans.txt`):
+
+- **Konto sperren** für 1, 7 oder 30 Tage oder dauerhaft, mit Grund. Der Spieler sieht beim
+  Anmelden Grund und Restdauer. Ist er online, wird er sofort getrennt; auf Wunsch wird dabei auch
+  die Adresse seiner aktuellen Verbindung gesperrt.
+- **Adresse sperren:** eine IPv4-Adresse (`203.0.113.45`) oder ein Bereich (`203.0.113.0/24`).
+  Von dort ist keine Verbindung mehr möglich, also auch kein neues Konto. Nicht sperrbar sind
+  `127.x` und das Docker-Netz `172.16–172.31`: Dahinter können alle Spieler stecken, die über die
+  Docker-Weiterleitung kommen (z. B. über IPv6).
+- **Trennen** in der Spielerliste wirft einen Spieler hinaus, ohne ihn zu sperren.
+- Viele Anschlüsse bekommen regelmäßig eine neue Adresse, und bei DS-Lite oder im Mobilfunk teilen
+  sich viele Kunden eine. Adressen daher lieber nur für einige Tage sperren.
+- Gegen eine **Flut von Paketen** von einer Adresse hilft eine Regel auf dem Rechner besser, weil die
+  Pakete dann den Server gar nicht erst erreichen. `ufw` wirkt bei Docker-Ports nicht, daher:
+  `sudo iptables -I DOCKER-USER -s 203.0.113.45 -p udp --dport 7777 -j DROP` (gilt bis zum Neustart;
+  entfernen mit `-D` statt `-I`).
 
 ### Der Container
 
@@ -589,6 +611,7 @@ server/
 │   ├── GameServer.*      ENet, Anmeldung, Simulation, Snapshots, Benchmark
 │   ├── Accounts.*        Konten, Bestenliste, Einstellungen speichern (Datenordner)
 │   ├── SharedState.hpp   Datenaustausch Spiel-Thread <-> Web-Thread
+│   ├── IpRange.hpp       IPv4-Adressen und -Bereiche für Sperren
 │   ├── WebServer.*       Verwaltungsseite (cpp-httplib), Anmeldung, JSON-Schnittstelle
 │   └── LoadTest.cpp      Lasttest mit Netzwerk-Bots
 └── web/                  index.html, app.js, style.css der Verwaltungsseite

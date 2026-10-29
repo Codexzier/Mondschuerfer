@@ -163,6 +163,8 @@
                     <th scope="col" class="num wrap" title="Abschüsse / Abstürze / erreichte Ziele">Abschüsse / Abstürze / Ziele</th>
                     <th scope="col">Status</th>
                     <th scope="col" class="num">Ping</th>
+                    <th scope="col" title="Adresse der aktuellen Verbindung">Adresse</th>
+                    <th scope="col">Aktion</th>
                 </tr>
                 </thead>
                 <tbody id="players-body"></tbody>
@@ -268,6 +270,14 @@
                     <label for="f-missions">Mini-Missionen gleichzeitig</label>
                     <input id="f-missions" name="missions" type="number" min="0" max="10" step="1" inputmode="numeric">
                     <div class="field-help"><span id="f-missions-help">0 bis 10, 0 = keine Missionen</span> <span class="default-hint" id="d-missions"></span></div>
+                </div>
+
+                <div class="field">
+                    <label class="check" for="f-allowRegistration">
+                        <input id="f-allowRegistration" name="allowRegistration" type="checkbox">
+                        <span>Neue Konten erlauben</span>
+                    </label>
+                    <div class="field-help">Aus: Nur Spieler mit Konto können sich anmelden. <span class="default-hint" id="d-allowRegistration"></span></div>
                 </div>
 
                 <div class="field max-players">
@@ -410,6 +420,96 @@
                 <button type="submit" id="btn-uploader-add" class="btn btn-primary">Erlauben</button>
             </form>
             <div id="maps-msg" class="note" role="status" aria-live="polite" hidden></div>
+        </div>
+    </section>
+
+    <!-- ============================== Sperren ============================== -->
+    <section class="panel" id="bans-panel" aria-labelledby="bans-title">
+        <div class="panel-head">
+            <h2 id="bans-title">Sperren</h2>
+            <span class="muted small" id="bans-count">–</span>
+        </div>
+        <div class="settings">
+            <p class="muted small ships-help">
+                Ein gesperrtes Konto kann sich nicht mehr anmelden. Von einer gesperrten Adresse ist gar keine Verbindung
+                möglich, also auch kein neues Konto. Wer gerade verbunden ist, wird sofort getrennt und sieht im Spiel
+                den Grund und die Dauer. Viele Anschlüsse bekommen regelmäßig eine neue Adresse, und manchmal teilen sich
+                viele Kunden eine: Adressen daher lieber nur für einige Tage sperren.
+            </p>
+            <div class="table-wrap">
+                <table class="data-table bans-table">
+                    <thead>
+                    <tr>
+                        <th scope="col">Gesperrt</th>
+                        <th scope="col">Art</th>
+                        <th scope="col">Grund</th>
+                        <th scope="col">Seit</th>
+                        <th scope="col">Bis</th>
+                        <th scope="col">Aktion</th>
+                    </tr>
+                    </thead>
+                    <tbody id="bans-body"></tbody>
+                </table>
+            </div>
+            <p id="bans-empty" class="empty" hidden>Zurzeit ist nichts gesperrt.</p>
+
+            <form id="ban-account-form" class="settings" novalidate>
+                <h3 class="form-title">Konto sperren</h3>
+                <div class="field-row">
+                    <div class="field">
+                        <label for="ban-name">Spielername</label>
+                        <input id="ban-name" type="text" maxlength="16" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="field">
+                        <label for="ban-account-days">Dauer</label>
+                        <select id="ban-account-days">
+                            <option value="1">1 Tag</option>
+                            <option value="7">7 Tage</option>
+                            <option value="30">30 Tage</option>
+                            <option value="0" selected>dauerhaft</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="ban-account-reason">Grund <span class="muted small">(sieht der Spieler)</span></label>
+                        <input id="ban-account-reason" type="text" maxlength="100" autocomplete="off">
+                    </div>
+                </div>
+                <label class="check" for="ban-with-ip">
+                    <input id="ban-with-ip" type="checkbox">
+                    <span>Auch die Adresse der aktuellen Verbindung sperren (nur wenn der Spieler online ist)</span>
+                </label>
+                <div class="actions">
+                    <button type="submit" id="btn-ban-account" class="btn btn-primary">Konto sperren</button>
+                </div>
+            </form>
+
+            <form id="ban-ip-form" class="settings" novalidate>
+                <h3 class="form-title">Adresse sperren</h3>
+                <div class="field-row">
+                    <div class="field">
+                        <label for="ban-address">IP-Adresse oder Bereich</label>
+                        <input id="ban-address" type="text" maxlength="18" autocomplete="off" spellcheck="false"
+                               placeholder="203.0.113.45 oder 203.0.113.0/24">
+                    </div>
+                    <div class="field">
+                        <label for="ban-ip-days">Dauer</label>
+                        <select id="ban-ip-days">
+                            <option value="1">1 Tag</option>
+                            <option value="7" selected>7 Tage</option>
+                            <option value="30">30 Tage</option>
+                            <option value="0">dauerhaft</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="ban-ip-reason">Grund <span class="muted small">(wird angezeigt)</span></label>
+                        <input id="ban-ip-reason" type="text" maxlength="100" autocomplete="off">
+                    </div>
+                </div>
+                <div class="actions">
+                    <button type="submit" id="btn-ban-ip" class="btn btn-primary">Adresse sperren</button>
+                </div>
+            </form>
+            <div id="bans-msg" class="note" role="status" aria-live="polite" hidden></div>
         </div>
     </section>
 </main>

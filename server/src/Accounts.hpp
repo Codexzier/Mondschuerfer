@@ -20,6 +20,8 @@
 //                   wurden; sonst gelten die Standard-Schiffe (cfg::SHIP_TYPES)
 //   karten/         hochgeladene Karten aus dem Karteneditor, je Karte eine
 //                   Datei <besitzer>-<stamm>.karte (Format: shared/GameMap.hpp)
+//   bans.txt        gesperrte Konten und IP-Adressen (Verwaltungsseite,
+//                   Bereich "Sperren"); nur vorhanden, wenn es Sperren gab
 //
 // Format: einfacher Text, eine Angabe pro Zeile bzw. pro Konto, "name=wert".
 // So kann man die Dateien zur Not mit einem Texteditor ansehen (bei
@@ -53,6 +55,7 @@
 #include "Config.hpp"
 #include "GameMap.hpp"
 #include "GameSettings.hpp"
+#include "IpRange.hpp"
 #include "Protocol.hpp"
 #include <condition_variable>
 #include <cstdint>
@@ -122,6 +125,18 @@ struct HighscoreRecord {
     double seconds = 0.0;   // gebrauchte Zeit für diese Runde
     int round = 1;
     int64_t when = 0;       // Unix-Zeit
+};
+
+// Eine Sperre (Verwaltungsseite, Bereich "Sperren"): ein Konto oder eine
+// IPv4-Adresse bzw. ein ganzer Adressbereich ("203.0.113.0/24", IpRange.hpp).
+struct Ban {
+    bool isIp = false;
+    std::string target;     // Konto: Name (Originalschreibweise); IP: Text wie IpRangeText
+    uint32_t net = 0;       // nur IP: erste Adresse des Bereichs in Lesereihenfolge (1.2.3.4 = 0x01020304)
+    int prefix = 32;        // nur IP: Länge der Netzmaske (MIN_BAN_PREFIX..32, 32 = eine Adresse)
+    std::string reason;     // Grund, wird dem Spieler angezeigt (darf leer sein)
+    int64_t created = 0;    // Unix-Zeit
+    int64_t until = 0;      // Unix-Zeit des Endes, 0 = dauerhaft
 };
 
 class Accounts {
@@ -204,6 +219,19 @@ public:
     void SetActiveMap(const std::string& file) { activeMap_ = file; }
     std::vector<std::string> MapUploaders() const;   // Konten mit Account::mapUpload, nach Name sortiert
 
+    // --- Sperren ---------------------------------------------------------------------
+    // Alle Sperren stehen im Speicher; abgelaufene entfernt RemoveExpiredBans.
+    // Add/Remove/RemoveExpired speichern NICHT automatisch (SaveBans).
+    static constexpr size_t MAX_BANS = 1000;
+    const std::vector<Ban>& Bans() const { return bans_; }
+    // Neue Sperre; eine vorhandene für dasselbe Konto bzw. denselben Bereich
+    // wird ersetzt. false, wenn MAX_BANS erreicht ist.
+    bool AddBan(const Ban& b);
+    bool RemoveBan(bool isIp, const std::string& target);   // target ohne Rücksicht auf Groß/Klein
+    // Entfernt Sperren mit 0 < until <= now und hängt sie an removed an.
+    void RemoveExpiredBans(int64_t now, std::vector<Ban>& removed);
+    void SaveBans();
+
     // Wartet, bis der Schreib-Thread alle Aufträge erledigt hat (beim Start
     // und beim Beenden). false, wenn seit dem letzten Flush etwas nicht
     // geschrieben werden konnte (Meldung steht dann schon auf stderr).
@@ -239,4 +267,5 @@ private:
     long long totalDelivered_ = 0;
     std::vector<ServerMap> maps_;           // nach Kartenname sortiert
     std::string activeMap_;
+    std::vector<Ban> bans_;                 // Reihenfolge: älteste zuerst
 };

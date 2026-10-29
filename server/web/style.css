@@ -490,6 +490,15 @@ fieldset { border: 0; padding: 0; }
 .btn-ghost { background: transparent; }
 .reset-note { margin: -6px 0 0; }
 
+/* Kontrollkästchen mit Beschriftung daneben (Spielparameter, Sperren) */
+.check { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
+.check input[type="checkbox"] { accent-color: var(--accent); width: 18px; height: 18px; margin: 0; flex: none; }
+
+/* Bereich "Sperren" */
+.form-title { margin: 0; font-size: 1rem; }
+.bans-table td.name { font-weight: 600; }
+.bans-table td.reason { white-space: normal; overflow-wrap: anywhere; min-width: 160px; }
+
 /* Bereich "Schiffe": Eingabefelder in der Tabelle */
 .ships-help { margin: 0; }
 .ships-table input[type="text"] { min-width: 150px; }

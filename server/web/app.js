@@ -79,6 +79,9 @@
         mapsKey: '',           // Vergleichswert für den Bereich "Karten"
         mapsBusy: false,       // läuft gerade ein POST /api/maps?
         mapNoticeSeq: null,    // zuletzt gezeigte Meldung des Spiel-Threads (null = noch keine Abfrage)
+        bansKey: '',           // Vergleichswert für den Bereich "Sperren"
+        bansBusy: false,       // läuft gerade ein POST /api/bans?
+        banNoticeSeq: null,    // wie mapNoticeSeq, für den Bereich "Sperren"
         playersKey: '',        // Vergleichswert, um die Tabelle nur bei Änderungen neu zu bauen
         highscoreKey: '',
     };
@@ -235,6 +238,7 @@
         syncForm(d);
         syncShips(d);
         renderMaps(d);
+        renderBans(d);
     }
 
     function renderHeader(d) {
@@ -351,6 +355,12 @@
         const ping = Number(p.ping) || 0;
         const pingNode = el('span', ping < 80 ? 'text-good' : ping < 150 ? 'text-warn' : 'text-bad', `${ping} ms`);
         tr.appendChild(cell('Ping', 'num', pingNode));
+        tr.appendChild(cell('Adresse', '', p.ip || '–'));
+
+        const actions = el('div', 'actions');
+        actions.appendChild(banButton('Trennen', 'btn', () => onKick(p.name)));
+        actions.appendChild(banButton('Sperren', 'btn btn-ghost', () => prefillAccountBan(p.name)));
+        tr.appendChild(cell('Aktion', '', actions));
         return tr;
     }
 
@@ -360,7 +370,7 @@
         if (!d) return;
         const players = Array.isArray(d.players) ? d.players : [];
         const query = $('player-search').value.trim().toLowerCase();
-        const key = JSON.stringify(players) + '\u0000' + query;
+        const key = JSON.stringify(players) + '\u0000' + query + '\u0000' + state.bansBusy;
         if (!force && key === state.playersKey) return;
         state.playersKey = key;
 
@@ -420,7 +430,8 @@
     // Formular "Spielparameter"
     // =========================================================================
     const form = () => $('settings-form');
-    const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers', 'lives', 'missions'];
+    const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers', 'lives', 'missions',
+        'allowRegistration'];
 
     // Aktuelle Eingaben als Objekt (gleicher Aufbau wie "settings" im JSON)
     function readForm() {
@@ -435,6 +446,7 @@
             maxPlayers: Number($('f-maxPlayers').value),
             lives: Number($('f-lives').value),
             missions: Number($('f-missions').value),
+            allowRegistration: $('f-allowRegistration').checked,
         };
     }
 
@@ -453,6 +465,7 @@
         $('f-maxPlayers').value = s.maxPlayers;
         $('f-lives').value = s.lives;
         $('f-missions').value = s.missions;
+        $('f-allowRegistration').checked = s.allowRegistration !== false;
         updateEnemyField();
         updateNameCounter();
     }
@@ -505,6 +518,7 @@
         setText('d-maxPlayers', String(def.maxPlayers));
         setText('d-lives', String(def.lives));
         setText('d-missions', String(def.missions));
+        setText('d-allowRegistration', def.allowRegistration === false ? 'aus' : 'an');
     }
 
     const isDirty = () => state.baseline !== null && !sameSettings(readForm(), state.baseline);
@@ -672,6 +686,7 @@
         body.set('maxPlayers', String(s.maxPlayers));
         body.set('lives', String(s.lives));
         body.set('missions', String(s.missions));
+        body.set('allowRegistration', s.allowRegistration ? '1' : '0');
         await postSettings('/api/settings', body);
     }
 
@@ -683,7 +698,8 @@
             'Alle Spielparameter auf die Standardwerte aus docker-compose.yml zurücksetzen?',
             `Standard: ${DIFFICULTY_NAMES[def.difficulty] || '–'} (${def.enemyShips} feindliche Schiffe), ` +
                 `${def.tradeStations} Handelsstation(en), ${def.shipyards} Werft(en), Mond ${MOON_NAMES[def.moon] || '–'}, ` +
-                `max. ${def.maxPlayers} Spieler, ${def.lives} Leben, ${def.missions} Mini-Missionen.`,
+                `max. ${def.maxPlayers} Spieler, ${def.lives} Leben, ${def.missions} Mini-Missionen, ` +
+                `neue Konten ${def.allowRegistration === false ? 'nicht erlaubt' : 'erlaubt'}.`,
         ];
         if (def.tradeStations !== cur.tradeStations || def.shipyards !== cur.shipyards || def.moon !== cur.moon) {
             text.push(REBUILD_TEXT);
@@ -1066,6 +1082,163 @@
     }
 
     // =========================================================================
+    // Bereich "Sperren"
+    // Wie bei den Karten führt der Spiel-Thread jeden Auftrag im nächsten
+    // Schritt aus und meldet das Ergebnis mit dem nächsten Status
+    // (banNotice, banNoticeSeq zählt bei jeder Meldung hoch).
+    // =========================================================================
+    const NAME_RE = /^[A-Za-z0-9_-]{3,16}$/;
+
+    function banButton(label, className, onClick) {
+        const b = el('button', className, label);
+        b.type = 'button';
+        b.disabled = state.bansBusy;
+        b.addEventListener('click', onClick);
+        return b;
+    }
+
+    function banRow(b) {
+        const tr = document.createElement('tr');
+        tr.appendChild(cell('Gesperrt', 'name', b.target));
+        tr.appendChild(cell('Art', '', b.ip ? 'Adresse' : 'Konto'));
+        tr.appendChild(cell('Grund', 'reason', b.reason || '–'));
+        const [cDate, cTime] = fmtDate(b.created);
+        const since = twoLineCell('', cDate, cTime);
+        since.dataset.label = 'Seit';
+        tr.appendChild(since);
+        if (b.until > 0) {
+            const [uDate, uTime] = fmtDate(b.until);
+            const until = twoLineCell('', uDate, uTime);
+            until.dataset.label = 'Bis';
+            tr.appendChild(until);
+        } else {
+            tr.appendChild(cell('Bis', '', 'dauerhaft'));
+        }
+        tr.appendChild(cell('Aktion', '', banButton('Entsperren', 'btn btn-ghost',
+            () => postBans({ action: 'unban', kind: b.ip ? 'ip' : 'account', target: b.target }))));
+        return tr;
+    }
+
+    function renderBans(d) {
+        const bans = Array.isArray(d.bans) ? d.bans : [];
+        const key = JSON.stringify([bans, state.bansBusy]);
+        if (key !== state.bansKey) {
+            state.bansKey = key;
+            const rows = document.createDocumentFragment();
+            bans.forEach((b) => rows.appendChild(banRow(b)));
+            $('bans-body').replaceChildren(rows);
+            setText('bans-count', bans.length === 1 ? '1 Sperre' : `${bans.length} Sperren`);
+            $('bans-empty').hidden = bans.length > 0;
+            $('bans-body').closest('table').hidden = bans.length === 0;
+            $('btn-ban-account').disabled = state.bansBusy;
+            $('btn-ban-ip').disabled = state.bansBusy;
+        }
+        const seq = Number(d.banNoticeSeq) || 0;
+        if (state.banNoticeSeq !== null && seq > state.banNoticeSeq && d.banNotice) {
+            showBansMessage(d.banNotice, d.banNoticeError ? 'error' : 'ok');
+        }
+        state.banNoticeSeq = seq;
+    }
+
+    function showBansMessage(text, kind) {
+        const box = $('bans-msg');
+        box.textContent = text;
+        box.className = `note ${kind === 'ok' ? 'note-ok' : 'note-error'}`;
+        box.hidden = false;
+    }
+
+    // Liefert true, wenn der Server den Auftrag angenommen hat.
+    async function postBans(fields) {
+        if (state.bansBusy) return false;
+        state.bansBusy = true;
+        if (state.status) { renderBans(state.status); renderPlayers(state.status, false); }
+        try {
+            const res = await fetch('/api/bans', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'X-Requested-With': 'mondschuerfer',   // CSRF-Schutz wie bei den Spielparametern
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    Accept: 'application/json',
+                },
+                body: new URLSearchParams(fields).toString(),
+            });
+            let data = null;
+            try { data = await res.json(); } catch (e) { data = null; }
+            if (res.ok && data && data.ok) {
+                showBansMessage(data.message || 'Wird übernommen …', 'ok');
+                setTimeout(poll, 1200);   // der Status mit dem Ergebnis kommt spätestens nach einer Sekunde
+                return true;
+            }
+            if (res.status === 401) showBansMessage('Nicht angemeldet – bitte die Seite neu laden.', 'error');
+            else showBansMessage((data && data.error) || `Fehlgeschlagen (HTTP ${res.status}).`, 'error');
+        } catch (e) {
+            showBansMessage('Fehlgeschlagen: keine Verbindung zum Server.', 'error');
+        } finally {
+            state.bansBusy = false;
+            if (state.status) { renderBans(state.status); renderPlayers(state.status, false); }
+        }
+        return false;
+    }
+
+    // "Sperren" in der Spielerliste: Formular ausfüllen, Grund und Dauer wählt der Betreiber
+    function prefillAccountBan(name) {
+        $('ban-name').value = name;
+        $('ban-with-ip').checked = false;
+        $('bans-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        $('ban-account-reason').focus({ preventScroll: true });
+    }
+
+    async function onKick(name) {
+        const text = [`${name} wird sofort vom Server getrennt. Das Schiff wird gespeichert und verschwindet aus der Welt.`,
+            'Eine neue Anmeldung ist danach gleich wieder möglich. Dauerhaft fernhalten: „Sperren“.'];
+        if (await confirmDialog('Spieler trennen?', text, 'Trennen')) postBans({ action: 'kick', name });
+    }
+
+    async function onBanAccount(ev) {
+        ev.preventDefault();
+        const name = $('ban-name').value.trim();
+        if (!NAME_RE.test(name)) {
+            showBansMessage('Bitte einen gültigen Spielernamen eingeben (3–16 Zeichen: Buchstaben, Ziffern, _ und -).', 'error');
+            $('ban-name').focus();
+            return;
+        }
+        const ok = await postBans({
+            action: 'banAccount',
+            name,
+            days: $('ban-account-days').value,
+            reason: $('ban-account-reason').value.trim(),
+            withIp: $('ban-with-ip').checked ? '1' : '0',
+        });
+        if (ok) {
+            $('ban-name').value = '';
+            $('ban-account-reason').value = '';
+            $('ban-with-ip').checked = false;
+        }
+    }
+
+    async function onBanIp(ev) {
+        ev.preventDefault();
+        const address = $('ban-address').value.trim();
+        if (!/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(address)) {
+            showBansMessage('Bitte eine IPv4-Adresse wie 203.0.113.45 oder einen Bereich wie 203.0.113.0/24 eingeben.', 'error');
+            $('ban-address').focus();
+            return;
+        }
+        const ok = await postBans({
+            action: 'banIp',
+            address,
+            days: $('ban-ip-days').value,
+            reason: $('ban-ip-reason').value.trim(),
+        });
+        if (ok) {
+            $('ban-address').value = '';
+            $('ban-ip-reason').value = '';
+        }
+    }
+
+    // =========================================================================
     // Start: Ereignisse verbinden, erste Abfrage
     // =========================================================================
     function init() {
@@ -1093,6 +1266,8 @@
         updateShipsUi();
 
         $('uploader-form').addEventListener('submit', onUploaderAdd);
+        $('ban-account-form').addEventListener('submit', onBanAccount);
+        $('ban-ip-form').addEventListener('submit', onBanIp);
 
         // Tab wieder sichtbar: sofort aktualisieren statt bis zu 10 s zu warten
         document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
