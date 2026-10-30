@@ -4,7 +4,8 @@
 //
 // Wofür ist die Datei da?
 //   Die Klasse Assets lädt die 3D-Modelle aus dem Kenney Space Kit
-//   (assets/models/*.glb), färbt das Gestein passend zur Mondfarbe um und
+//   (assets/models/*.glb) und aus den weiteren Kits in Unterordnern (siehe
+//   unten), färbt das Gestein passend zur Mondfarbe um und
 //   zeichnet die Modelle mit einem eigenen Beleuchtungs-Shader. Es gibt genau
 //   ein Objekt davon: g_assets (global, weil es genau ein Fenster mit genau
 //   einem Grafikkontext gibt und viele Stellen zeichnen).
@@ -35,6 +36,22 @@
 //      vorkommen, belegen Grafikspeicher.
 //   3. Shutdown(): alle Modelle und den Shader wieder freigeben.
 //
+// Weitere Kits (für den FPS-Modus), je ein Unterordner von assets/models/:
+//   fantasy-town/   Fantasy Town Kit (Dorf, Wald)
+//   graveyard/      Graveyard Kit (Friedhof, Wald; die Figuren character-*
+//                   werden nicht benutzt, Gegner kommen aus characters/)
+//   space-station/  Space Station Kit (Command Center)
+//   modular-space/  Modular Space Kit (Command Center)
+//   blaster/        Blaster Kit (Waffen, Munition, Kisten)
+//   characters/     characterMedium aus Animated Characters, aus den
+//                   Blender-Quellen nach GLB umgewandelt, mit 14 Animationen
+//                   (idle, walk, run, shoot, death, interactGround ...);
+//                   weitere Häute in characters/Skins/ (military: SG-Teams,
+//                   survivor und cyborg: Bodenpiraten, zombie: Friedhof)
+// Die ID bekommt den Namen mit Unterordner, z. B. Id("fantasy-town/windmill").
+// Diese Kits färben über eine Textur (Textures/colormap.png im Kit-Ordner)
+// und haben ihren Ursprung schon am Bezugspunkt (siehe Ensure in Assets.cpp).
+//
 // Alles läuft im Haupt-Thread (dem Thread mit dem OpenGL-Kontext); raylib
 // ist nicht für mehrere Threads gebaut.
 // ---------------------------------------------------------------------------
@@ -45,7 +62,7 @@
 #include <string>
 #include <vector>
 
-// Verwaltet die 3D-Modelle aus dem Kenney Space Kit und den Beleuchtungs-Shader.
+// Verwaltet die 3D-Modelle der Kenney-Kits und den Beleuchtungs-Shader.
 //
 // Die Modell-IDs kommen aus dem Modell-Verzeichnis (shared/Models.hpp), das
 // auch die Spiellogik benutzt. Das 3D-Modell zu einer ID wird erst geladen,
@@ -58,7 +75,8 @@ public:
     bool Init();
     void Shutdown();   // vor CloseWindow() aufrufen
 
-    // Liefert die ID eines Modells (Dateiname ohne .glb), siehe ModelId().
+    // Liefert die ID eines Modells (Dateiname ohne .glb, bei den weiteren
+    // Kits mit Unterordner, z. B. "graveyard/crypt-large"), siehe ModelId().
     // Unbekannte Namen bekommen eine neue ID; geladen wird erst beim Zeichnen.
     int Id(const std::string& name);
 
