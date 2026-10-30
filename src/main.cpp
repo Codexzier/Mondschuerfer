@@ -235,6 +235,15 @@ public:
             screen_ != Screen::Multiplayer && screen_ != Screen::Editor)   // Mehrspieler und Editor zoomen selbst
             zoom_ = Clamp(zoom_ - wheel * 0.08f, 0.55f, 1.6f);
 
+        // Zu Fuß ist der Mauszeiger im Spiel eingefangen (Blick mit der Maus),
+        // in Pause und Menüs wieder frei (vor dem Lesen der Eingaben).
+        const bool capture = screen_ == Screen::Playing && OnFoot() && world_.outcome == Outcome::None;
+        if (capture != cursorCaptured_) {
+            if (capture) DisableCursor();
+            else EnableCursor();
+            cursorCaptured_ = capture;
+        }
+
         switch (screen_) {
             case Screen::Menu: UpdateMenuWorld(dt); break;
             case Screen::Playing: UpdatePlaying(dt); break;
@@ -288,7 +297,10 @@ public:
         mp_.reset();   // Mehrspieler: beim Server abmelden (er speichert den Fortschritt)
         const bool inGame = screen_ == Screen::Playing || screen_ == Screen::Paused ||
                             (screen_ == Screen::Options && optionsReturn_ == Screen::Paused);
-        if (inGame && world_.outcome == Outcome::None && world_.PlayerAlive()) SaveGame(world_);
+        if (inGame && world_.outcome == Outcome::None && world_.PlayerAlive()) {
+            world_.EndTrooper(world_.Me());   // zu Fuß: erst einsteigen (der Spielstand kennt nur das Schiff)
+            SaveGame(world_);
+        }
         g_clientConfig.SaveIfChanged();
     }
 
@@ -440,6 +452,9 @@ private:
         return screen_ == Screen::Menu || (screen_ == Screen::Options && optionsReturn_ == Screen::Menu);
     }
 
+    // Spieler ist zu Fuß unterwegs (Trupp, über die Pause ausgestiegen)?
+    bool OnFoot() const { return world_.Me().role == PlayerRole::Trooper; }
+
     // Zurück ins Hauptmenü (aus Spiel, Pause, Simulation oder Mehrspieler).
     // Speichert NICHT – das entscheidet der Aufrufer (z. B. DrawPause).
     void BackToMenu() {
@@ -559,6 +574,13 @@ private:
                 g_audio.Play(Sfx::PauseOpen);
                 return;
             }
+            // Zu Fuß: Ego-Steuerung (TrooperControls), das Schiff wartet versteckt.
+            if (OnFoot()) {
+                const Trooper* t = world_.FindTrooper(world_.Me().trooperId);
+                world_.Me().trooperInput = t ? trooperControls_.Read(t->yaw, t->pitch, dt) : TrooperInput{};
+                world_.Update(dt, ShipInput{});
+                return;
+            }
             // Tastatur, Maus und Controller. Scanner und Interagieren kommen
             // getrennt (FlightInput); der Einzelspieler gibt sie als
             // scanToggle/interact in dieselbe ShipInput.
@@ -673,7 +695,9 @@ private:
         // eigene Kameras in MultiplayerScreen::Update bzw. MapEditorScreen::Update
         if (screen_ == Screen::Multiplayer || screen_ == Screen::Editor) return;
         const Ship& p = world_.Player();
-        Vector3 target = p.pos;
+        // Zu Fuß folgt camTarget_ der Figur (Zuhörer für die Töne, Kamera beim Einsteigen)
+        const Trooper* foot = OnFoot() ? world_.FindTrooper(world_.Me().trooperId) : nullptr;
+        Vector3 target = foot ? foot->pos : p.pos;
         target.y = 0.0f;
         if (p.dead) target = camTarget_;   // nach der Explosion stehen bleiben
         float k = 1.0f - expf(-5.0f * dt);
@@ -687,6 +711,11 @@ private:
             float r = 52.0f;
             cam_.target = camTarget_;
             cam_.position = {camTarget_.x + sinf(menuOrbit_) * r, 34.0f, camTarget_.z + cosf(menuOrbit_) * r};
+        } else if (foot) {
+            // Zu Fuß: Ego-Kamera in Augenhöhe mit weitem Blickwinkel
+            cam_.fovy = 70.0f;
+            cam_.position = TrooperEye(*foot);
+            cam_.target = Vector3Add(cam_.position, TrooperAim(*foot));
         } else {
             // Spiel: schräg von hinten oben (30 hoch, 27 nach +z, also im Bild
             // "unten"); zoom_ skaliert den Abstand.
@@ -742,6 +771,11 @@ private:
         }
         BeginDrawing();
         ClearBackground(Color{14, 17, 26, 255});
+        // Ego-Ansicht zu Fuß: ohne Tilt-Shift und Retro-Pixel, nahe Clip-Ebene
+        // 5 cm (die Waffe steht dicht vor der Kamera); sonst die Werte aus main().
+        const bool ego = OnFoot() && !MenuBackground();
+        tiltshift::SetEgoView(ego);
+        rlSetClipPlanes(ego ? 0.05 : 0.5, ego ? 1000.0 : 2500.0);
         tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
         BeginMode3D(cam_);
         world_.Draw(cam_);
@@ -901,7 +935,10 @@ private:
     // BackPressed), aber erst zwei Frames nach dem Öffnen (siehe
     // pauseFrames_ in Frame), sonst würde derselbe Tastendruck sie öffnen und
     // gleich wieder schließen.
-    // Aufbau von oben: Überschrift, vier Knöpfe, darunter die Tastenhilfe.
+    // Aufbau von oben: Überschrift, fünf Knöpfe, darunter die Tastenhilfe.
+    // Der zweite Knopf lässt zum Ausprobieren des Trupps (FPS-Modus) aus dem
+    // Schiff aussteigen bzw. wieder einsteigen. Gespeichert wird immer mit
+    // dem Schiff: "Speichern" steigt vorher ein.
     // Die Höhe des Fensters ergibt sich aus diesen Teilen (ControlsMaxHeight
     // aus Hud.hpp: Platz für die längste Tastenhilfe), damit Knöpfe und
     // Tastenhilfe sich nie überlappen und die Knöpfe beim Gerätewechsel
@@ -910,7 +947,11 @@ private:
         const float s = Scale();
         const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
         DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
-        std::vector<std::string> items = {"Weiterspielen", "Optionen", "Speichern & zum Hauptmenü", "Hauptmenü ohne Speichern"};
+        const bool foot = OnFoot();
+        const bool canLeave = foot || (world_.PlayerAlive() && !world_.Player().hidden && world_.Me().dockedAt < 0 &&
+                                       world_.outcome == Outcome::None);
+        std::vector<std::string> items = {"Weiterspielen", foot ? "Ins Schiff einsteigen" : "Als SG-Team aussteigen", "Optionen",
+                                          "Speichern & zum Hauptmenü", "Hauptmenü ohne Speichern"};
         const float bh = 54 * s, gap = 12 * s, listTop = 100 * s;   // Knöpfe (listTop relativ zur Oberkante)
         const float helpSize = 18 * s;
         // Tastenhilfe 26 px unter dem letzten Knopf: n Knöpfe belegen n * (bh + gap) - gap
@@ -919,18 +960,24 @@ private:
         Rectangle r{W * 0.5f - 300 * s, H * 0.5f - ph * 0.5f, 600 * s, ph};
         Panel(r);
         TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);
-        int c = ButtonList(items, {true, true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
+        int c = ButtonList(items, {true, canLeave, true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
         if (pauseFrames_ > 1 && (BackPressed() || IsKeyPressed(KEY_P))) c = 0;
         if (c == 0) {
             screen_ = Screen::Playing;
             g_audio.Play(Sfx::PauseClose);
         } else if (c == 1) {
+            if (foot) world_.EndTrooper(world_.Me());
+            else world_.StartTrooper(world_.Me());
+            controls_.Reset();
+            screen_ = Screen::Playing;
+            g_audio.Play(Sfx::PauseClose);
+        } else if (c == 2) {
             g_audio.Play(Sfx::UiConfirm);
             OpenOptions(Screen::Paused);
             return;
-        } else if (c == 2) { SaveGame(world_); BackToMenu(); return; }
-        else if (c == 3) BackToMenu();
-        DrawControls(r.x + 70 * s, r.y + helpTop, helpSize);
+        } else if (c == 3) { world_.EndTrooper(world_.Me()); SaveGame(world_); BackToMenu(); return; }
+        else if (c == 4) BackToMenu();
+        DrawControls(r.x + 70 * s, r.y + helpTop, helpSize, OnFoot());
     }
 
     // Simulation: HUD im Simulationsmodus, Stationsfenster nur zum Ansehen
@@ -1118,6 +1165,8 @@ private:
     float lastMusicReport_ = 0.0f;   // --music-test: Zeit der letzten MUSICTEST-Zeile
     int musicTestStep_ = 0;          // --music-test: nächster Schritt des Ablaufs
     PilotControls controls_;         // Flugsteuerung: Tastatur, Maus, Controller (Controls.hpp)
+    TrooperControls trooperControls_; // Steuerung zu Fuß (Ego-Ansicht)
+    bool cursorCaptured_ = false;    // Mauszeiger eingefangen (zu Fuß, siehe Frame)
     size_t mouseTestIdx_ = 0;        // --mouse-test: Nummer des aktuellen Ziels
     float mouseTestEndT_ = -1.0f;    // --mouse-test: Zeit, als das aktuelle Ziel endete (-1 = läuft noch)
     bool mouseTestHad_ = false;      // --mouse-test: hatte im vorigen Frame ein Ziel

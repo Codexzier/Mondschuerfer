@@ -20,7 +20,7 @@
 // Modell-IDs löst WorldGen.cpp auf.)
 //
 // Ablauf eines Zeitschritts (Update):
-//   Spieler (Eingaben, Scanner, Abbau) -> KI der anderen Schiffe -> abstürzende
+//   Spieler (Eingaben, Scanner, Abbau) -> Figuren zu Fuß -> KI der anderen Schiffe -> abstürzende
 //   Schiffe -> Schiffe auseinanderschieben -> Geschütztürme -> Geschosse ->
 //   Partikel -> Wracks -> Aufräumen -> neue Lagerstätten/Gegner -> Meldungen.
 // Ergebnis neben dem neuen Zustand: Ereignisse in sounds, fx, goals und
@@ -447,6 +447,7 @@ void World::Update(float dt) {
     if (outcome != Outcome::None) outcomeT += dt;
 
     for (auto& ps : players) UpdatePlayer(ps, dt);
+    UpdateTroopers(dt);   // Figuren zu Fuß (Trooper.cpp)
 
     // KI aller anderen Schiffe. Versteckte Schiffe überspringen, außer
     // Händlern, die in einer Station warten (ihr Aufenthalts-Timer muss
@@ -1852,6 +1853,15 @@ void World::UpdateBullets(float dt) {
         b.pos = Vector3Add(b.pos, Vector3Scale(b.vel, dt));
         b.life -= dt;
         if (b.life <= 0) continue;
+        // Geschoss einer Figur: endet am Boden oder an einem Hindernis
+        // (Funken), Schiffe trifft es nicht.
+        if (b.ground) {
+            if (b.pos.y <= 0.0f || TrooperBlocked(b.pos)) {
+                b.life = 0.0f;
+                SpawnSparks({b.pos.x, std::max(b.pos.y, 0.05f), b.pos.z}, Color{255, 200, 90, 255}, 4);
+            }
+            continue;
+        }
         for (auto& s : ships) {
             if (s.dead || s.crashing || s.hidden || s.id == b.ownerId) continue;
             if (isServer && s.docked) continue;   // angedockte Spieler sind geschützt

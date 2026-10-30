@@ -154,6 +154,20 @@ klickt, das **Steuerkreuz** wählt in Knopflisten wie die Pfeiltasten, **B** (Kr
 (Dreieck) wie F ab. Lautstärkeregler: A halten und ziehen, oder Steuerkreuz links/rechts.
 Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 
+**Zu Fuß als SG-Team** (FPS-Modus, bisher nur im Einzelspieler zum Ausprobieren): In der Pause
+steigt man mit *Als SG-Team aussteigen* unter dem Schiff aus und läuft in der Ego-Ansicht über
+den Mond; *Ins Schiff einsteigen* holt das Schiff an diese Stelle zurück. Gespeichert wird immer
+mit dem Schiff.
+
+| Aktion | Tastatur / Maus | Xbox | PlayStation |
+|---|---|---|---|
+| Laufen | W / S, A / D | Linker Stick | Linker Stick |
+| Zielen | Maus | Rechter Stick | Rechter Stick |
+| Schießen | Linksklick | RT | R2 |
+| Springen | Leertaste | A | Kreuz |
+| Sprinten | Shift halten | Linken Stick drücken | Linken Stick drücken |
+| Nachladen | R | X | Quadrat |
+
 **Im Mehrspieler** gelten dieselben Tasten. Unterschiede:
 
 | Taste | Aktion im Mehrspieler |

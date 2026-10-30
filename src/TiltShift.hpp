@@ -53,6 +53,10 @@ void End();
 // Kameraeffekte zeichnet).
 bool Active();
 
+// Ego-Ansicht (Trupp zu Fuß): Tilt-Shift und Retro-Pixel aus, Kantenglättung
+// und FXAA bleiben. main.cpp setzt das jedes Bild im Einzelspieler.
+void SetEgoView(bool on);
+
 // Höchste MSAA-Stufe, die die Grafikkarte kann (0 = keine). Für die Anzeige
 // in den Optionen; höhere Einstellungen werden darauf begrenzt.
 int MaxSamples();

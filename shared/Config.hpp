@@ -325,4 +325,25 @@ constexpr int MP_DEPOSITS_MAX = 240;          // Obergrenze für Lagerstätten a
 // von DOCK_RANGE, aber noch im Schutz der Geschütztürme.
 constexpr float MP_SPAWN_DISTANCE = 24.0f;    // Abstand des neuen Schiffs zur Handelsstation
 
+// Trupp zu Fuß (FPS-Modus, shared/Trooper.cpp). Längen in Metern, Tempo in m/s.
+constexpr float MOON_GRAVITY = 1.62f;         // Schwerkraft des Mondes (m/s²): Sprünge tragen weit
+constexpr float TROOPER_WALK = 4.0f;          // Gehen
+constexpr float TROOPER_SPRINT = 7.0f;        // Sprinten (nur vorwärts)
+constexpr float TROOPER_ACCEL = 30.0f;        // so schnell folgt das Tempo am Boden der Eingabe (m/s²)
+constexpr float TROOPER_AIR_CONTROL = 0.25f;  // Anteil davon in der Luft
+constexpr float TROOPER_JUMP = 2.2f;          // Absprung nach oben: gut 1,4 m hoch, knapp 3 s in der Luft
+constexpr float TROOPER_RADIUS = 0.4f;        // Kollision mit Felsen und Stationsteilen
+constexpr float TROOPER_HEIGHT = 1.8f;        // Teile, die höher anfangen, gehen über den Kopf hinweg
+constexpr float TROOPER_EYE = 1.65f;          // Augenhöhe (Ego-Kamera)
+constexpr float TROOPER_STEP = 0.5f;          // so hohe Kanten steigt die Figur ohne Sprung hinauf
+constexpr float TROOPER_PITCH_MAX = 1.45f;    // Blick nach oben/unten (Bogenmaß, gut 80°)
+constexpr float TROOPER_HP = 100.0f;          // Schild
+constexpr int TROOPER_MAG = 30;               // Schuss pro Magazin
+constexpr int TROOPER_AMMO = 120;             // Ersatzmunition beim Aussteigen
+constexpr float TROOPER_RELOAD = 1.8f;        // Sekunden zum Nachladen
+constexpr float TROOPER_FIRE_INTERVAL = 0.15f;
+constexpr float TROOPER_DAMAGE = 20.0f;
+constexpr float TROOPER_BULLET_SPEED = 70.0f;
+constexpr float TROOPER_BULLET_LIFE = 1.2f;
+
 } // namespace cfg

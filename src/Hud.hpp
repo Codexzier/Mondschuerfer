@@ -94,13 +94,14 @@ bool DrawVictory(const World& w);
 // controls::HelpRows in Controls.hpp). size = Schriftgröße in Pixeln; die
 // Zeilen liegen 1,35 * size auseinander.
 // Benutzt im HUD (unten links) und in den Pausenmenüs (main.cpp, Multiplayer.cpp).
-void DrawControls(float x, float y, float size);
+// foot = true: Belegung zu Fuß (Trupp) statt im Schiff.
+void DrawControls(float x, float y, float size, bool foot = false);
 // Höhe, die DrawControls mit dieser Schriftgröße belegt (Zeilenzahl * 1,35 *
 // size) für das gerade benutzte Gerät. Das HUD rechnet sein Layout damit
 // aus, statt selbst eine Zeilenzahl anzunehmen – kommt in DrawControls eine
 // Zeile dazu, passt sich alles von allein an. (Die Pausenmenüs nehmen
 // ControlsMaxHeight, siehe unten.)
-float ControlsHeight(float size);
+float ControlsHeight(float size, bool foot = false);
 // Höhe der LÄNGSTEN Tastenhilfe (egal welches Gerät). Für Fenster mit
 // Knöpfen (Pausenmenüs): Deren Größe darf sich nicht mit dem Gerät ändern.
 // Sonst rutschen die Knöpfe genau in dem Frame, in dem der Spieler mit dem

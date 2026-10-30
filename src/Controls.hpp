@@ -116,6 +116,30 @@ private:
 };
 
 // ===========================================================================
+// TrooperControls – Steuerung zu Fuß (Trupp, Ego-Ansicht)
+// ===========================================================================
+// Tastatur und Maus: W/S vor/zurück, A/D seitlich, Maus zielen (der Zeiger
+// ist dabei eingefangen, main.cpp), Linksklick schießen, Leertaste springen,
+// Shift sprinten, R nachladen. Controller: linker Stick laufen, rechter Stick
+// zielen, RT/R2 schießen, A/Kreuz springen, linken Stick drücken = sprinten
+// (bis der Stick losgelassen wird), X/Quadrat nachladen. Pause wie im Flug
+// (PilotControls::PausePressed).
+class TrooperControls {
+public:
+    // Geräte lesen. yaw/pitch = bisherige Blickrichtung der Figur; Maus und
+    // rechter Stick drehen sie weiter, das Ergebnis steht in TrooperInput.
+    TrooperInput Read(float yaw, float pitch, float dt);
+
+private:
+    unsigned lastReadFrame_ = 0;         // ui::FrameIndex() beim letzten Read
+    bool fireLatch_ = false;             // Linksklick/RT war beim Beginn schon gedrückt
+    int skipMouse_ = 0;                  // so viele Frames die Mausbewegung verwerfen
+    bool padSprint_ = false;             // Sprinten per Stickdruck, bis der Stick ruht
+    int triggerPad_ = -1;
+    controls::TriggerReader rt_;
+};
+
+// ===========================================================================
 // Tastennamen und Hilfetexte – passend zum zuletzt benutzten Gerät
 // ===========================================================================
 namespace controls {
@@ -137,8 +161,9 @@ struct HelpRow {
     const char* keys;
     const char* what;
 };
-std::vector<HelpRow> HelpRows();           // für das aktive Gerät
-std::vector<HelpRow> HelpRows(Device d);   // für ein bestimmtes Gerät
-size_t MaxHelpRows();                      // längste der drei Listen (Tastatur/Maus: 9)
+// foot = true: Belegung zu Fuß (TrooperControls) statt im Schiff.
+std::vector<HelpRow> HelpRows(bool foot = false);           // für das aktive Gerät
+std::vector<HelpRow> HelpRows(Device d, bool foot = false); // für ein bestimmtes Gerät
+size_t MaxHelpRows();                      // längste aller Listen (Tastatur/Maus im Schiff: 9)
 
 } // namespace controls
