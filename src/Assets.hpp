@@ -38,14 +38,16 @@
 //
 // Weitere Kits (für den FPS-Modus), je ein Unterordner von assets/models/:
 //   fantasy-town/   Fantasy Town Kit (Dorf, Wald)
-//   graveyard/      Graveyard Kit (Friedhof, Wald, Figuren ohne Skelett)
+//   graveyard/      Graveyard Kit (Friedhof, Wald; die Figuren character-*
+//                   werden nicht benutzt, Gegner kommen aus characters/)
 //   space-station/  Space Station Kit (Command Center)
 //   modular-space/  Modular Space Kit (Command Center)
 //   blaster/        Blaster Kit (Waffen, Munition, Kisten)
 //   characters/     characterMedium aus Animated Characters, aus den
 //                   Blender-Quellen nach GLB umgewandelt, mit 14 Animationen
 //                   (idle, walk, run, shoot, death, interactGround ...);
-//                   weitere Häute in characters/Skins/
+//                   weitere Häute in characters/Skins/ (military: SG-Teams,
+//                   survivor und cyborg: Bodenpiraten, zombie: Friedhof)
 // Die ID bekommt den Namen mit Unterordner, z. B. Id("fantasy-town/windmill").
 // Diese Kits färben über eine Textur (Textures/colormap.png im Kit-Ordner)
 // und haben ihren Ursprung schon am Bezugspunkt (siehe Ensure in Assets.cpp).
