@@ -16,7 +16,8 @@
 //
 // Abhängigkeiten: raylib (Modelle, Shader, Dateizugriff), raymath.h,
 // shared/Models.hpp (ModelName/ModelCount), die GLB-Dateien in
-// assets/models/ (Kenney Space Kit).
+// assets/models/ (Kenney Space Kit) und in den Unterordnern der weiteren
+// Kits (assets/models/<kit>/, siehe Assets.hpp).
 //
 // Annahme: Alles läuft im Haupt-Thread mit dem OpenGL-Kontext, Init() erst
 // nach InitWindow().
@@ -144,7 +145,11 @@ Color MoonTone(Color original, MoonColor moon) {
 // SetShaderValue().
 //
 // Farbe eines Pixels (Fragment-Shader):
-//   Grundfarbe = Materialfarbe · Vertexfarbe
+//   Grundfarbe = Materialfarbe · Textur · Vertexfarbe
+//   Die Textur (texture0, von raylib aus dem Material gesetzt) brauchen die
+//   Kits in den Unterordnern: Ihre Farben stehen in einer Farbtafel
+//   (Textures/colormap.png). Die Modelle des Space Kits haben keine Textur;
+//   raylib nimmt dann eine weiße, und es bleibt bei der Materialfarbe.
 //   Helligkeit = 0.36           Grundlicht: Schattenseiten werden nicht schwarz
 //              + 0.16 · sky     Himmelslicht: sky = 0 für Unterseiten, 1 für
 //                               Oberseiten (0.5 + 0.5 · Normale.y)
@@ -158,7 +163,7 @@ Color MoonTone(Color original, MoonColor moon) {
 //     bläulichen Schimmer. Dadurch heben sich Umrisse vom Boden ab. Die
 //     dritte Potenz beschränkt den Effekt auf einen schmalen Rand.
 //   + emissive: eigenes Leuchten, unabhängig vom Licht (Kristalle, Treffer).
-//   Alpha = Alpha von Materialfarbe/tint · Vertexfarbe.
+//   Alpha = Alpha von Materialfarbe/tint · Textur · Vertexfarbe.
 //
 // Grafikeffekte (Optionen → Grafik, Effects.hpp):
 //   - Schatten: Shadow() rechnet den Bildpunkt mit lightVP in die
@@ -189,10 +194,12 @@ uniform mat4 mvp;
 uniform mat4 matModel;
 uniform mat4 matNormal;
 out vec3 fragPosition;
+out vec2 fragTexCoord;
 out vec3 fragNormal;
 out vec4 fragColor;
 void main() {
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+    fragTexCoord = vertexTexCoord;
     fragNormal = normalize(vec3(matNormal * vec4(vertexNormal, 0.0)));
     fragColor = vertexColor;
     gl_Position = mvp * vec4(vertexPosition, 1.0);
@@ -204,8 +211,10 @@ void main() {
 const char* kFragmentHead = R"(
 #version 330
 in vec3 fragPosition;
+in vec2 fragTexCoord;
 in vec3 fragNormal;
 in vec4 fragColor;
+uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 uniform vec3 lightDir;
 uniform vec3 viewPos;
@@ -238,11 +247,12 @@ float Shadow(vec3 n, vec3 l) {
     return sum / 9.0 * shadowParams.x * edge;
 }
 void main() {
+    vec4 texel = texture(texture0, fragTexCoord);
     vec3 n = normalize(fragNormal);
     vec3 l = normalize(-lightDir);
     float diff = max(dot(n, l), 0.0) * (1.0 - Shadow(n, l));
     float sky = 0.5 + 0.5 * n.y;
-    vec3 base = colDiffuse.rgb * fragColor.rgb;
+    vec3 base = colDiffuse.rgb * texel.rgb * fragColor.rgb;
     vec3 col = base * (0.36 + 0.16 * sky + 0.62 * diff);
     vec3 v = normalize(viewPos - fragPosition);
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
@@ -257,7 +267,7 @@ void main() {
     }
     col += emissive;
     col = mix(col, fogColor, FogAmount(fragPosition));
-    finalColor = vec4(col, colDiffuse.a * fragColor.a);
+    finalColor = vec4(col, colDiffuse.a * texel.a * fragColor.a);
 }
 )";
 
@@ -373,16 +383,20 @@ Assets::Entry* Assets::Ensure(int id) {
     }
     ApplyPalette(e);
 
-    // Alle Kit-Modelle haben in ihrem Modellknoten (der Wurzel der Szene) eine
-    // Verschiebung um (2, 0, 1.5). raylib rechnet sie beim Laden fest in die
-    // Eckpunkte ein. base schiebt sie wieder zurück, sodass der Ursprung des
-    // Modells an seinem Bezugspunkt liegt (Mitte, auf dem Boden): Position im
-    // Spiel = Position des Modells. Die Grenzen in shared/ModelBounds.inc
-    // gelten ebenfalls schon für die korrigierte Lage.
-    e.base = MatrixTranslate(-2.0f, 0.0f, -1.5f);
+    // Alle Modelle des Space Kits haben in ihrem Modellknoten (der Wurzel der
+    // Szene) eine Verschiebung um (2, 0, 1.5). raylib rechnet sie beim Laden
+    // fest in die Eckpunkte ein. base schiebt sie wieder zurück, sodass der
+    // Ursprung des Modells an seinem Bezugspunkt liegt (Mitte, auf dem Boden):
+    // Position im Spiel = Position des Modells. Die Grenzen in
+    // shared/ModelBounds.inc gelten ebenfalls schon für die korrigierte Lage.
+    // Die Kits in den Unterordnern (Name mit "/") haben den Ursprung schon
+    // am Bezugspunkt und bleiben, wie sie sind.
+    const bool spaceKit = ModelName(id).find('/') == std::string::npos;
+    const Vector3 shift = spaceKit ? Vector3{-2.0f, 0.0f, -1.5f} : Vector3{0.0f, 0.0f, 0.0f};
+    e.base = MatrixTranslate(shift.x, shift.y, shift.z);
     BoundingBox b = GetModelBoundingBox(e.model);
-    b.min = Vector3Add(b.min, {-2.0f, 0.0f, -1.5f});
-    b.max = Vector3Add(b.max, {-2.0f, 0.0f, -1.5f});
+    b.min = Vector3Add(b.min, shift);
+    b.max = Vector3Add(b.max, shift);
     e.bounds = b;
     return &e;
 }
