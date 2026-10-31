@@ -108,7 +108,7 @@ void World::EndTrooper(PlayerState& ps) {
 // Jedes Deko- und Stationsteil wird zu einer Kapsel: die Grundfläche aus
 // ModelBounds (gedreht und skaliert wie beim Zeichnen), entlang der längeren
 // Seite gestreckt, Radius = halbe kürzere Seite, oben flach in Höhe der
-// Oberkante. Ausgelassen werden flache Teile (unter 0,3 m), Teile über
+// Oberkante. Ausgelassen werden flache Teile (unter 0,1 m), Teile über
 // Kopfhöhe, Krater (man läuft über den Rand hinweg), Rover (fahren weg)
 // und alles außerhalb des Spielfelds (Felswall, dort endet das Feld ohnehin).
 // Stationsteile zählen nur, wenn sie bei der aktuellen Ausbaustufe stehen;
@@ -119,7 +119,7 @@ void World::BuildTrooperBlocks() {
         const BoundingBox b = ModelBounds(model);
         const float ys = yScale > 0.0f ? yScale : scale;
         const float bottom = pos.y + b.min.y * ys, top = pos.y + b.max.y * ys;
-        if (top < 0.3f || bottom > cfg::TROOPER_HEIGHT) return;
+        if (top < 0.1f || bottom > cfg::TROOPER_HEIGHT) return;
         const float cx = (b.min.x + b.max.x) * 0.5f * scale, cz = (b.min.z + b.max.z) * 0.5f * scale;
         const float hx = (b.max.x - b.min.x) * 0.5f * scale, hz = (b.max.z - b.min.z) * 0.5f * scale;
         Vector3 la{cx, 0.0f, cz}, lb{cx, 0.0f, cz};
@@ -323,7 +323,7 @@ void World::FireTrooperBullet(Trooper& t) {
     const Vector3 fwd = ForwardFromYaw(t.yaw);
     const Vector3 right{-fwd.z, 0.0f, fwd.x};
     Bullet b;
-    b.pos = Vector3Add(Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.6f)), Vector3Add(Vector3Scale(right, 0.12f), {0.0f, -0.1f, 0.0f}));
+    b.pos = Vector3Add(Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.2f)), Vector3Add(Vector3Scale(right, 0.04f), {0.0f, -0.033f, 0.0f}));
     b.vel = Vector3Scale(dir, cfg::TROOPER_BULLET_SPEED);
     b.life = cfg::TROOPER_BULLET_LIFE;
     b.damage = cfg::TROOPER_DAMAGE;

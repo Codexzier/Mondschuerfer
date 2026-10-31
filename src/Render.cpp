@@ -67,6 +67,7 @@
 #include "rlgl.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace {
@@ -381,7 +382,8 @@ int YellowCrystal(const World& w, int model) {
 // (Lauf zeigt im Modell nach -z wie die Schiffsnasen), rechts unten vor der
 // Kamera und mit dem Blick geneigt. Dazu ein leichtes Wippen beim Laufen,
 // ein kleiner Rückstoß nach jedem Schuss und beim Nachladen ein Absenken.
-// main.cpp stellt dafür die nahe Clip-Ebene auf 5 cm.
+// Alle Maße passen zur Figurengröße (ein Drittel, siehe Config.hpp); main.cpp
+// stellt dafür die nahe Clip-Ebene auf 2 cm.
 void DrawTrooperWeapon(const Trooper& t, float time) {
     static const int model = g_assets.Id("blaster/blaster-a");
     const Vector3 dir = TrooperAim(t);
@@ -389,13 +391,173 @@ void DrawTrooperWeapon(const Trooper& t, float time) {
     const Vector3 right{-fwd.z, 0.0f, fwd.x};
     const Vector3 up = Vector3CrossProduct(right, dir);
     const float speed = std::min(1.0f, Vector2Length({t.vel.x, t.vel.z}) / cfg::TROOPER_WALK);
-    const float bob = t.onGround ? sinf(time * 9.0f) * 0.012f * speed : 0.0f;
-    const float kick = std::max(0.0f, t.fireCd) / cfg::TROOPER_FIRE_INTERVAL * 0.04f;
+    const float bob = t.onGround ? sinf(time * 9.0f) * 0.004f * speed : 0.0f;
+    const float kick = std::max(0.0f, t.fireCd) / cfg::TROOPER_FIRE_INTERVAL * 0.013f;
     const float reload = t.reloadT > 0.0f ? sinf(PI * (1.0f - t.reloadT / cfg::TROOPER_RELOAD)) : 0.0f;
-    Vector3 pos = Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.34f - kick));
-    pos = Vector3Add(pos, Vector3Scale(right, 0.16f));
-    pos = Vector3Add(pos, Vector3Scale(up, -0.15f + bob - 0.08f * reload));
-    g_assets.Draw(model, TRS(pos, t.yaw, t.pitch - 0.6f * reload, 0.0f, 0.55f));
+    Vector3 pos = Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.113f - kick));
+    pos = Vector3Add(pos, Vector3Scale(right, 0.053f));
+    pos = Vector3Add(pos, Vector3Scale(up, -0.05f + bob - 0.027f * reload));
+    g_assets.Draw(model, TRS(pos, t.yaw, t.pitch - 0.6f * reload, 0.0f, 0.183f));
+}
+
+// ---------------------------------------------------------------------------
+// Bodensteine (Optionen → Grafik → Bodensteine)
+// ---------------------------------------------------------------------------
+// Viele kleine, kantige Steine auf dem Boden um den Blickpunkt, damit man zu
+// Fuß nicht über eine glatte Fläche läuft. Reine Optik ohne Kollision: Auch
+// die größten sind flacher als TROOPER_STEP.
+//   - Raster aus Zellen von 1 m. Ob in einer Zelle ein Stein liegt, wo und
+//     wie groß, folgt aus einer Hash-Zahl der Zellennummer (StoneHash) und
+//     daraus weitergezählten Zufallszahlen (StoneRand). Es wird nichts
+//     gespeichert; dieselbe Stelle hat immer dieselben Steine.
+//   - Meist kleine Steine (3–5 cm Halbmesser), selten bis 18 cm. Ein Stein
+//     wird nur gezeichnet, solange sein Halbmesser über 0,2 % des Abstands zur
+//     Kamera liegt (weiter weg wäre er nur ein Bildpunkt). An dieser Grenze
+//     und am Rand des Kreises wächst er langsam aus dem Boden, damit beim
+//     Laufen nichts aufpoppt.
+//   - Keine Steine in der Grundfläche von Deko (außer Kratern und Rovern),
+//     Stationsteilen und Startplätzen, sonst stächen sie durch Bodenplatten.
+//   - Form: Fünfeck am Boden, darüber ein kleineres, gedrehtes Fünfeck und eine
+//     Spitze, alles leicht verwackelt: 15 flache Dreiecke (Low-Poly wie die
+//     Kenney-Modelle), beleuchtet wie die Modelle (Assets::BeginLit).
+struct GroundStone {
+    float x = 0.0f, z = 0.0f;
+    float r = 0.0f;          // Halbmesser; 0 = kein Stein in dieser Zelle
+    uint32_t seed = 0;       // weitere Zufallszahlen für Form und Farbe
+};
+
+uint32_t StoneHash(int x, int z) {
+    uint32_t h = static_cast<uint32_t>(x) * 0x8da6b343u ^ static_cast<uint32_t>(z) * 0xd8163841u;
+    h ^= h >> 15;
+    h *= 0x2c1b3c6du;
+    h ^= h >> 12;
+    h *= 0x297a2d39u;
+    h ^= h >> 15;
+    return h | 1u;   // nie 0, sonst bliebe StoneRand bei 0 stehen
+}
+
+// Nächste Zufallszahl 0..1 (Xorshift); zählt seed weiter.
+float StoneRand(uint32_t& seed) {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return static_cast<float>(seed & 0xFFFFFFu) / 16777216.0f;
+}
+
+// Ein Dreieck mit Normale nach außen (weg von mid, der Mitte des Steins):
+// Liegen die Ecken andersherum, werden zwei getauscht, damit die Vorderseite
+// außen ist (Backface-Culling).
+void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 mid) {
+    Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
+    const Vector3 g = Vector3Scale(Vector3Add(Vector3Add(a, b), c), 1.0f / 3.0f);
+    if (Vector3DotProduct(n, Vector3Subtract(g, mid)) < 0.0f) {
+        std::swap(b, c);
+        n = Vector3Negate(n);
+    }
+    rlNormal3f(n.x, n.y, n.z);
+    rlVertex3f(a.x, a.y, a.z);
+    rlVertex3f(b.x, b.y, b.z);
+    rlVertex3f(c.x, c.y, c.z);
+}
+
+// center = Mitte des Kreises (Blickpunkt), radius in Metern.
+void DrawGroundStones(const World& w, Vector3 center, Vector3 camPos, float radius) {
+    constexpr float CELL = 1.0f, DENSITY = 0.6f, LOD = 0.002f, EDGE = 4.0f;
+    const int x0 = static_cast<int>(floorf((center.x - radius) / CELL));
+    const int z0 = static_cast<int>(floorf((center.z - radius) / CELL));
+    const int n = static_cast<int>(2.0f * radius / CELL) + 2;
+    static std::vector<GroundStone> grid;   // nur wiederverwendeter Speicher
+    grid.assign(static_cast<size_t>(n * n), GroundStone{});
+    for (int iz = 0; iz < n; ++iz) {
+        for (int ix = 0; ix < n; ++ix) {
+            uint32_t seed = StoneHash(x0 + ix, z0 + iz);
+            if (StoneRand(seed) > DENSITY) continue;
+            const float x = (x0 + ix + StoneRand(seed)) * CELL, z = (z0 + iz + StoneRand(seed)) * CELL;
+            const float size = StoneRand(seed);
+            float r = 0.03f + 0.15f * size * size * size;
+            const float d = Dist2D({x, 0.0f, z}, center);
+            const float minR = LOD * Vector3Distance({x, 0.0f, z}, camPos);
+            if (d > radius || r <= minR) continue;
+            r *= std::min(std::clamp((radius - d) / EDGE, 0.0f, 1.0f), std::clamp((r - minR) / (0.3f * r), 0.0f, 1.0f));
+            grid[static_cast<size_t>(iz * n + ix)] = GroundStone{x, z, r, seed};
+        }
+    }
+
+    // Grundflächen freiräumen: Stein in Modellkoordinaten umrechnen (Drehung
+    // zurück, durch scale teilen) und gegen die Grenzen aus ModelBounds prüfen.
+    // Teile, die erst 0,3 m über dem Boden anfangen, dürfen Steine unter sich haben.
+    auto clear = [&](int model, Vector3 pos, float yaw, float scale) {
+        const BoundingBox b = ModelBounds(model);
+        if (pos.y + b.min.y * scale > 0.3f) return;
+        const float ex = std::max(fabsf(b.min.x), fabsf(b.max.x)), ez = std::max(fabsf(b.min.z), fabsf(b.max.z));
+        const float reach = scale * sqrtf(ex * ex + ez * ez) + 0.2f;
+        if (Dist2D(pos, center) > radius + reach) return;
+        const float c = cosf(yaw), sn = sinf(yaw);
+        const int ax = std::max(0, static_cast<int>(floorf((pos.x - reach) / CELL)) - x0);
+        const int bx = std::min(n - 1, static_cast<int>(floorf((pos.x + reach) / CELL)) - x0);
+        const int az = std::max(0, static_cast<int>(floorf((pos.z - reach) / CELL)) - z0);
+        const int bz = std::min(n - 1, static_cast<int>(floorf((pos.z + reach) / CELL)) - z0);
+        for (int iz = az; iz <= bz; ++iz) {
+            for (int ix = ax; ix <= bx; ++ix) {
+                GroundStone& st = grid[static_cast<size_t>(iz * n + ix)];
+                if (st.r <= 0.0f) continue;
+                const float dx = st.x - pos.x, dz = st.z - pos.z, m = st.r / scale;
+                const float lx = (c * dx - sn * dz) / scale, lz = (sn * dx + c * dz) / scale;
+                if (lx > b.min.x - m && lx < b.max.x + m && lz > b.min.z - m && lz < b.max.z + m) st.r = 0.0f;
+            }
+        }
+    };
+    static const int rover = g_assets.Id("rover"), craterA = g_assets.Id("crater"), craterB = g_assets.Id("craterLarge"),
+                     padPlatform = g_assets.Id("platform_large");
+    for (const Deco& d : w.decos)
+        if (d.model != rover && d.model != craterA && d.model != craterB) clear(d.model, d.pos, d.yaw, d.scale);
+    const int stage = w.StationStage();
+    for (const Station& st : w.stations) {
+        if (Dist2D(st.pos, center) > radius + 40.0f) continue;
+        const int stStage = st.type == StationType::Trade ? stage : 0;
+        for (const StationPart& p : st.parts)
+            if (p.stage <= stStage) clear(p.model, Vector3Add(st.pos, p.offset), p.yaw, p.scale);
+    }
+    for (const RocketPad& pad : w.pads) clear(padPlatform, pad.pos, 0.0f, PAD_SCALE);
+
+    // Farben: zwischen dunklem und hellem Gestein der Mondfarbe (wie MoonTone
+    // in Assets.cpp), damit sich die Steine vom Boden abheben.
+    Color dark{104, 106, 116, 255}, light{170, 172, 182, 255};
+    if (g_assets.GetMoonColor() == MoonColor::Blue) {
+        dark = Color{72, 88, 132, 255};
+        light = Color{128, 148, 200, 255};
+    } else if (g_assets.GetMoonColor() == MoonColor::Orange) {
+        dark = Color{150, 82, 58, 255};
+        light = Color{214, 124, 92, 255};
+    }
+    g_assets.BeginLit();
+    rlBegin(RL_TRIANGLES);
+    for (const GroundStone& st : grid) {
+        if (st.r <= 0.0f) continue;
+        uint32_t seed = st.seed;
+        const Color col = ColorLerp(dark, light, StoneRand(seed));
+        rlColor4ub(col.r, col.g, col.b, 255);
+        const float h = st.r * (0.45f + 0.35f * StoneRand(seed));
+        const float yaw = StoneRand(seed) * 2.0f * PI;
+        Vector3 bottom[5], top[5];
+        for (int i = 0; i < 5; ++i) {
+            const float a = yaw + i * 2.0f * PI / 5.0f + (StoneRand(seed) - 0.5f) * 0.5f;
+            const float rb = st.r * (0.8f + 0.3f * StoneRand(seed));
+            const float rt = st.r * (0.4f + 0.3f * StoneRand(seed));
+            bottom[i] = Vector3{st.x + cosf(a) * rb, -0.02f, st.z + sinf(a) * rb};
+            top[i] = Vector3{st.x + cosf(a + PI / 5.0f) * rt, h * (0.55f + 0.3f * StoneRand(seed)), st.z + sinf(a + PI / 5.0f) * rt};
+        }
+        const Vector3 apex{st.x + (StoneRand(seed) - 0.5f) * 0.3f * st.r, h, st.z + (StoneRand(seed) - 0.5f) * 0.3f * st.r};
+        const Vector3 mid{st.x, h * 0.4f, st.z};
+        for (int i = 0; i < 5; ++i) {
+            const int j = (i + 1) % 5;
+            StoneFace(bottom[i], bottom[j], top[i], mid);
+            StoneFace(top[i], bottom[j], top[j], mid);
+            StoneFace(top[i], top[j], apex, mid);
+        }
+    }
+    rlEnd();
+    g_assets.EndLit();
 }
 
 } // namespace
@@ -466,6 +628,14 @@ void World::Draw(const Camera3D& cam) const {
     g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), orangeMoon ? Color{150, 140, 136, 255} : Color{120, 120, 128, 255});
     g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, cfg::WORLD_HALF * 2.0f + 30.0f),
                   orangeMoon ? Color{225, 218, 214, 255} : Color{176, 176, 184, 255});
+    // Bodensteine (Optionen → Grafik): Stufe 1 nur zu Fuß (28 m um den
+    // Blickpunkt), Stufe 2 auch aus dem Schiff (70 m; aber wie der Sandsturm
+    // nicht im Karteneditor und nicht in der Übersicht des Zuschauers).
+    const int stoneLevel = g_clientConfig.groundStones;
+    if (stoneLevel >= 1 && me.role == PlayerRole::Trooper)
+        DrawGroundStones(*this, focus, cam.position, 28.0f);
+    else if (stoneLevel >= 2 && tiltshift::Active() && cullR < 200.0f)
+        DrawGroundStones(*this, focus, cam.position, 70.0f);
 
     // --- Dekoration -----------------------------------------------------------
     // Felsen, Krater usw. aus WorldGen.cpp. Große Objekte ragen weit über ihren

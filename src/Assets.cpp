@@ -476,3 +476,17 @@ void Assets::Draw(int id, const Matrix& world, Color tint, Vector3 emissive) {
 void Assets::Draw(int id, Vector3 pos, float yaw, float scale, Color tint, Vector3 emissive) {
     Draw(id, TRS(pos, yaw, scale), tint, emissive);
 }
+
+// raylibs Sammelpuffer zeichnet mit dem Shader, der beim Leeren eingestellt
+// ist, und setzt dabei selbst mvp, matModel, matNormal (Einheitsmatrix) und
+// colDiffuse (weiß); Sonne, Schatten, Blitze und Nebel gelten wie bei den
+// Modellen. Nur emissive steht noch auf dem Wert des letzten Modells.
+void Assets::BeginLit() {
+    const Vector3 none{0.0f, 0.0f, 0.0f};
+    SetShaderValue(lit_, locEmissive_, &none, SHADER_UNIFORM_VEC3);
+    BeginShaderMode(lit_);   // leert vorher den Sammelpuffer (alter Shader)
+}
+
+void Assets::EndLit() {
+    EndShaderMode();   // zeichnet die gesammelten Dreiecke mit lit_
+}
