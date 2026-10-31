@@ -32,6 +32,7 @@
 //   WorldGen.cpp   Aufbau: Mondoberfläche, Stationen, Lagerstätten
 //   MapAnim.cpp    Kartenanimation: Rover, Monorail zwischen Stationen, Raketen (nur Kulisse)
 //   Ai.cpp         KI der Piraten/Händler und der Autopilot (Simulation)
+//   Trooper.cpp    Trupp zu Fuß (FPS-Modus): Bewegung, Hindernisse, Schüsse
 //   src/Render.cpp World::Draw (nur im Client)
 //
 // Abhängigkeiten: nur raylib.h/raymath.h (Datentypen wie Vector3/Color und
@@ -189,8 +190,11 @@ struct Bullet {
     float life = 0.0f;     // Restlebensdauer in Sekunden (bei <= 0 entfernt)
     float damage = 0.0f;
     Faction faction = Faction::Player;
-    int ownerId = -1;      // Schiffs-ID des Schützen, -1 = Geschützturm
+    int ownerId = -1;      // Schiffs-ID des Schützen, -1 = Geschützturm oder Figur (ground)
     int ownerPlayer = -1;  // Spieler-ID, falls ein Spieler geschossen hat (für Abschüsse)
+    // Geschoss einer Figur zu Fuß (Trupp): fliegt mit Höhenrichtung, endet am
+    // Boden oder an einem Hindernis (TrooperBlock) und trifft keine Schiffe.
+    bool ground = false;
 };
 
 // Ein Effekt-Teilchen (Rauch, Funken, Explosion). Gibt es nur im
@@ -258,6 +262,54 @@ struct Rover {
 struct RoverBlock {
     Vector2 a{}, b{};
     float r = 1.0f;
+};
+
+// ---------------------------------------------------------------------------
+// Trupp zu Fuß (FPS-Modus, Trooper.cpp). Im Einzelspieler steigt der Spieler
+// zum Ausprobieren über die Pause aus dem Schiff aus (StartTrooper).
+// ---------------------------------------------------------------------------
+// Rolle eines Spielers: Pilot (Schiff) oder Trupp (Figur zu Fuß).
+enum class PlayerRole { Pilot = 0, Trooper = 1 };
+
+// Eingaben für eine Figur zu Fuß, wie ShipInput für ein Schiff. Die
+// Blickrichtung kommt fertig mit (Maus/rechter Stick, Controls.cpp).
+struct TrooperInput {
+    float forward = 0.0f;  // -1..1 (zurück .. vor)
+    float strafe = 0.0f;   // -1 (links) .. 1 (rechts)
+    float yaw = 0.0f;      // Blickrichtung wie Ship::yaw (0 = nach -z)
+    float pitch = 0.0f;    // > 0 nach oben, < 0 nach unten
+    bool fire = false;     // gedrückt halten = Dauerfeuer
+    bool jump = false;
+    bool sprint = false;
+    bool reload = false;   // einmaliger Druck
+};
+
+// Eine Figur zu Fuß. Später nutzen auch die Bodenpiraten diese Struktur
+// (Fraktion Pirat).
+struct Trooper {
+    int id = 0;                   // eindeutig (World::nextTrooperId)
+    int playerId = -1;            // PlayerState::id, -1 = KI
+    Faction faction = Faction::Player;
+    Vector3 pos{};                // Fußpunkt; y = Höhe über dem Boden
+    Vector3 vel{};
+    float yaw = 0.0f, pitch = 0.0f;
+    bool onGround = true;
+    float hp = cfg::TROOPER_HP, maxHp = cfg::TROOPER_HP;
+    int mag = cfg::TROOPER_MAG;   // Schuss im Magazin
+    int ammo = cfg::TROOPER_AMMO; // Ersatzmunition
+    float reloadT = 0.0f;         // > 0: lädt nach (Restzeit)
+    float fireCd = 0.0f;
+    float hitFlash = 0.0f;        // wie Ship::hitFlash
+    float age = 0.0f;             // Sekunden seit dem Aussteigen (Tastenhilfe im HUD)
+};
+
+// Hindernis für Figuren: Kapsel a-b mit Radius r auf dem Boden, oben flach
+// in Höhe h. Bis TROOPER_STEP über den Füßen steigt die Figur hinauf, auf
+// höhere kommt sie nur mit einem Sprung.
+struct TrooperBlock {
+    Vector2 a{}, b{};
+    float r = 1.0f;
+    float h = 1.0f;
 };
 
 // Monorail-Strecke zwischen zwei Stationen (gerade, von Ende a nach Ende b).
@@ -452,6 +504,12 @@ struct PlayerState {
     // sie läuft nur, solange der Spieler nicht angedockt ist.
     int cue = -1;
     float cueT = 0.0f;
+
+    // Trupp zu Fuß (Trooper.cpp): Rolle, eigene Figur (Trooper::id, -1 =
+    // keine) und ihre Eingaben für den nächsten Update-Schritt.
+    PlayerRole role = PlayerRole::Pilot;
+    int trooperId = -1;
+    TrooperInput trooperInput;
 };
 
 class World {
@@ -545,6 +603,22 @@ public:
     // Laufende Mission abbrechen (Absturz, Abmelden): Das Angebot kommt zurück.
     void FailMission(PlayerState& ps, bool notify);
 
+    // --- Trupp zu Fuß (Trooper.cpp) ------------------------------------------
+    // Einzelspieler (Test, Pausenmenü): Die Figur steigt unter dem Schiff aus,
+    // das Schiff wird so lange versteckt. false = geht gerade nicht (angedockt,
+    // Absturz, schon zu Fuß). EndTrooper: zurück ins Schiff, das an die
+    // Stelle der Figur kommt.
+    bool StartTrooper(PlayerState& ps);
+    void EndTrooper(PlayerState& ps);
+    Trooper* FindTrooper(int id);
+    const Trooper* FindTrooper(int id) const;
+    // Bewegung einer Figur aus ihren Eingaben, ohne Zufall (wie UpdateShipPhysics).
+    void UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in);
+    // Steckt der Punkt in einem Hindernis (Treffer eines Bodengeschosses)?
+    bool TrooperBlocked(Vector3 p) const;
+    // Nächstes Tor (Deko gate_simple/gate_complex) zum Punkt p, false = keins
+    bool NearestGate(Vector3 p, Vector3* out) const;
+
     // Kurzformen für den Einzelspieler (wirken auf den eigenen Spieler)
     void Dock(int station) { Dock(Me(), station); }
     void Undock() { Undock(Me()); }
@@ -615,6 +689,8 @@ public:
     // decos (Startplatz); Render.cpp zeichnet sie nur aus rovers.
     std::vector<Rover> rovers;
     std::vector<RoverBlock> roverBlocks;   // Hindernisse, um die die Rover herumfahren
+    std::vector<Trooper> troopers;         // Figuren zu Fuß (Trupp)
+    std::vector<TrooperBlock> trooperBlocks;   // Hindernisse der Figuren (BuildTrooperBlocks)
     std::vector<StationRail> rails;        // Monorail zwischen den Stationen
     std::vector<RocketPad> pads;           // Raketenstartplätze, einer je Station
     std::string mapFile;                   // Einzelspieler: Datei der eigenen Karte (leer = Zufallskarte), für den Spielstand
@@ -639,6 +715,7 @@ public:
     // Einzelspieler unverändert (die Schiffs-IDs steuern das Auf und Ab der
     // Schiffe und damit Treffer, siehe UpdateShipPhysics).
     int nextMissionId = 1;
+    int nextTrooperId = 1;        // eigener Zähler für Figuren (aus demselben Grund)
     float missionSpawnT = 0.0f;   // Sekunden bis zum nächsten neuen Missionsangebot
 
     Outcome outcome = Outcome::None;   // nur Einzelspieler
@@ -709,7 +786,15 @@ public:
     void MissionShipDown(const Ship& s);    // Missionsschiff abgeschossen (DamageShip)
     void EndMission(Mission& m, bool success, bool notify = true);
     void Cue(PlayerState& ps, MissionType t, int phase);
+    // Trupp (Trooper.cpp)
+    void BuildTrooperBlocks();             // aus Deko und Stationsteilen (StartTrooper)
+    void UpdateTroopers(float dt);         // Bewegung, Nachladen, Schießen (Update)
+    void FireTrooperBullet(Trooper& t);
 };
+
+// Augenpunkt und Blickrichtung (Länge 1) einer Figur (Trooper.cpp)
+Vector3 TrooperEye(const Trooper& t);
+Vector3 TrooperAim(const Trooper& t);
 
 // Autopilot für den Simulationsmodus (Ai.cpp), steuert den eigenen Spieler (players[0]).
 // Wird auch für die Hintergrundwelt im Hauptmenü benutzt (main.cpp).

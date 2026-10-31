@@ -26,6 +26,7 @@
 #include "Ui.hpp"
 #include "raylib.h"
 #include "rlgl.h"
+#include <algorithm>
 #include <cmath>
 
 using namespace controls;
@@ -299,6 +300,72 @@ void PilotControls::DrawTarget3D(float time) const {
 }
 
 // ===========================================================================
+// TrooperControls
+// ===========================================================================
+namespace {
+constexpr float kMouseLook = 0.0025f;   // Bogenmaß je Mauspunkt
+constexpr float kPadLook = 2.6f;        // Bogenmaß/s bei vollem Ausschlag des rechten Sticks
+} // namespace
+
+TrooperInput TrooperControls::Read(float yaw, float pitch, float dt) {
+    ui::SetFlightMode();
+    // Beginn (vorher Pause, Menü ...): Mausbewegung der ersten zwei Frames
+    // verwerfen (beim Einfangen kann der Zeiger springen) und einen schon
+    // gedrückten Feuerknopf sperren, bis er losgelassen wird (wie in PilotControls).
+    const unsigned frame = ui::FrameIndex();
+    const bool entering = frame != lastReadFrame_ + 1;
+    lastReadFrame_ = frame;
+
+    TrooperInput in;
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) in.forward += 1.0f;
+    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) in.forward -= 1.0f;
+    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) in.strafe += 1.0f;
+    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) in.strafe -= 1.0f;
+    in.jump = IsKeyPressed(KEY_SPACE);
+    in.sprint = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    in.reload = IsKeyPressed(KEY_R);
+    // Maus nach rechts = nach rechts drehen (yaw kleiner), nach oben = hochsehen
+    if (entering) skipMouse_ = 2;
+    Vector2 md = GetMouseDelta();
+    if (skipMouse_ > 0) {
+        --skipMouse_;
+        md = {0.0f, 0.0f};
+    }
+    yaw -= md.x * kMouseLook;
+    pitch -= md.y * kMouseLook;
+    bool fireDown = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+
+    const int pad = ui::Gamepad();
+    if (pad != triggerPad_) {
+        rt_ = TriggerReader{};
+        triggerPad_ = pad;
+    }
+    if (pad >= 0) {
+        const Vector2 move = StickDeadzone({GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_X), GetGamepadAxisMovement(pad, GAMEPAD_AXIS_LEFT_Y)});
+        const Vector2 look = StickDeadzone({GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_X), GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_Y)});
+        if (move.x != 0.0f || move.y != 0.0f) {
+            in.forward = Clamp(in.forward - move.y, -1.0f, 1.0f);
+            in.strafe = Clamp(in.strafe + move.x, -1.0f, 1.0f);
+        } else {
+            padSprint_ = false;
+        }
+        if (IsGamepadButtonPressed(pad, GAMEPAD_BUTTON_LEFT_THUMB)) padSprint_ = true;
+        yaw -= look.x * kPadLook * dt;
+        pitch -= look.y * kPadLook * dt;
+        if (rt_.Value(GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_TRIGGER)) > 0.3f) fireDown = true;
+        if (IsGamepadButtonPressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) in.jump = true;
+        if (IsGamepadButtonPressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_LEFT)) in.reload = true;
+        if (padSprint_) in.sprint = true;
+    }
+    if (entering) fireLatch_ = fireDown;
+    if (!fireDown) fireLatch_ = false;
+    in.fire = fireDown && !fireLatch_;
+    in.yaw = yaw;
+    in.pitch = Clamp(pitch, -cfg::TROOPER_PITCH_MAX, cfg::TROOPER_PITCH_MAX);
+    return in;
+}
+
+// ===========================================================================
 // Tastennamen und Hilfetexte
 // ===========================================================================
 namespace controls {
@@ -328,15 +395,32 @@ std::string KeyHint(Act a) { return std::string("[") + KeyName(a) + "]"; }
 
 // Tastenhilfe. Tastatur: 9 Zeilen (mit Maus und Ton), Controller: 7 Zeilen.
 // Die Taste M (Ton) gibt es nur auf der Tastatur.
-std::vector<HelpRow> HelpRows() { return HelpRows(ActiveDevice()); }
+// Zu Fuß: Tastatur 8 Zeilen, Controller 6 Zeilen.
+std::vector<HelpRow> HelpRows(bool foot) { return HelpRows(ActiveDevice(), foot); }
 
 size_t MaxHelpRows() {
     size_t n = 0;
-    for (Device d : {Device::KeyboardMouse, Device::Xbox, Device::PlayStation}) n = std::max(n, HelpRows(d).size());
+    for (Device d : {Device::KeyboardMouse, Device::Xbox, Device::PlayStation})
+        n = std::max({n, HelpRows(d, false).size(), HelpRows(d, true).size()});
     return n;
 }
 
-std::vector<HelpRow> HelpRows(Device d) {
+std::vector<HelpRow> HelpRows(Device d, bool foot) {
+    if (foot) {
+        switch (d) {
+            case Device::Xbox:
+                return {{"Linker Stick", "Laufen (drücken: sprinten)"}, {"Rechter Stick", "Zielen"}, {"RT", "Schießen"},
+                        {"A", "Springen"},  {"X", "Nachladen"},  {"Menü-Taste", "Pause (Einsteigen)"}};
+            case Device::PlayStation:
+                return {{"Linker Stick", "Laufen (drücken: sprinten)"}, {"Rechter Stick", "Zielen"}, {"R2", "Schießen"},
+                        {"Kreuz", "Springen"},  {"Quadrat", "Nachladen"},  {"Options", "Pause (Einsteigen)"}};
+            case Device::KeyboardMouse:
+            default:
+                return {{"W / S", "Vor / Zurück"},    {"A / D", "Seitlich"},       {"Maus", "Zielen"},
+                        {"Linksklick", "Schießen"},   {"Leertaste", "Springen"},  {"Shift", "Sprinten"},
+                        {"R", "Nachladen"},           {"ESC", "Pause (Einsteigen)"}};
+        }
+    }
     // Linker Stick je nach Einstellung in den Optionen (Tank-Steuerung)
     const char* stick = g_clientConfig.tankSteering ? "Schub / Drehen" : "Flugrichtung";
     switch (d) {

@@ -368,6 +368,27 @@ TrailState g_trail;
 constexpr float kTrailLife[4] = {0.0f, 0.3f, 0.55f, 0.9f};
 constexpr float kTrailStep = 1.0f / 50.0f;   // je Triebwerk 50 Wolken pro Sekunde
 
+// Waffe der eigenen Figur in der Ego-Ansicht: Blaster aus dem Blaster Kit
+// (Lauf zeigt im Modell nach -z wie die Schiffsnasen), rechts unten vor der
+// Kamera und mit dem Blick geneigt. Dazu ein leichtes Wippen beim Laufen,
+// ein kleiner Rückstoß nach jedem Schuss und beim Nachladen ein Absenken.
+// main.cpp stellt dafür die nahe Clip-Ebene auf 5 cm.
+void DrawTrooperWeapon(const Trooper& t, float time) {
+    static const int model = g_assets.Id("blaster/blaster-a");
+    const Vector3 dir = TrooperAim(t);
+    const Vector3 fwd = ForwardFromYaw(t.yaw);
+    const Vector3 right{-fwd.z, 0.0f, fwd.x};
+    const Vector3 up = Vector3CrossProduct(right, dir);
+    const float speed = std::min(1.0f, Vector2Length({t.vel.x, t.vel.z}) / cfg::TROOPER_WALK);
+    const float bob = t.onGround ? sinf(time * 9.0f) * 0.012f * speed : 0.0f;
+    const float kick = std::max(0.0f, t.fireCd) / cfg::TROOPER_FIRE_INTERVAL * 0.04f;
+    const float reload = t.reloadT > 0.0f ? sinf(PI * (1.0f - t.reloadT / cfg::TROOPER_RELOAD)) : 0.0f;
+    Vector3 pos = Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.34f - kick));
+    pos = Vector3Add(pos, Vector3Scale(right, 0.16f));
+    pos = Vector3Add(pos, Vector3Scale(up, -0.15f + bob - 0.08f * reload));
+    g_assets.Draw(model, TRS(pos, t.yaw, t.pitch - 0.6f * reload, 0.0f, 0.55f));
+}
+
 } // namespace
 
 // Zeichnet die ganze Welt aus Sicht von cam. Muss zwischen BeginMode3D(cam)
@@ -980,16 +1001,26 @@ void World::Draw(const Camera3D& cam) const {
     // vorn dicker. Darüber ein breiterer Schein mit 35 % Alpha.
     // Farben: Geschütztürme (ownerId -1) hellblau, Spieler gold, Piraten rot,
     // andere (Händler, die sich wehren) blassgelb.
+    // Geschosse der Figuren (ground) sind dünner und höchstens 0,9 m lang;
+    // die Spur wächst erst aus der Waffe heraus (sonst reichte sie in der
+    // Ego-Ansicht bis hinter die Kamera).
     // Im Mehrspieler kommen die Geschosse aus dem Snapshot (die nächsten 128)
     // und werden vom Client zwischen den Snapshots weiterbewegt.
     for (const auto& b : bullets) {
         if (Dist2D(b.pos, focus) > cullR) continue;
         Color c;
-        if (b.ownerId == -1) c = Color{110, 220, 255, 255};
+        if (b.ownerId == -1 && !b.ground) c = Color{110, 220, 255, 255};
         else if (b.faction == Faction::Player) c = Color{255, 210, 90, 255};
         else if (b.faction == Faction::Pirate) c = Color{255, 70, 60, 255};
         else c = Color{255, 240, 150, 255};
         Vector3 dir = Vector3Normalize(b.vel);
+        if (b.ground) {
+            const float len = std::min(0.9f, (cfg::TROOPER_BULLET_LIFE - b.life) * cfg::TROOPER_BULLET_SPEED);
+            const Vector3 tail = Vector3Subtract(b.pos, Vector3Scale(dir, len));
+            DrawCylinderEx(tail, b.pos, 0.012f, 0.035f, 6, c);
+            DrawCylinderEx(tail, b.pos, 0.04f, 0.08f, 6, Fade(c, 0.35f));
+            continue;
+        }
         Vector3 tail = Vector3Subtract(b.pos, Vector3Scale(dir, 1.6f));
         DrawCylinderEx(tail, b.pos, 0.06f, 0.14f, 6, c);
         DrawCylinderEx(tail, b.pos, 0.18f, 0.3f, 6, Fade(c, 0.35f));
@@ -1106,4 +1137,8 @@ void World::Draw(const Camera3D& cam) const {
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
     rlEnableBackfaceCulling();
+
+    // Zu Fuß: die eigene Waffe vor der Kamera (nach allem anderen, ohne Effekte)
+    if (me.role == PlayerRole::Trooper)
+        if (const Trooper* t = FindTrooper(me.trooperId)) DrawTrooperWeapon(*t, time);
 }

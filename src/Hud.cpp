@@ -47,6 +47,8 @@
 //   6. Kontext-Hinweis unten ("[F] Andocken ...", Abbau-Fortschritt)
 //   7. Funkspruch (Mission, Start, Fortsetzen) unten rechts
 //   8. Tastenhilfe unten links
+// Zu Fuß (Trupp, Ego-Ansicht) zeichnet DrawHud stattdessen DrawTrooperHud:
+// Fadenkreuz, Schild und Munition, Richtung zum Tor, Meldungen, Tastenhilfe.
 // ---------------------------------------------------------------------------
 #include "Hud.hpp"
 #include "Assets.hpp"
@@ -356,6 +358,25 @@ std::vector<std::string> WrapLines(const std::string& text, float maxW, float si
     return lines;
 }
 
+// Meldungen oben in der Mitte (ab 15 % der Bildhöhe), Erklärung in DrawHud
+void DrawNotices(const PlayerState& me) {
+    const float s = Scale();
+    const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+    float ny = H * 0.15f;
+    for (const auto& n : me.notices) {
+        float a = std::clamp(n.time / 0.6f, 0.0f, 1.0f);
+        Color c = n.color;
+        c.a = static_cast<unsigned char>(255 * a);
+        std::string t = WithDeviceKeys(n.count > 1 ? n.text + TextFormat("  (%dx)", n.count) : n.text);
+        float tw = Width(t, 24 * s);
+        // dunkler Hintergrundstreifen, genau so breit wie der Text plus Rand
+        DrawRectangle(static_cast<int>(W * 0.5f - tw * 0.5f - 12 * s), static_cast<int>(ny - 6 * s),
+                      static_cast<int>(tw + 24 * s), static_cast<int>(36 * s), Color{15, 18, 26, static_cast<unsigned char>(170 * a)});
+        TextCentered(t, W * 0.5f, ny, 24 * s, c);
+        ny += 42 * s;
+    }
+}
+
 } // namespace
 
 void SetHudRightReserve(float width, float bottom) {
@@ -374,20 +395,85 @@ void SetHudLeftReserve(float height) { g_leftReserve = height; }
 // Gerät, passt sich die Hilfe unten links im nächsten Frame an.
 // ControlsMaxHeight nimmt die längste Liste aller Geräte. Die Pausenmenüs
 // rechnen damit, damit ihre Knöpfe beim Gerätewechsel nicht verrutschen.
-float ControlsHeight(float size) { return static_cast<float>(controls::HelpRows().size()) * size * 1.35f; }
+float ControlsHeight(float size, bool foot) { return static_cast<float>(controls::HelpRows(foot).size()) * size * 1.35f; }
 float ControlsMaxHeight(float size) { return static_cast<float>(controls::MaxHelpRows()) * size * 1.35f; }
 
 // Spalte 2 beginnt hinter dem breitesten Tastennamen plus einer
 // Schrifthöhe Abstand (gemessen mit Width, weil "Rechter Stick" breiter ist
 // als "E").
-void DrawControls(float x, float y, float size) {
-    const std::vector<controls::HelpRow> rows = controls::HelpRows();
+void DrawControls(float x, float y, float size, bool foot) {
+    const std::vector<controls::HelpRow> rows = controls::HelpRows(foot);
     float keyW = 0.0f;
     for (const auto& r : rows) keyW = std::max(keyW, Width(r.keys, size));
     for (size_t i = 0; i < rows.size(); ++i) {
         const float ry = y + static_cast<float>(i) * size * 1.35f;
         Text(rows[i].keys, x, ry, size, Color{255, 200, 140, 210});
         Text(rows[i].what, x + keyW + size, ry, size, Color{220, 225, 235, 200});
+    }
+}
+
+// ===========================================================================
+// HUD zu Fuß (Trupp, Ego-Ansicht)
+// ===========================================================================
+// Fadenkreuz in der Bildmitte (grau beim Nachladen), oben links Schild und
+// Munition (Magazin groß, Ersatz klein, beim Nachladen ein Balken), oben in
+// der Mitte ein Pfeil zum nächsten Tor mit Entfernung (Pfeil nach oben =
+// geradeaus). Die Tastenhilfe steht die ersten 60 s zu Fuß ganz da, danach
+// wie im Schiff mit gehaltener Taste H.
+static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
+    const float s = Scale();
+    const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+
+    const float cx = W * 0.5f, cy = H * 0.5f, gap = 6 * s, len = 10 * s, th = 2 * s;
+    const Color cc = t.reloadT > 0.0f ? Color{160, 165, 175, 200} : Color{235, 240, 250, 230};
+    DrawRectangleRec({cx - gap - len, cy - th * 0.5f, len, th}, cc);
+    DrawRectangleRec({cx + gap, cy - th * 0.5f, len, th}, cc);
+    DrawRectangleRec({cx - th * 0.5f, cy - gap - len, th, len}, cc);
+    DrawRectangleRec({cx - th * 0.5f, cy + gap, th, len}, cc);
+    DrawCircleV({cx, cy}, 1.5f * s, cc);
+
+    Rectangle pr{16 * s, 16 * s, 300 * s, 170 * s};
+    Panel(pr);
+    float x = pr.x + 18 * s, y = pr.y + 14 * s, bw = pr.width - 36 * s;
+    Text("SG-TEAM", x, y, 20 * s, MUTED);
+    y += 30 * s;
+    StatBar(x, y, bw, "SCHILD", TextFormat("%d / %d", static_cast<int>(ceilf(t.hp)), static_cast<int>(t.maxHp)), t.hp / t.maxHp,
+            t.hp / t.maxHp < 0.3f ? BAD : SHIELD);
+    y += 48 * s;
+    Text("MUNITION", x, y, 18 * s, MUTED);
+    if (t.reloadT > 0.0f) TextRight("LÄDT NACH", x + bw, y, 18 * s, Color{255, 200, 120, 255});
+    y += 22 * s;
+    Text(TextFormat("%d", t.mag), x, y, 36 * s, t.mag == 0 ? BAD : ACCENT);
+    TextRight(TextFormat("/ %d", t.ammo), x + bw, y + 14 * s, 20 * s, t.ammo == 0 ? BAD : MUTED);
+    if (t.reloadT > 0.0f) Bar({x, y + 42 * s, bw, 6 * s}, 1.0f - t.reloadT / cfg::TROOPER_RELOAD, Color{255, 200, 120, 255});
+
+    Vector3 gate;
+    if (w.NearestGate(t.pos, &gate)) {
+        const float rel = AngleDiff(t.yaw, YawTowards(t.pos, gate));   // > 0: Tor liegt links
+        const Rectangle gr{W * 0.5f - 100 * s, 16 * s, 200 * s, 56 * s};
+        Panel(gr);
+        const Vector2 c{gr.x + 30 * s, gr.y + gr.height * 0.5f};
+        const Vector2 dir{-sinf(rel), -cosf(rel)};
+        const Vector2 side{-dir.y, dir.x};
+        const Vector2 tip = Vector2Add(c, Vector2Scale(dir, 14 * s)), tail = Vector2Subtract(c, Vector2Scale(dir, 14 * s));
+        const Color ac{150, 210, 255, 255};
+        DrawLineEx(tail, tip, 3 * s, ac);
+        DrawLineEx(tip, Vector2Add(Vector2Subtract(tip, Vector2Scale(dir, 8 * s)), Vector2Scale(side, 7 * s)), 3 * s, ac);
+        DrawLineEx(tip, Vector2Subtract(Vector2Subtract(tip, Vector2Scale(dir, 8 * s)), Vector2Scale(side, 7 * s)), 3 * s, ac);
+        Text("TOR", gr.x + 58 * s, gr.y + 8 * s, 16 * s, MUTED);
+        Text(TextFormat("%.0f m", Dist2D(t.pos, gate)), gr.x + 58 * s, gr.y + 24 * s, 24 * s, ac);
+    }
+
+    DrawNotices(w.Me());
+
+    if (!simulation) {
+        if (t.age < 60.0f || (IsKeyDown(KEY_H) && !TextInputActive()))
+            DrawControls(18 * s, H - ControlsHeight(16 * s, true) - 16 * s, 16 * s, true);
+        else if (controls::ActiveDevice() == controls::Device::KeyboardMouse)
+            Text("[H] Steuerung anzeigen", 18 * s, H - 30 * s, 16 * s, Color{200, 205, 215, 170});
+        else
+            Text("Steuerung: in der Pause " + controls::KeyHint(controls::Act::Pause), 18 * s, H - 30 * s, 16 * s,
+                 Color{200, 205, 215, 170});
     }
 }
 
@@ -399,6 +485,12 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     const Ship& p = w.Player();
     const PlayerState& me = w.Me();
+    if (me.role == PlayerRole::Trooper) {
+        if (const Trooper* t = w.FindTrooper(me.trooperId)) {
+            DrawTrooperHud(w, *t, simulation);
+            return;
+        }
+    }
 
     // Treffer-/Warnrand: rote Farbverläufe von allen vier Rändern nach innen
     // (120 px breit, außen kräftig, innen durchsichtig).
@@ -506,19 +598,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // 5 gleichzeitig; eine wiederholte gleiche Meldung zählt nur count hoch
     // ("(3x)") und beginnt ihre 4 s neu. Die letzten 0,6 s wird sie ausgeblendet:
     // Deckkraft a = time / 0,6, begrenzt auf 0..1.
-    float ny = H * 0.15f;
-    for (const auto& n : me.notices) {
-        float a = std::clamp(n.time / 0.6f, 0.0f, 1.0f);
-        Color c = n.color;
-        c.a = static_cast<unsigned char>(255 * a);
-        std::string t = WithDeviceKeys(n.count > 1 ? n.text + TextFormat("  (%dx)", n.count) : n.text);
-        float tw = Width(t, 24 * s);
-        // dunkler Hintergrundstreifen, genau so breit wie der Text plus Rand
-        DrawRectangle(static_cast<int>(W * 0.5f - tw * 0.5f - 12 * s), static_cast<int>(ny - 6 * s),
-                      static_cast<int>(tw + 24 * s), static_cast<int>(36 * s), Color{15, 18, 26, static_cast<unsigned char>(170 * a)});
-        TextCentered(t, W * 0.5f, ny, 24 * s, c);
-        ny += 42 * s;
-    }
+    DrawNotices(me);
 
     // --- Kontext-Hinweis unten ---------------------------------------------------------
     // Sagt, was die Taste F gerade tun würde (mit Controller: Y bzw. Dreieck,

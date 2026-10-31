@@ -181,6 +181,7 @@ unsigned int msaaColor_ = 0; // dessen Farb-Renderbuffer (Tiefe löscht rlUnload
 int msaaSamples_ = 0, msaaW_ = 0, msaaH_ = 0;
 bool active_ = false;        // Begin() hat umgelenkt, End() muss zurückschalten
 bool usingMsaa_ = false;     // dieses Frame in msaaFbo_ gezeichnet
+bool egoView_ = false;       // SetEgoView: ohne Tilt-Shift und Retro-Pixel
 
 bool LoadShaderOnce() {
     if (!shaderTried_) {
@@ -298,6 +299,8 @@ void Begin(Color clear) {
 
 bool Active() { return active_; }
 
+void SetEgoView(bool on) { egoView_ = on; }
+
 void End() {
     if (!active_) return;
     active_ = false;
@@ -313,12 +316,12 @@ void End() {
     }
     const float w = static_cast<float>(iw), h = static_cast<float>(ih);
     const float texel[2] = {1.0f / w, 1.0f / h};
-    const float radius = g_clientConfig.tiltShift * kMaxBlur * h;
+    const float radius = egoView_ ? 0.0f : g_clientConfig.tiltShift * kMaxBlur * h;
     const float fxaa = g_clientConfig.fxaa;
     // Retro-Pixel: Stufe 1..3 = so viele Bildzeilen wie ein alter Bildschirm
     // (360, 240, 160); die Blockgröße folgt daraus und aus der Fensterhöhe.
     static const float kPixelLines[4] = {0.0f, 360.0f, 240.0f, 160.0f};
-    const int look = g_clientConfig.pixelLook;
+    const int look = egoView_ ? 0 : g_clientConfig.pixelLook;
     const float pixel = look >= 1 && look <= 3 ? std::max(2.0f, roundf(h / kPixelLines[look])) : 0.0f;
     const float flash = fx::ScreenFlash();
     // Werte erst nach BeginShaderMode setzen: SetShaderValue schaltet in
