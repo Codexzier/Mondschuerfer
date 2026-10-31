@@ -1853,9 +1853,20 @@ void World::UpdateBullets(float dt) {
         b.pos = Vector3Add(b.pos, Vector3Scale(b.vel, dt));
         b.life -= dt;
         if (b.life <= 0) continue;
-        // Geschoss einer Figur: endet am Boden oder an einem Hindernis
-        // (Funken), Schiffe trifft es nicht.
+        // Geschoss einer Figur: trifft Figuren der anderen Fraktion (geprüft
+        // wird die Strecke dieses Schritts, sonst flöge es mit über 1 m je
+        // Schritt durch die schmale Figur hindurch), endet am Boden oder an
+        // einem Hindernis (Funken). Schiffe trifft es nicht.
         if (b.ground) {
+            const Vector3 from = Vector3Subtract(b.pos, Vector3Scale(b.vel, dt));
+            for (auto& t : troopers) {
+                if (t.down || t.faction == b.faction || t.id == b.ownerTrooper || !SegmentHitsTrooper(from, b.pos, t)) continue;
+                b.life = 0.0f;
+                SpawnSparks(b.pos, b.faction == Faction::Player ? Color{255, 200, 90, 255} : Color{255, 90, 80, 255}, 5);
+                DamageTrooper(t, b);
+                break;
+            }
+            if (b.life <= 0.0f) continue;
             if (b.pos.y <= 0.0f || TrooperBlocked(b.pos)) {
                 b.life = 0.0f;
                 SpawnSparks({b.pos.x, std::max(b.pos.y, 0.05f), b.pos.z}, Color{255, 200, 90, 255}, 4);

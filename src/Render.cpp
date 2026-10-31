@@ -42,7 +42,7 @@
 //      Sicht der Sonne zeichnen.
 //   1. Undurchsichtige Modelle: Boden, Dekoration, Schienen, Startplätze,
 //      Stationen, Lagerstätten, Wracks und die bewegten Objekte (Züge,
-//      Raketen, Rover, Personen, Schiffe). Sie füllen den Tiefenpuffer.
+//      Raketen, Rover, Personen, Figuren zu Fuß, Schiffe). Sie füllen den Tiefenpuffer.
 //   2. Halbtransparente Fahrspuren, Bodenmarkierungen und Schatten (normales
 //      Mischen; die runden "Blob-Schatten" nur ohne Schattenkarte).
 //   3. Leuchteffekte mit additivem Mischen: Scanner, Lichtsäulen, Glimmen
@@ -207,7 +207,7 @@ float EaseOutBack(float t) {
     return 1.0f + c3 * x * x * x + c1 * x * x;
 }
 
-// Bewegte Modelle: Monorail-Züge, Raketen, Rover, Personen und Schiffe.
+// Bewegte Modelle: Monorail-Züge, Raketen, Rover, Personen, Figuren zu Fuß und Schiffe.
 // World::Draw zeichnet sie zweimal: in die Schattenkarte (Grafikoption
 // "Schatten": nur sie werfen Schatten) und ins eigentliche Bild. So passen
 // Schatten und Modell immer genau zusammen. hitFlash = Stärke des
@@ -305,6 +305,39 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
         if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
         const float hop = 0.12f * fabsf(sinf(time * 4.0f + static_cast<float>(pe.id)));
         g_assets.Draw(pe.model, Vector3{pe.pos.x, hop, pe.pos.z}, pe.yaw, 1.8f);
+    }
+
+    // --- Figuren zu Fuß (FPS-Modus) -------------------------------------------------
+    // Kameraden und Bodenpiraten als animierte Figur (Assets::DrawCharacter),
+    // die eigene Figur nicht (Ego-Ansicht). Das Modell ist 3,77 Einheiten hoch
+    // und wird auf TROOPER_HEIGHT verkleinert; es schaut nach +z, deshalb
+    // yaw + PI. Animation nach Zustand: gefallen "death" (einmal), in der Luft
+    // "jump", schnell "run", langsam "walk", im Kampf "shoot", sonst "idle".
+    // Die Uhr animT läuft beim Laufen schneller (Trooper.cpp). Die Waffe
+    // (Blaster wie in der Ego-Ansicht) sitzt in der rechten Hand und zeigt in
+    // die Blickrichtung der Figur.
+    static const int blaster = g_assets.Id("blaster/blaster-a");
+    for (const Trooper& t : w.troopers) {
+        if (t.id == me.trooperId || Dist2D(t.pos, focus) > cullR) continue;
+        const float speed = Vector2Length({t.vel.x, t.vel.z});
+        const char* anim = "idle";
+        float at = t.animT;
+        if (t.down) {
+            anim = "death";
+            at = t.downT;
+        } else if (!t.onGround) {
+            anim = "jump";
+        } else if (speed > cfg::TROOPER_WALK + 0.5f) {
+            anim = "run";
+        } else if (speed > 0.4f) {
+            anim = "walk";
+        } else if (t.targetId >= 0 || t.fireCd > 0.0f) {
+            anim = "shoot";
+        }
+        const float hf = t.hitFlash * hitFlash;
+        const Vector3 hand = g_assets.DrawCharacter(t.skin, anim, at, !t.down, TRS(t.pos, t.yaw + PI, cfg::TROOPER_HEIGHT / 3.77f),
+                                                    WHITE, Vector3{0.9f * hf, 0.45f * hf, 0.3f * hf});
+        if (!t.down) g_assets.Draw(blaster, TRS(hand, t.yaw, t.pitch, 0.0f, 0.183f));
     }
 
     // --- Schiffe -------------------------------------------------------------------
@@ -802,7 +835,7 @@ void World::Draw(const Camera3D& cam) const {
         g_assets.Draw(w.model, TRS(w.pos, w.yaw, w.tilt, w.tilt * 0.7f, 1.0f), Color{95, 92, 92, 255});
     }
 
-    // --- Züge, Raketen, Rover, Personen und Schiffe ------------------------------------
+    // --- Züge, Raketen, Rover, Personen, Figuren und Schiffe -----------------------------------
     DrawMovingModels(*this, focus, cullR, flashK);
 
     // ===== Ab hier transparente / leuchtende Effekte ====================================
@@ -1331,5 +1364,5 @@ void World::Draw(const Camera3D& cam) const {
 
     // Zu Fuß: die eigene Waffe vor der Kamera (nach allem anderen, ohne Effekte)
     if (me.role == PlayerRole::Trooper)
-        if (const Trooper* t = FindTrooper(me.trooperId)) DrawTrooperWeapon(*t, time);
+        if (const Trooper* t = FindTrooper(me.trooperId); t && !t->down) DrawTrooperWeapon(*t, time);
 }

@@ -161,6 +161,14 @@ mit dem Schiff. Etwa 40 % der Kristalle sind **gelb** und ohne Scanner zu sehen:
 nicht ab, erst muss zu Fuß eine Probe genommen werden (3 Sekunden halten). Danach ist der Kristall
 wieder grün, und Piloten wie Händler können ihn abbauen.
 
+Mit dir steigen drei **Kameraden** (SG1-2 bis SG1-4) aus. Sie folgen dir in einer Reihe hinter dir
+und schießen auf Gegner in Sichtweite; gefallene Kameraden kommen nach 20 Sekunden zurück. An
+gelben Kristallen, mindestens 60 m entfernt, streifen Gruppen von zwei bis vier **Bodenpiraten**
+umher. Sie greifen an, sobald sie dich oder einen Kameraden sehen, und ziehen sich mit wenig Schild
+zurück. Ist eine Gruppe ausgeschaltet, kommt später eine neue. Der Schild lädt sich nach 5 Sekunden
+ohne Treffer wieder auf. Fällst du, verlierst du deine getragenen Proben und stehst nach
+5 Sekunden am Ausstiegspunkt wieder auf.
+
 | Aktion | Tastatur / Maus | Xbox | PlayStation |
 |---|---|---|---|
 | Laufen | W / S, A / D | Linker Stick | Linker Stick |

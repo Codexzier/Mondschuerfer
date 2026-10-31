@@ -347,6 +347,28 @@ constexpr float TROOPER_FIRE_INTERVAL = 0.15f;
 constexpr float TROOPER_DAMAGE = 20.0f;
 constexpr float TROOPER_BULLET_SPEED = 70.0f;
 constexpr float TROOPER_BULLET_LIFE = 1.2f;
+constexpr float TROOPER_REGEN_DELAY = 5.0f;   // so lange ohne Treffer, dann lädt sich der Schild wieder auf ...
+constexpr float TROOPER_REGEN = 10.0f;        // ... mit so viel pro Sekunde
+constexpr float TROOPER_RESPAWN = 5.0f;       // Spieler gefallen: nach so vielen Sekunden wieder am Ausstiegspunkt
+// KI-Figuren (Ai.cpp): Kameraden des SG-Teams und Bodenpiraten. Bisher nur
+// im Einzelspieler; beide erscheinen beim Aussteigen und verschwinden beim
+// Einsteigen.
+constexpr int SP_MATES = 3;                   // NPC-Kameraden (bis zum Command Center fest)
+constexpr float MATE_DAMAGE = 12.0f;
+constexpr float MATE_FIRE_INTERVAL = 0.35f;
+constexpr float MATE_SPREAD = 0.035f;         // Streuung der Schüsse (Bogenmaß)
+constexpr float MATE_RESPAWN = 20.0f;         // gefallene Kameraden kommen nach so vielen Sekunden beim Spieler wieder
+constexpr int GROUND_PIRATE_GROUPS = 3;       // Gruppen gleichzeitig auf der Karte (später Server-Einstellung je Team)
+constexpr int GROUND_PIRATE_MIN = 2;          // Figuren je Gruppe ...
+constexpr int GROUND_PIRATE_MAX = 4;          // ... bis
+constexpr float GROUND_PIRATE_HP = 60.0f;
+constexpr float GROUND_PIRATE_DAMAGE = 6.0f;
+constexpr float GROUND_PIRATE_FIRE_INTERVAL = 0.45f;
+constexpr float GROUND_PIRATE_SPREAD = 0.05f;
+constexpr float GROUND_PIRATE_SPAWN_DIST = 60.0f;   // neue Gruppen mindestens so weit vom Team entfernt
+constexpr float GROUND_PIRATE_RESPAWN = 40.0f;      // ist eine Gruppe ganz ausgeschaltet, kommt danach eine neue
+constexpr float GROUND_PIRATE_RETREAT = 0.35f;      // unter diesem Anteil des Schilds ziehen sie sich zurück
+constexpr float TROOPER_SIGHT = 30.0f;        // so weit sehen KI-Figuren ihre Gegner
 // Gelbe Kristalle (FPS-Modus): Erst nimmt ein Trupp zu Fuß eine Probe, dann
 // sind sie wieder grün und abbaubar. Bisher nur im Einzelspieler (nicht in
 // der Simulation und nicht im Mehrspieler).

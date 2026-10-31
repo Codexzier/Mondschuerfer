@@ -9,7 +9,9 @@
 //        - Händler/Miner (ShipKind::Miner, Faction::Neutral): fliegen zu
 //          Lagerstätten, bauen ab, verkaufen an der Handelsstation; wehren
 //          sich gegen Spieler, fliehen vor Piraten.
-//   2. Autopilot (AutopilotInput, AutopilotDockActions, ResetAutopilot):
+//   2. World::UpdateTrooperAi: Figuren zu Fuß ohne Spieler (FPS-Modus) –
+//      NPC-Kameraden des SG-Teams und Bodenpiraten (Abschnitt unten).
+//   3. Autopilot (AutopilotInput, AutopilotDockActions, ResetAutopilot):
 //      steuert das EIGENE Schiff (players[0]/ships[0]) wie ein Mensch.
 //
 // Wer ruft das auf?
@@ -452,6 +454,171 @@ void World::UpdateConvoy(Ship& s, float dt) {
         }
     }
     UpdateShipPhysics(s, dt, in);
+}
+
+// ===========================================================================
+// Figuren zu Fuß (FPS-Modus): Kameraden und Bodenpiraten
+//
+// Auch hier "drückt die KI nur Tasten": Sie füllt Trooper::input, danach
+// läuft dieselbe Physik wie für den Spieler (World::UpdateTroopers).
+//   Kamerad: Follow – läuft auf seinen Platz in der Formation hinter dem
+//            Spieler (MateSlot) und sprintet bei großem Abstand. Attack –
+//            Gegner in Sichtweite: dreht sich zu ihm und schießt, läuft dabei
+//            aber weiter mit (seitwärts oder rückwärts).
+//   Pirat:   Patrol – streift um seinen gelben Kristall (home) und wartet an
+//            jedem Punkt kurz. Attack – Gegner in Sichtweite: hält 8 bis 14 m
+//            Abstand, macht Seitwärtsschritte und schießt. Retreat – unter
+//            GROUND_PIRATE_RETREAT des Schilds läuft er 6 s vom Gegner weg;
+//            danach greift er wieder an oder flieht erneut, bis sich der
+//            Schild aufgeladen hat.
+// Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis TROOPER_SIGHT mit freier
+// Sichtlinie (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
+// Visier (DamageTrooper) und behält ihn bis zur anderthalbfachen Sichtweite.
+// Zielen: Die Blickrichtung dreht mit begrenztem Tempo zum Ziel (das wirkt
+// wie eine Reaktionszeit); geschossen wird erst, wenn sie fast passt und die
+// Sicht frei ist. Die Streuung kommt in FireTrooperBullet dazu.
+// Hängt die Figur an einem Hindernis fest, springt sie und weicht eine
+// Sekunde seitlich aus.
+// ===========================================================================
+void World::UpdateTrooperAi(Trooper& t, float dt) {
+    TrooperInput& in = t.input;
+    const bool pirate = t.kind == TrooperKind::Pirate;
+    in.forward = in.strafe = 0.0f;
+    in.fire = in.jump = in.sprint = in.reload = in.sample = false;
+
+    // --- Ziel suchen ---------------------------------------------------------------
+    t.thinkT -= dt;
+    if (t.thinkT <= 0.0f) {
+        t.thinkT = Rand(0.3f, 0.5f);
+        const Trooper* cur = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
+        if (cur && (cur->down || Dist2D(cur->pos, t.pos) > cfg::TROOPER_SIGHT * 1.5f)) cur = nullptr;
+        int best = -1;
+        float bestD = cfg::TROOPER_SIGHT;
+        for (const Trooper& o : troopers) {
+            if (o.down || o.faction == t.faction) continue;
+            const float d = Dist2D(o.pos, t.pos);
+            if (d < bestD && TrooperLineClear(TrooperEye(t), TrooperEye(o))) {
+                best = o.id;
+                bestD = d;
+            }
+        }
+        t.targetId = best >= 0 ? best : cur ? cur->id : -1;
+        const Trooper* tg = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
+        t.seesTarget = tg && TrooperLineClear(TrooperEye(t), TrooperEye(*tg));
+    }
+    const Trooper* target = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
+    if (target && target->down) {
+        target = nullptr;
+        t.targetId = -1;
+        t.seesTarget = false;
+    }
+
+    // --- Zustand ------------------------------------------------------------------
+    if (pirate) {
+        if (t.ai == TrooperAiState::Retreat) {
+            t.waitT -= dt;
+            if (t.waitT <= 0.0f) t.ai = TrooperAiState::Patrol;
+        } else if (target && t.hp < t.maxHp * cfg::GROUND_PIRATE_RETREAT) {
+            t.ai = TrooperAiState::Retreat;
+            t.waitT = 6.0f;
+        } else if (target) {
+            t.ai = TrooperAiState::Attack;
+        } else if (t.ai == TrooperAiState::Attack) {
+            t.ai = TrooperAiState::Patrol;
+            t.goal = t.pos;
+            t.waitT = Rand(1.0f, 2.0f);
+        }
+    } else {
+        t.ai = target ? TrooperAiState::Attack : TrooperAiState::Follow;
+    }
+
+    // --- Laufrichtung (waagerecht, Länge 0..1) und Blickrichtung --------------------
+    Vector3 move{0.0f, 0.0f, 0.0f};
+    float faceYaw = in.yaw, facePitch = 0.0f;
+    auto toward = [&](Vector3 p) {
+        Vector3 d = Vector3Subtract(p, t.pos);
+        d.y = 0.0f;
+        const float l = Vector3Length(d);
+        return l > 1e-3f ? Vector3Scale(d, 1.0f / l) : Vector3{0.0f, 0.0f, 0.0f};
+    };
+    if (!pirate) {
+        if (const Trooper* leader = FindTrooper(t.leaderId); leader && !leader->down) {
+            const Vector3 slot = MateSlot(*leader, t.slot);
+            const float d = Dist2D(slot, t.pos);
+            if (d > 0.5f) {
+                move = Vector3Scale(toward(slot), std::min(1.0f, d / 1.5f));
+                faceYaw = YawTowards(t.pos, slot);
+                in.sprint = d > 6.0f && !target;
+            } else {
+                faceYaw = leader->yaw;
+            }
+        }
+    } else if (t.ai == TrooperAiState::Patrol) {
+        if (Dist2D(t.goal, t.pos) < 0.8f) {
+            t.waitT -= dt;
+            if (t.waitT <= 0.0f) {
+                const float a = Rand(-PI, PI), r = Rand(3.0f, 12.0f);
+                t.goal = {t.home.x + cosf(a) * r, 0.0f, t.home.z + sinf(a) * r};
+                t.waitT = Rand(1.5f, 4.0f);
+            }
+        } else {
+            move = Vector3Scale(toward(t.goal), 0.6f);
+            faceYaw = YawTowards(t.pos, t.goal);
+        }
+    } else if (t.ai == TrooperAiState::Retreat) {
+        const Vector3 away = target ? Vector3Negate(toward(target->pos)) : toward(t.home);
+        move = away;
+        faceYaw = YawTowards(t.pos, Vector3Add(t.pos, away));
+        in.sprint = true;
+    } else if (target) {
+        const Vector3 dir = toward(target->pos);
+        const float d = Dist2D(target->pos, t.pos);
+        if (!t.seesTarget || d > 14.0f) move = dir;
+        else if (d < 8.0f) move = Vector3Negate(dir);
+        t.strafeT -= dt;
+        if (t.strafeT <= 0.0f) {
+            t.strafeT = Rand(1.2f, 2.5f);
+            t.strafeDir = Rand(0.0f, 1.0f) < 0.5f ? -1.0f : 1.0f;
+        }
+        if (t.seesTarget) move = Vector3Add(move, Vector3Scale(Vector3{-dir.z, 0.0f, dir.x}, 0.7f * t.strafeDir));
+    }
+    // Im Kampf zum Ziel schauen (auf die Brust) und schießen, wenn die
+    // Blickrichtung fast passt
+    float aimYaw = faceYaw, aimPitch = 0.0f;
+    const bool fighting = target && t.ai == TrooperAiState::Attack;
+    if (fighting) {
+        const Vector3 eye = TrooperEye(t);
+        const Vector3 chest{target->pos.x, target->pos.y + cfg::TROOPER_HEIGHT * 0.6f, target->pos.z};
+        aimYaw = YawTowards(eye, chest);
+        aimPitch = atan2f(chest.y - eye.y, std::max(0.1f, Dist2D(eye, chest)));
+        faceYaw = aimYaw;
+        facePitch = aimPitch;
+    }
+    const float turn = (pirate ? 3.5f : 5.0f) * dt;
+    in.yaw += std::clamp(AngleDiff(in.yaw, faceYaw), -turn, turn);
+    in.pitch += std::clamp(facePitch - in.pitch, -turn, turn);
+    if (fighting && t.seesTarget && fabsf(AngleDiff(in.yaw, aimYaw)) < 0.12f && fabsf(aimPitch - in.pitch) < 0.15f) in.fire = true;
+
+    // --- Festgelaufen? Springen und seitlich ausweichen ------------------------------
+    const float speed = Vector2Length({t.vel.x, t.vel.z});
+    if (Vector3Length(move) > 0.3f && speed < 0.6f && t.onGround) t.stuckT += dt;
+    else t.stuckT = 0.0f;
+    if (t.stuckT > 0.6f) {
+        t.stuckT = 0.0f;
+        t.detourT = 1.0f;
+        t.strafeDir = -t.strafeDir;
+        in.jump = true;
+        if (t.ai == TrooperAiState::Patrol) t.goal = t.pos;   // Streifenpunkt unerreichbar: gleich einen neuen wählen
+    }
+    // Wunschrichtung in vor/zurück und seitlich relativ zur Blickrichtung
+    const Vector3 fwd = ForwardFromYaw(in.yaw);
+    const Vector3 right{-fwd.z, 0.0f, fwd.x};
+    in.forward = Vector3DotProduct(move, fwd);
+    in.strafe = Vector3DotProduct(move, right);
+    if (t.detourT > 0.0f) {
+        t.detourT -= dt;
+        in.strafe = std::clamp(in.strafe + t.strafeDir, -1.0f, 1.0f);
+    }
 }
 
 // ===========================================================================

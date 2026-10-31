@@ -48,7 +48,8 @@
 //   7. Funkspruch (Mission, Start, Fortsetzen) unten rechts
 //   8. Tastenhilfe unten links
 // Zu Fuß (Trupp, Ego-Ansicht) zeichnet DrawHud stattdessen DrawTrooperHud:
-// Fadenkreuz, Schild und Munition, Richtung zum Tor, Meldungen, Tastenhilfe.
+// roter Warnrand, Fadenkreuz, Schild und Munition, Kameraden, Richtung zum
+// Tor, Meldungen, "Gefallen", Tastenhilfe.
 // ---------------------------------------------------------------------------
 #include "Hud.hpp"
 #include "Assets.hpp"
@@ -359,6 +360,21 @@ std::vector<std::string> WrapLines(const std::string& text, float maxW, float si
 }
 
 // Meldungen oben in der Mitte (ab 15 % der Bildhöhe), Erklärung in DrawHud
+// Roter Warnrand: Farbverläufe von allen vier Rändern nach innen (120 px
+// breit, außen kräftig, innen durchsichtig). danger 1,0 = Alpha 150.
+// DrawRectangleGradientV/H: senkrechter bzw. waagerechter Farbverlauf
+// zwischen zwei Farben (hier gleiche Farbe, verschiedene Deckkraft).
+void DrawDangerEdge(float danger) {
+    if (danger <= 0.01f) return;
+    const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+    unsigned char a = static_cast<unsigned char>(std::min(1.0f, danger) * 150);
+    float t = 120 * Scale();
+    DrawRectangleGradientV(0, 0, static_cast<int>(W), static_cast<int>(t), Color{255, 40, 30, a}, Color{255, 40, 30, 0});
+    DrawRectangleGradientV(0, static_cast<int>(H - t), static_cast<int>(W), static_cast<int>(t), Color{255, 40, 30, 0}, Color{255, 40, 30, a});
+    DrawRectangleGradientH(0, 0, static_cast<int>(t), static_cast<int>(H), Color{255, 40, 30, a}, Color{255, 40, 30, 0});
+    DrawRectangleGradientH(static_cast<int>(W - t), 0, static_cast<int>(t), static_cast<int>(H), Color{255, 40, 30, 0}, Color{255, 40, 30, a});
+}
+
 void DrawNotices(const PlayerState& me) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
@@ -426,6 +442,11 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
 
+    // Warnrand wie im Schiff: Treffer (hitFlash) oder Schild unter 30 %
+    float danger = t.hitFlash * 0.6f;
+    if (!t.down && t.hp / t.maxHp < 0.3f) danger = std::max(danger, 0.25f + 0.2f * sinf(w.time * 6.0f));
+    DrawDangerEdge(danger);
+
     const float cx = W * 0.5f, cy = H * 0.5f, gap = 6 * s, len = 10 * s, th = 2 * s;
     const Color cc = t.reloadT > 0.0f ? Color{160, 165, 175, 200} : Color{235, 240, 250, 230};
     DrawRectangleRec({cx - gap - len, cy - th * 0.5f, len, th}, cc);
@@ -453,12 +474,33 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     Text("PROBEN", x, y, 18 * s, MUTED);
     TextRight(TextFormat("%d / %d", t.samples, cfg::SAMPLE_GOAL), x + bw, y, 18 * s, yellow);
 
+    // Kameraden (NPC) unter dem Panel: Name und Schild, gefallene mit Restzeit
+    // bis zur Rückkehr
+    std::vector<const Trooper*> mates;
+    for (const Trooper& m : w.troopers)
+        if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == t.id) mates.push_back(&m);
+    if (!mates.empty()) {
+        const Rectangle mr{pr.x, pr.y + pr.height + 10 * s, pr.width, (44 + 26 * mates.size()) * s};
+        Panel(mr);
+        Text("SG1 · KAMERADEN", x, mr.y + 12 * s, 16 * s, MUTED);
+        float my = mr.y + 38 * s;
+        for (const Trooper* m : mates) {
+            Text(TextFormat("SG1-%d", m->slot + 2), x, my, 18 * s, TEXT);
+            const float bx = x + 80 * s, bwm = bw - 80 * s;
+            if (m->down)
+                TextRight(TextFormat("GEFALLEN  %.0f s", std::max(0.0f, cfg::MATE_RESPAWN - m->downT)), x + bw, my, 16 * s, BAD);
+            else
+                Bar({bx, my + 5 * s, bwm, 10 * s}, m->hp / m->maxHp, m->hp / m->maxHp < 0.3f ? BAD : SHIELD);
+            my += 26 * s;
+        }
+    }
+
     if (t.sampleId >= 0) {
         const Rectangle hr{W * 0.5f - 300 * s, H - 110 * s, 600 * s, 80 * s};
         Panel(hr);
         TextCentered(TextFormat("PROBE WIRD GENOMMEN ...  %.1f / %.0f s", t.sampleT, cfg::SAMPLE_TIME), W * 0.5f, hr.y + 12 * s, 22 * s, yellow);
         Bar({hr.x + 20 * s, hr.y + 44 * s, hr.width - 40 * s, 16 * s}, t.sampleT / cfg::SAMPLE_TIME, yellow);
-    } else if (w.SampleTarget(t.pos, cfg::SAMPLE_RANGE) >= 0) {
+    } else if (!t.down && w.SampleTarget(t.pos, cfg::SAMPLE_RANGE) >= 0) {
         const std::string hint = controls::KeyHint(controls::Act::Scan) + " halten: Probe nehmen";
         const float tw = Width(hint, 26 * s) + 40 * s;
         const Rectangle hr{W * 0.5f - tw * 0.5f, H - 90 * s, tw, 50 * s};
@@ -484,6 +526,14 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     }
 
     DrawNotices(w.Me());
+
+    if (t.down) {
+        const Rectangle dr{W * 0.5f - 260 * s, H * 0.5f - 70 * s, 520 * s, 120 * s};
+        Panel(dr);
+        TextCentered("GEFALLEN", W * 0.5f, dr.y + 18 * s, 40 * s, BAD);
+        TextCentered(TextFormat("Zurück am Ausstiegspunkt in %.0f s", std::max(0.0f, ceilf(cfg::TROOPER_RESPAWN - t.downT))), W * 0.5f,
+                     dr.y + 72 * s, 22 * s, TEXT);
+    }
 
     if (!simulation) {
         if (t.age < 60.0f || (IsKeyDown(KEY_H) && !TextInputActive()))
@@ -517,19 +567,10 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     //   Welt mit 3 pro Sekunde ab (~0,33 s). Mal 0,6 -> höchstens Alpha 90.
     // - Schild unter 30 %: pulsiert zwischen 0,05 und 0,45 (sin mit 6 rad/s,
     //   also knapp einmal pro Sekunde) – ein Dauer-Warnsignal.
-    // Der stärkere der beiden Werte gewinnt; 1,0 entspricht Alpha 150.
-    // DrawRectangleGradientV/H: senkrechter bzw. waagerechter Farbverlauf
-    // zwischen zwei Farben (hier gleiche Farbe, verschiedene Deckkraft).
+    // Der stärkere der beiden Werte gewinnt (DrawDangerEdge).
     float danger = p.hitFlash * 0.6f;
     if (!p.crashing && !p.dead && p.hp / p.maxHp < 0.3f) danger = std::max(danger, 0.25f + 0.2f * sinf(w.time * 6.0f));
-    if (danger > 0.01f) {
-        unsigned char a = static_cast<unsigned char>(std::min(1.0f, danger) * 150);
-        float t = 120 * s;
-        DrawRectangleGradientV(0, 0, static_cast<int>(W), static_cast<int>(t), Color{255, 40, 30, a}, Color{255, 40, 30, 0});
-        DrawRectangleGradientV(0, static_cast<int>(H - t), static_cast<int>(W), static_cast<int>(t), Color{255, 40, 30, 0}, Color{255, 40, 30, a});
-        DrawRectangleGradientH(0, 0, static_cast<int>(t), static_cast<int>(H), Color{255, 40, 30, a}, Color{255, 40, 30, 0});
-        DrawRectangleGradientH(static_cast<int>(W - t), 0, static_cast<int>(t), static_cast<int>(H), Color{255, 40, 30, 0}, Color{255, 40, 30, a});
-    }
+    DrawDangerEdge(danger);
 
     // Namen aller Stationen; Randpfeile nur für die jeweils nächste Handels-
     // station, die nächste Werft und den Raumschiffsverkäufer (sonst wäre der

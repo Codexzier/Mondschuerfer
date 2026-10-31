@@ -31,8 +31,8 @@
 //   World.cpp      Spielregeln (Update, Scanner, Abbau, Kampf, Stationen)
 //   WorldGen.cpp   Aufbau: Mondoberfläche, Stationen, Lagerstätten
 //   MapAnim.cpp    Kartenanimation: Rover, Monorail zwischen Stationen, Raketen (nur Kulisse)
-//   Ai.cpp         KI der Piraten/Händler und der Autopilot (Simulation)
-//   Trooper.cpp    Trupp zu Fuß (FPS-Modus): Bewegung, Hindernisse, Schüsse
+//   Ai.cpp         KI der Piraten/Händler, der Kameraden und Bodenpiraten zu Fuß und der Autopilot (Simulation)
+//   Trooper.cpp    Trupp zu Fuß (FPS-Modus): Bewegung, Hindernisse, Schüsse, Treffer, KI-Figuren erzeugen
 //   src/Render.cpp World::Draw (nur im Client)
 //
 // Abhängigkeiten: nur raylib.h/raymath.h (Datentypen wie Vector3/Color und
@@ -200,8 +200,10 @@ struct Bullet {
     int ownerId = -1;      // Schiffs-ID des Schützen, -1 = Geschützturm oder Figur (ground)
     int ownerPlayer = -1;  // Spieler-ID, falls ein Spieler geschossen hat (für Abschüsse)
     // Geschoss einer Figur zu Fuß (Trupp): fliegt mit Höhenrichtung, endet am
-    // Boden oder an einem Hindernis (TrooperBlock) und trifft keine Schiffe.
+    // Boden oder an einem Hindernis (TrooperBlock), trifft Figuren der
+    // anderen Fraktion und keine Schiffe.
     bool ground = false;
+    int ownerTrooper = -1; // Figur des Schützen (Trooper::id), damit Getroffene zurückschießen
 };
 
 // Ein Effekt-Teilchen (Rauch, Funken, Explosion). Gibt es nur im
@@ -292,8 +294,13 @@ struct TrooperInput {
     bool sample = false;   // gedrückt halten = Probe nehmen (an einem gelben Kristall)
 };
 
-// Eine Figur zu Fuß. Später nutzen auch die Bodenpiraten diese Struktur
-// (Fraktion Pirat).
+// KI-Figuren (Trooper::playerId == -1, Ai.cpp): Kameraden des SG-Teams
+// folgen ihrem Spieler und kämpfen mit, Bodenpiraten streifen um gelbe
+// Kristalle und greifen Figuren in Sichtweite an.
+enum class TrooperKind { Mate = 0, Pirate = 1 };
+enum class TrooperAiState { Follow = 0, Patrol = 1, Attack = 2, Retreat = 3 };
+
+// Eine Figur zu Fuß: Spieler (playerId >= 0), Kamerad oder Bodenpirat.
 struct Trooper {
     int id = 0;                   // eindeutig (World::nextTrooperId)
     int playerId = -1;            // PlayerState::id, -1 = KI
@@ -312,6 +319,28 @@ struct Trooper {
     int samples = 0;              // getragene Proben
     int sampleId = -1;            // Lagerstätte, an der gerade eine Probe entsteht (-1 = keine)
     float sampleT = 0.0f;         // Sekunden der laufenden Probe (fertig bei cfg::SAMPLE_TIME)
+    bool down = false;            // gefallen (Schild auf 0); Spieler: Neustart nach TROOPER_RESPAWN
+    float downT = 0.0f;           // Sekunden seit dem Fallen
+    float calmT = 0.0f;           // Sekunden seit dem letzten Treffer (Schild lädt nach TROOPER_REGEN_DELAY)
+    Vector3 home{};               // Spieler: Ausstiegspunkt; Pirat: Mitte seiner Streife
+    float animT = 0.0f;           // Uhr der Laufanimation (Render.cpp), läuft schneller, je schneller die Figur ist
+    // Nur KI-Figuren (Ai.cpp):
+    TrooperKind kind = TrooperKind::Mate;
+    TrooperAiState ai = TrooperAiState::Follow;
+    TrooperInput input;           // Eingabe, die die KI für diesen Schritt berechnet hat
+    int skin = 0;                 // Haut (Render.cpp): 0..3 militär (SG-Team), 4 Cyborg (Bodenpirat)
+    int leaderId = -1;            // Kamerad: Figur, der er folgt
+    int slot = 0;                 // Kamerad: Platz in der Formation hinter ihr
+    int group = -1;               // Pirat: Gruppe (Zählung World::nextPirateGroup)
+    int targetId = -1;            // Gegnerfigur, auf die sie zielt (-1 = keine)
+    bool seesTarget = false;      // freie Sichtlinie zum Ziel (bei der letzten Prüfung)
+    Vector3 goal{};               // Pirat auf Streife: nächster Punkt
+    float thinkT = 0.0f;          // Sekunden bis zur nächsten Zielsuche
+    float waitT = 0.0f;           // Pirat: Pause an einem Streifenpunkt; Retreat: Restzeit
+    float strafeT = 0.0f;         // Seitwärtsschritte im Kampf: Restzeit in eine Richtung
+    float strafeDir = 1.0f;
+    float stuckT = 0.0f;          // will laufen, kommt aber kaum voran (Hindernis)
+    float detourT = 0.0f;         // > 0: weicht seitlich aus
 };
 
 // Hindernis für Figuren: Kapsel a-b mit Radius r auf dem Boden, oben flach
@@ -627,6 +656,8 @@ public:
     void UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in);
     // Steckt der Punkt in einem Hindernis (Treffer eines Bodengeschosses)?
     bool TrooperBlocked(Vector3 p) const;
+    // Freie Sichtlinie von a nach b (kein TrooperBlock dazwischen)?
+    bool TrooperLineClear(Vector3 a, Vector3 b) const;
     // Nächstes Tor (Deko gate_simple/gate_complex) zum Punkt p, false = keins
     bool NearestGate(Vector3 p, Vector3* out) const;
     // Nächste gelbe Lagerstätte bis range (waagerecht) um p: ID oder -1
@@ -729,6 +760,8 @@ public:
     // Schiffe und damit Treffer, siehe UpdateShipPhysics).
     int nextMissionId = 1;
     int nextTrooperId = 1;        // eigener Zähler für Figuren (aus demselben Grund)
+    int nextPirateGroup = 1;      // Gruppen der Bodenpiraten (Trooper::group)
+    float pirateGroupT = 0.0f;    // Sekunden bis zur nächsten neuen Gruppe (fehlt eine)
     float missionSpawnT = 0.0f;   // Sekunden bis zum nächsten neuen Missionsangebot
 
     Outcome outcome = Outcome::None;   // nur Einzelspieler
@@ -806,11 +839,20 @@ public:
     void BuildTrooperBlocks();             // aus Deko und Stationsteilen (StartTrooper)
     void UpdateTroopers(float dt);         // Bewegung, Nachladen, Schießen (Update)
     void FireTrooperBullet(Trooper& t);
+    void DamageTrooper(Trooper& t, const Bullet& b);   // Treffer eines Bodengeschosses (UpdateBullets)
+    void SpawnMates(const Trooper& leader);            // NPC-Kameraden neben dem Spieler (StartTrooper)
+    bool SpawnPirateGroup(Vector3 team);               // Gruppe weit genug vom Team, bei einem gelben Kristall
+    void UpdatePirateGroups(float dt);                 // fehlende Gruppen nach GROUND_PIRATE_RESPAWN ersetzen
+    void UpdateTrooperAi(Trooper& t, float dt);        // Eingabe einer KI-Figur (Ai.cpp)
 };
 
 // Augenpunkt und Blickrichtung (Länge 1) einer Figur (Trooper.cpp)
 Vector3 TrooperEye(const Trooper& t);
 Vector3 TrooperAim(const Trooper& t);
+// Platz eines Kameraden (slot 0..2) in der Formation hinter leader
+Vector3 MateSlot(const Trooper& leader, int slot);
+// Trifft die Strecke a-b (ein Schritt eines Geschosses) die Figur?
+bool SegmentHitsTrooper(Vector3 a, Vector3 b, const Trooper& t);
 
 // Autopilot für den Simulationsmodus (Ai.cpp), steuert den eigenen Spieler (players[0]).
 // Wird auch für die Hintergrundwelt im Hauptmenü benutzt (main.cpp).
