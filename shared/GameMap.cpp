@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
-// GameMap.cpp – Umsetzung von GameMap.hpp: Segmentliste, Dateiformat und
-// Monorail-Kreise (Erklärung und Aufrufer: GameMap.hpp).
+// GameMap.cpp – Umsetzung von GameMap.hpp: Segmentliste, Markierungen der
+// Einsatzkarten, Dateiformat und Monorail-Kreise (Erklärung und Aufrufer:
+// GameMap.hpp).
 // ---------------------------------------------------------------------------
 #include "GameMap.hpp"
 #include "Config.hpp"
@@ -20,9 +21,59 @@ const char* SegmentGroupName(SegmentGroup g) {
         case SegmentGroup::Monorail: return "Monorail";
         case SegmentGroup::Buildings: return "Gebäude";
         case SegmentGroup::Misc: return "Sonstiges";
+        case SegmentGroup::Walls: return "Mauern";
+        case SegmentGroup::Roofs: return "Dach & Treppe";
+        case SegmentGroup::Village: return "Dorf";
+        case SegmentGroup::Paths: return "Wege";
+        case SegmentGroup::Nature: return "Natur";
+        case SegmentGroup::Graves: return "Friedhof";
+        case SegmentGroup::GraveWalls: return "Friedhofsmauer";
+        case SegmentGroup::Markers: return "Markierungen";
         default: return "";
     }
 }
+
+bool GroupForKind(SegmentGroup g, MapKind k) {
+    return (static_cast<int>(g) >= static_cast<int>(SegmentGroup::Walls)) == (k == MapKind::Mission);
+}
+
+const char* MapThemeName(MapTheme t) {
+    switch (t) {
+        case MapTheme::Village: return "Dorf";
+        case MapTheme::Forest: return "Wald";
+        case MapTheme::Graveyard: return "Friedhof";
+        default: return "";
+    }
+}
+
+const char* MapGroundName(MapGround g) {
+    switch (g) {
+        case MapGround::Grass: return "Gras";
+        case MapGround::Earth: return "Erde";
+        case MapGround::Stone: return "Stein";
+        case MapGround::Sand: return "Sand";
+        default: return "";
+    }
+}
+
+const char* MapSkyName(MapSky s) {
+    switch (s) {
+        case MapSky::Day: return "Tag";
+        case MapSky::Evening: return "Abend";
+        case MapSky::Night: return "Nacht";
+        default: return "";
+    }
+}
+
+float MapHalf(const GameMap& m) {
+    return m.kind == MapKind::Mission ? static_cast<float>(m.size) * 0.5f : cfg::WORLD_HALF;
+}
+
+float MapCell(MapKind k) { return k == MapKind::Mission ? mapgrid::MISSION_CELL : mapgrid::CELL; }
+
+const char* const MARKER_GATE = "marker_stargate";
+const char* const MARKER_CRYSTAL = "marker_crystal";
+const char* const MARKER_ENEMY = "marker_enemy";
 
 // Die Größen: Gelände, Straßen und Schienen füllen genau ein Rasterfeld
 // (Kit-Feld x CELL). Krater sind wie in der Zufallswelt groß und flach,
@@ -81,6 +132,99 @@ const std::vector<MapSegment>& MapSegments() {
         {"astronautA", "Astronaut", G::Misc, 1.6f},
         {"bones", "Knochen", G::Misc, 3.0f},
         {"barrels", "Fässer", G::Misc, 2.5f},
+
+        // --- Einsatzkarten (ab hier nur hinten anfügen) ---------------------
+        // Fantasy Town Kit und Graveyard Kit in Originalgröße: ein Kit-Feld =
+        // ein Rasterfeld (MISSION_CELL), eine Mauer ist etwa 1,7-mal so hoch
+        // wie eine Figur (cfg::TROOPER_HEIGHT).
+        {"fantasy-town/wall", "Mauer", G::Walls, 1.0f},
+        {"fantasy-town/wall-door", "Mauer mit Tür", G::Walls, 1.0f},
+        {"fantasy-town/wall-window-shutters", "Fenster mit Läden", G::Walls, 1.0f},
+        {"fantasy-town/wall-window-glass", "Fenster", G::Walls, 1.0f},
+        {"fantasy-town/wall-window-round", "Rundfenster", G::Walls, 1.0f},
+        {"fantasy-town/wall-corner", "Ecke", G::Walls, 1.0f},
+        {"fantasy-town/wall-half", "Halbe Mauer", G::Walls, 1.0f},
+        {"fantasy-town/wall-broken", "Kaputte Mauer", G::Walls, 1.0f},
+        {"fantasy-town/wall-wood", "Holzwand", G::Walls, 1.0f},
+        {"fantasy-town/wall-wood-door", "Holzwand mit Tür", G::Walls, 1.0f},
+        {"fantasy-town/wall-wood-window-shutters", "Holzwand mit Fenster", G::Walls, 1.0f},
+        {"fantasy-town/wall-wood-corner", "Holzecke", G::Walls, 1.0f},
+
+        {"fantasy-town/roof", "Dach", G::Roofs, 1.0f},
+        {"fantasy-town/roof-corner", "Dachecke", G::Roofs, 1.0f},
+        {"fantasy-town/roof-corner-inner", "Dachecke innen", G::Roofs, 1.0f},
+        {"fantasy-town/roof-gable", "Giebel", G::Roofs, 1.0f},
+        {"fantasy-town/roof-gable-end", "Giebel Ende", G::Roofs, 1.0f},
+        {"fantasy-town/roof-flat", "Flachdach", G::Roofs, 1.0f},
+        {"fantasy-town/roof-point", "Turmspitze", G::Roofs, 1.0f},
+        {"fantasy-town/chimney", "Schornstein", G::Roofs, 1.0f},
+        {"fantasy-town/stairs-stone", "Steintreppe", G::Roofs, 1.0f},
+        {"fantasy-town/stairs-wood", "Holztreppe", G::Roofs, 1.0f},
+        {"fantasy-town/planks", "Holzboden", G::Roofs, 1.0f},
+        {"fantasy-town/pillar-wood", "Holzpfosten", G::Roofs, 1.0f},
+
+        {"fantasy-town/fence", "Zaun", G::Village, 1.0f},
+        {"fantasy-town/fence-gate", "Zauntor", G::Village, 1.0f},
+        {"fantasy-town/hedge", "Hecke", G::Village, 1.0f},
+        {"fantasy-town/hedge-large", "Hohe Hecke", G::Village, 1.0f},
+        {"fantasy-town/lantern", "Laterne", G::Village, 1.0f},
+        {"fantasy-town/cart", "Karren", G::Village, 1.0f},
+        {"fantasy-town/cart-high", "Hoher Karren", G::Village, 1.0f},
+        {"fantasy-town/stall", "Marktstand", G::Village, 1.0f},
+        {"fantasy-town/stall-green", "Marktstand grün", G::Village, 1.0f},
+        {"fantasy-town/stall-bench", "Bank", G::Village, 1.0f},
+        {"fantasy-town/fountain-round", "Brunnen", G::Village, 1.0f},
+        {"fantasy-town/fountain-square", "Brunnen eckig", G::Village, 1.0f},
+
+        {"fantasy-town/road", "Weg", G::Paths, 1.0f},
+        {"fantasy-town/road-corner", "Weg Ecke", G::Paths, 1.0f},
+        {"fantasy-town/road-corner-inner", "Weg Ecke innen", G::Paths, 1.0f},
+        {"fantasy-town/road-edge", "Wegrand", G::Paths, 1.0f},
+        {"fantasy-town/road-bend", "Weg Bogen", G::Paths, 1.0f},
+        {"graveyard/road", "Pfad", G::Paths, 1.0f},
+
+        {"fantasy-town/tree", "Baum", G::Nature, 1.0f},
+        {"fantasy-town/tree-high", "Hoher Baum", G::Nature, 1.0f},
+        {"fantasy-town/tree-crooked", "Krummer Baum", G::Nature, 1.0f},
+        {"fantasy-town/tree-high-round", "Runder Baum", G::Nature, 1.0f},
+        {"fantasy-town/rock-large", "Großer Fels", G::Nature, 1.0f},
+        {"fantasy-town/rock-small", "Fels", G::Nature, 1.0f},
+        {"fantasy-town/rock-wide", "Breiter Fels", G::Nature, 1.0f},
+        {"graveyard/pine", "Kiefer", G::Nature, 1.0f},
+        {"graveyard/pine-crooked", "Krumme Kiefer", G::Nature, 1.0f},
+        {"graveyard/pine-fall", "Kiefer im Herbst", G::Nature, 1.0f},
+        {"graveyard/trunk", "Baumstumpf", G::Nature, 1.0f},
+        {"graveyard/rocks", "Steine", G::Nature, 1.0f},
+
+        {"graveyard/gravestone-round", "Grabstein", G::Graves, 1.0f},
+        {"graveyard/gravestone-cross", "Grabkreuz", G::Graves, 1.0f},
+        {"graveyard/gravestone-broken", "Zerbrochener Grabstein", G::Graves, 1.0f},
+        {"graveyard/gravestone-wide", "Breiter Grabstein", G::Graves, 1.0f},
+        {"graveyard/grave", "Grab", G::Graves, 1.0f},
+        {"graveyard/crypt", "Gruft", G::Graves, 1.0f},
+        {"graveyard/crypt-large", "Große Gruft", G::Graves, 1.0f},
+        {"graveyard/cross", "Kreuz", G::Graves, 1.0f},
+        {"graveyard/coffin", "Sarg", G::Graves, 1.0f},
+        {"graveyard/pillar-obelisk", "Obelisk", G::Graves, 1.0f},
+        {"graveyard/lightpost-single", "Laternenpfahl", G::Graves, 1.0f},
+        {"graveyard/pumpkin-carved", "Kürbis", G::Graves, 1.0f},
+
+        {"graveyard/stone-wall", "Steinmauer", G::GraveWalls, 1.0f},
+        {"graveyard/stone-wall-column", "Mauerpfeiler", G::GraveWalls, 1.0f},
+        {"graveyard/stone-wall-damaged", "Kaputte Steinmauer", G::GraveWalls, 1.0f},
+        {"graveyard/brick-wall", "Ziegelmauer", G::GraveWalls, 1.0f},
+        {"graveyard/brick-wall-end", "Ziegelmauer Ende", G::GraveWalls, 1.0f},
+        {"graveyard/iron-fence", "Eisenzaun", G::GraveWalls, 1.0f},
+        {"graveyard/iron-fence-border-gate", "Eisentor", G::GraveWalls, 1.0f},
+        {"graveyard/iron-fence-damaged", "Kaputter Eisenzaun", G::GraveWalls, 1.0f},
+        {"graveyard/fence", "Holzzaun", G::GraveWalls, 1.0f},
+        {"graveyard/fence-gate", "Holztor", G::GraveWalls, 1.0f},
+        {"graveyard/altar-stone", "Altar", G::GraveWalls, 1.0f},
+        {"graveyard/bench", "Kirchbank", G::GraveWalls, 1.0f},
+
+        {MARKER_GATE, "Stargate", G::Markers, mapgrid::GATE_SCALE},
+        {MARKER_CRYSTAL, "Kristallplatz", G::Markers, 1.0f},
+        {MARKER_ENEMY, "Gegner-Startplatz", G::Markers, 1.0f},
     };
     return list;
 }
@@ -96,21 +240,62 @@ bool IsTrack(const std::string& model) {
     return s && s->group == SegmentGroup::Monorail;
 }
 
+bool IsMarker(const std::string& model) {
+    const MapSegment* s = FindSegment(model);
+    return s && s->group == SegmentGroup::Markers;
+}
+
+// Stargate: das Tor gate_complex, davor (+z) die Treppe (cfg::GATE_STAIR_DEPTH
+// bei der Größe GATE_SCALE). Kristallplatz: etwa so groß wie die Kristalle.
+BoundingBox SegmentBounds(const std::string& model) {
+    if (model == MARKER_GATE) {
+        BoundingBox b = ModelBounds(ModelId("gate_complex"));
+        b.max.z += cfg::GATE_STAIR_DEPTH / mapgrid::GATE_SCALE;
+        return b;
+    }
+    if (model == MARKER_CRYSTAL) return {{-0.8f, 0.0f, -0.8f}, {0.8f, 1.0f, 0.8f}};
+    if (model == MARKER_ENEMY) return {{-0.5f, 0.0f, -0.5f}, {0.5f, 1.0f, 0.5f}};
+    return ModelBounds(ModelId(model));
+}
+
 // ===========================================================================
 // Dateiformat
 // ===========================================================================
 namespace {
 const char* kMagic = "MONDSCHUERFER_KARTE";
 const int kVersion = 1;
+// Wörter der Kopfzeilen, in der Reihenfolge der enums
+const char* const kThemeKeys[] = {"dorf", "wald", "friedhof"};
+const char* const kGroundKeys[] = {"gras", "erde", "stein", "sand"};
+const char* const kSkyKeys[] = {"tag", "abend", "nacht"};
+
+// Wort -> Nummer (unbekannt: alter Wert bleibt)
+template <typename E, size_t N>
+void ReadKey(std::istream& ls, const char* const (&keys)[N], E& out) {
+    std::string v;
+    ls >> v;
+    for (size_t i = 0; i < N; ++i)
+        if (v == keys[i]) out = static_cast<E>(i);
 }
+} // namespace
 
 std::string MapToText(const GameMap& m) {
     std::ostringstream f;
     f << kMagic << ' ' << kVersion << '\n';
     f << "name " << m.name << '\n';
     if (!m.author.empty()) f << "author " << m.author << '\n';
-    for (const MapPiece& p : m.pieces)
-        f << "piece " << p.model << ' ' << p.x << ' ' << p.z << ' ' << p.yaw << ' ' << p.scale << '\n';
+    if (m.kind == MapKind::Mission) {
+        f << "kind einsatz\n";
+        f << "theme " << kThemeKeys[static_cast<int>(m.theme)] << '\n';
+        f << "size " << m.size << '\n';
+        f << "ground " << kGroundKeys[static_cast<int>(m.ground)] << '\n';
+        f << "sky " << kSkyKeys[static_cast<int>(m.sky)] << '\n';
+    }
+    for (const MapPiece& p : m.pieces) {
+        f << "piece " << p.model << ' ' << p.x << ' ' << p.z << ' ' << p.yaw << ' ' << p.scale;
+        if (p.lift > 0.0f) f << ' ' << p.lift;
+        f << '\n';
+    }
     f << "end\n";
     return f.str();
 }
@@ -139,17 +324,40 @@ bool MapFromText(const std::string& text, GameMap& out) {
         } else if (key == "author") {
             ls >> m.author;
             if (m.author.size() > 16) m.author.resize(16);   // net::MAX_NAME
+        } else if (key == "kind") {
+            std::string v;
+            ls >> v;
+            m.kind = v == "einsatz" ? MapKind::Mission : MapKind::Moon;
+        } else if (key == "theme") {
+            ReadKey(ls, kThemeKeys, m.theme);
+        } else if (key == "ground") {
+            ReadKey(ls, kGroundKeys, m.ground);
+        } else if (key == "sky") {
+            ReadKey(ls, kSkyKeys, m.sky);
+        } else if (key == "size") {
+            int v = 0;
+            if (ls >> v) m.size = std::clamp(v, mapgrid::MISSION_SIZE_MIN, mapgrid::MISSION_SIZE_MAX);
         } else if (key == "piece") {
             if (static_cast<int>(m.pieces.size()) >= mapgrid::MAX_PIECES) continue;
             MapPiece p;
             if (!(ls >> p.model >> p.x >> p.z >> p.yaw >> p.scale)) continue;
+            if (!(ls >> p.lift)) p.lift = 0.0f;   // Höhe ist freiwillig (ältere Karten)
             if (!FindSegment(p.model)) continue;
-            if (!std::isfinite(p.x) || !std::isfinite(p.z) || !std::isfinite(p.yaw) || !std::isfinite(p.scale)) continue;
-            if (fabsf(p.x) > cfg::WORLD_HALF || fabsf(p.z) > cfg::WORLD_HALF) continue;
+            if (!std::isfinite(p.x) || !std::isfinite(p.z) || !std::isfinite(p.yaw) || !std::isfinite(p.scale) ||
+                !std::isfinite(p.lift))
+                continue;
             if (p.scale < 0.2f || p.scale > 20.0f) continue;
+            p.lift = std::clamp(p.lift, 0.0f, mapgrid::MAX_LEVEL * mapgrid::LEVEL);
             m.pieces.push_back(p);
         }
     }
+    // Erst am Ende prüfen, ob die Teile im Spielfeld liegen: Dessen Größe
+    // steht in den Kopfzeilen, die in einer Datei von Hand auch weiter
+    // unten stehen könnten.
+    const float half = MapHalf(m);
+    m.pieces.erase(std::remove_if(m.pieces.begin(), m.pieces.end(),
+                                  [&](const MapPiece& p) { return fabsf(p.x) > half || fabsf(p.z) > half; }),
+                   m.pieces.end());
     out = std::move(m);
     return true;
 }
@@ -182,8 +390,8 @@ std::string MapFileStem(const std::string& name) {
 }
 
 float MapPieceY(const MapPiece& p) {
-    BoundingBox b = ModelBounds(ModelId(p.model));
-    float y = std::max(0.0f, -b.min.y * p.scale);
+    BoundingBox b = SegmentBounds(p.model);
+    float y = p.lift + std::max(0.0f, -b.min.y * p.scale);
     if (b.max.y - b.min.y < 0.01f) y += 0.03f;
     return y;
 }

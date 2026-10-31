@@ -74,7 +74,8 @@ float FogAmount(vec3 p) {
     float dist = length(p.xz - fogCenter.xz) + (n - 0.5) * fogParams.y * 0.4;
     float f = smoothstep(fogParams.x, fogParams.y, dist);
     // auch nah am Schiff ein leichter Schleier, der mit den Schwaden wogt
-    f = max(f, 0.18 * n);
+    // (nicht beim Dunst der Einsatzkarten: dort ist die Zeit w negativ)
+    if (fogParams.w >= 0.0) f = max(f, 0.18 * n);
     return clamp(f, 0.0, 1.0) * fogParams.z;
 }
 )";
@@ -95,6 +96,9 @@ void EndShadowPass();
 // Einmal pro World::Draw: stellt den Nebel für dieses Bild ein (amount 0 =
 // aus, sonst 0..1 aus den Optionen), center = Mitte der klaren Zone.
 void SetFog(Vector3 center, float amount, float time);
+// Statt SetFog in einer Einsatzkarte (Render.cpp): ruhiger Dunst in der Farbe
+// des Himmels, klar bis near Meter um center, ab far mit der Stärke k (0..1).
+void SetHaze(Vector3 center, Color color, float near, float far, float k);
 // Wie sichtbar ein Punkt im Sandsturm dieses Bildes ist (1 = klar, 0 = im
 // Staub verschwunden; ohne die Schwaden). Ohne Sandsturm immer 1.
 float Visibility(Vector3 p);

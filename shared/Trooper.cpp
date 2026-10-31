@@ -560,7 +560,7 @@ void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
     }
     t.vel.y -= cfg::MOON_GRAVITY * dt;
     t.pos = Vector3Add(t.pos, Vector3Scale(t.vel, dt));
-    const float lim = cfg::WORLD_HALF - 2.0f;
+    const float lim = fieldHalf - (instance ? 0.3f : 2.0f);
     t.pos.x = std::clamp(t.pos.x, -lim, lim);
     t.pos.z = std::clamp(t.pos.z, -lim, lim);
 
@@ -839,25 +839,35 @@ void World::SpawnMate(const Trooper& leader, int slot, Vector3 pos, float yaw) {
 // zufälligen gelben Kristall, der mindestens GROUND_PIRATE_SPAWN_DIST vom
 // Team entfernt ist und noch keine Gruppe hat. Gibt es keinen, ein
 // zufälliger Punkt 60 bis 140 m vom Team. false = kein Platz gefunden.
+// Einsatzkarte: an einem freien Gegner-Startplatz (enemySpots), sonst wie
+// oben, nur mit kürzeren Abständen.
 bool World::SpawnPirateGroup(Vector3 team) {
+    const float spacing = instance ? 6.0f : 20.0f;   // Abstand zur nächsten Gruppe
     auto taken = [&](Vector3 p) {
         for (const Trooper& o : troopers)
-            if (o.kind == TrooperKind::Pirate && o.playerId < 0 && Dist2D(o.home, p) < 20.0f) return true;
+            if (o.kind == TrooperKind::Pirate && o.playerId < 0 && Dist2D(o.home, p) < spacing) return true;
         return false;
     };
+    // Einsatzkarte: zuerst die Gegner-Startplätze aus dem Editor, das kleine
+    // Spielfeld erlaubt nur einen kürzeren Abstand zum Team.
+    const float minDist = instance ? std::min(cfg::GROUND_PIRATE_SPAWN_DIST, fieldHalf * 0.5f) : cfg::GROUND_PIRATE_SPAWN_DIST;
     std::vector<Vector3> spots;
-    for (const Deposit& d : deposits)
-        if (d.sample == Sample::Yellow && d.amount > 0 && Dist2D(d.pos, team) >= cfg::GROUND_PIRATE_SPAWN_DIST && !taken(d.pos))
-            spots.push_back(d.pos);
+    for (const Vector3& e : enemySpots)
+        if (Dist2D(e, team) >= minDist && !taken(e)) spots.push_back(e);
+    if (spots.empty())
+        for (const Deposit& d : deposits)
+            if (d.sample == Sample::Yellow && d.amount > 0 && Dist2D(d.pos, team) >= minDist && !taken(d.pos))
+                spots.push_back(d.pos);
     Vector3 c{};
     if (!spots.empty()) {
         c = spots[static_cast<size_t>(RandInt(0, static_cast<int>(spots.size()) - 1))];
     } else {
         bool found = false;
         for (int tries = 0; tries < 20 && !found; ++tries) {
-            const float a = Rand(-PI, PI), r = Rand(cfg::GROUND_PIRATE_SPAWN_DIST, 140.0f);
+            const float a = Rand(-PI, PI), r = Rand(minDist, instance ? 2.0f * fieldHalf : 140.0f);
             c = {team.x + cosf(a) * r, 0.0f, team.z + sinf(a) * r};
-            found = fabsf(c.x) < cfg::WORLD_HALF - 10.0f && fabsf(c.z) < cfg::WORLD_HALF - 10.0f && !taken(c) &&
+            const float lim = fieldHalf - (instance ? 2.0f : 10.0f);
+            found = fabsf(c.x) < lim && fabsf(c.z) < lim && !taken(c) &&
                     !TrooperBlocked({c.x, 0.3f, c.z});
         }
         if (!found) return false;

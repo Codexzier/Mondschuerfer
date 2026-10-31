@@ -58,9 +58,18 @@ GateLook HomeLook(float t) {
 
 } // namespace
 
+// Das zuletzt gewählte Ziel bleibt, solange es die Einsatzkarte noch gibt.
 void CommandCenterScreen::Open(World& w) {
     w.BuildStargates();
-    hasGate_ = !w.stargates.empty();
+    moonGate_ = !w.stargates.empty();
+    const std::string last = TargetStem();
+    targets_.clear();
+    for (const MapFileInfo& m : ListMaps())
+        if (m.kind == MapKind::Mission) targets_.push_back(m);
+    target_ = 0;
+    for (size_t i = 0; i < targets_.size(); ++i)
+        if (!last.empty() && targets_[i].stem == last) target_ = static_cast<int>(i) + 1;
+    hasGate_ = target_ > 0 || moonGate_;
     PlayerState& me = w.Me();
     ended_ = me.sgEnded;
     me.sgEnded = 0;
@@ -97,6 +106,7 @@ void CommandCenterScreen::DrawScene(const World& w) {
     g_assets.SetCamera(cam.position);
     g_assets.SetShadow(MatrixIdentity(), fx::kShadowSlot, 0.0f, 0.0f);
     fx::SetFog(cam.target, 0.0f, time_);
+    g_assets.SetLight({1.0f, 1.0f, 1.0f});
     fx::SetScreenFlash(0.0f);
     const Vector4 lightPos[4] = {{0.0f, 2.1f, -5.6f, 11.0f},
                                  {0.0f, 4.0f, 1.0f, 15.0f},
@@ -215,8 +225,9 @@ CommandAction CommandCenterScreen::Draw(World& w) {
     y += 12 * s;
     Text("AUFTRAG", x, y, 18 * s, MUTED);
     y += 26 * s;
+    const MapFileInfo* mission = target_ > 0 ? &targets_[static_cast<size_t>(target_ - 1)] : nullptr;
     const std::string brief[] = {
-        "Durch das Stargate auf den Mond.",
+        mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
         TextFormat("Sammle %d Proben an gelben Kristallen.", cfg::SAMPLE_GOAL),
         "Dann wählt ein Stargate in der Nähe an:",
         "die Treppe hinauf und hindurch.",
@@ -230,13 +241,21 @@ CommandAction CommandCenterScreen::Draw(World& w) {
     Text(TextFormat("Punkte: Probe %d · Pirat %d · Rückkehr %d", cfg::SG_POINTS_SAMPLE, cfg::SG_POINTS_PIRATE,
                     cfg::SG_POINTS_RETURN),
          x, y, 16 * s, MUTED);
+    y += 24 * s;
+    if (mission)
+        Text(TextFormat("Einsatzkarte: %s · %d m · %s", MapThemeName(mission->theme), mission->size, MapSkyName(mission->sky)),
+             x, y, 16 * s, ACCENT);
+    else if (!targets_.empty())
+        Text("Mondkarte: gemeinsam mit den Piloten", x, y, 16 * s, MUTED);
 
+    // Ziel: Mondkarte, dann die Einsatzkarten der Reihe nach (wie "Kameraden")
     const float bh = 50 * s, gap = 10 * s;
-    const float listTop = lp.y + lp.height - 18 * s - 4 * bh - 3 * gap;
+    const float listTop = lp.y + lp.height - 18 * s - 5 * bh - 4 * gap;
     if (!hasGate_) Text("Auf dieser Karte steht kein Stargate.", x, listTop - 30 * s, 18 * s, BAD);
-    const std::vector<std::string> items = {"Tor anwählen", TextFormat("Kameraden: %d", me.sgMates), "Als Pilot spielen",
-                                            "Speichern & zum Hauptmenü"};
-    const std::vector<bool> enabled = {hasGate_ && !dialing, !dialing, !dialing, !dialing};
+    const std::string goal = mission ? mission->name : std::string("Mondkarte (gemeinsam)");
+    const std::vector<std::string> items = {"Tor anwählen", "Ziel: " + goal, TextFormat("Kameraden: %d", me.sgMates),
+                                            "Als Pilot spielen", "Speichern & zum Hauptmenü"};
+    const std::vector<bool> enabled = {hasGate_ && !dialing, !dialing && !targets_.empty(), !dialing, !dialing, !dialing};
     int c = ButtonList(items, enabled, sel_, lp.x + pw * 0.5f, listTop, iw, bh, gap, 22 * s);
     if (!live) c = -1;
     CommandAction action = CommandAction::None;
@@ -245,11 +264,15 @@ CommandAction CommandCenterScreen::Draw(World& w) {
         ended_ = 0;
         g_audio.Play(Sfx::ScanOn);
     } else if (c == 1) {
-        me.sgMates = (me.sgMates + 1) % (cfg::SG_MATES_MAX + 1);
+        target_ = (target_ + 1) % (static_cast<int>(targets_.size()) + 1);
+        hasGate_ = target_ > 0 || moonGate_;
         g_audio.Play(Sfx::UiConfirm);
     } else if (c == 2) {
-        action = CommandAction::Pilot;
+        me.sgMates = (me.sgMates + 1) % (cfg::SG_MATES_MAX + 1);
+        g_audio.Play(Sfx::UiConfirm);
     } else if (c == 3) {
+        action = CommandAction::Pilot;
+    } else if (c == 4) {
         action = CommandAction::SaveAndMenu;
     }
 

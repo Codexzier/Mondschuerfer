@@ -324,11 +324,17 @@ void ReadSettings(Reader& r, GameSettings& s) {
     Sanitize(s);   // ungültige Werte (z. B. von einem fremden Server) auf erlaubte Grenzen bringen
 }
 
-// Karte (GameMap ohne author): Name, Anzahl, je Teil 9 Bytes:
+// Karte (GameMap ohne author): Name, Kartenart, Thema, Kantenlänge, Boden,
+// Himmel (Version 10), Anzahl, je Teil 10 Bytes:
 //   Segment-Nummer (Stelle in MapSegments(), dort nur hinten anfügen!),
-//   x/z in cm (QPos), Drehung (QAngle), Größe in Tausendsteln.
+//   x/z in cm (QPos), Drehung (QAngle), Größe in Tausendsteln, Höhe in dm.
 void WriteMap(Writer& w, const GameMap& m) {
     w.Str(m.name);
+    w.U8(static_cast<uint8_t>(m.kind));
+    w.U8(static_cast<uint8_t>(m.theme));
+    w.U16(static_cast<uint16_t>(std::clamp(m.size, mapgrid::MISSION_SIZE_MIN, mapgrid::MISSION_SIZE_MAX)));
+    w.U8(static_cast<uint8_t>(m.ground));
+    w.U8(static_cast<uint8_t>(m.sky));
     const size_t n = std::min<size_t>(m.pieces.size(), mapgrid::MAX_PIECES);
     w.U16(static_cast<uint16_t>(n));
     const std::vector<MapSegment>& segs = MapSegments();
@@ -341,16 +347,31 @@ void WriteMap(Writer& w, const GameMap& m) {
         w.I16(QPos(p.z));
         w.U16(QAngle(p.yaw));
         w.U16(ClampRound<uint16_t>(p.scale * 1000.0f, 0.0f, 65535.0f));
+        w.U8(ClampRound<uint8_t>(p.lift * 10.0f, 0.0f, 255.0f));
     }
 }
 
 // Gleiche Grenzen wie MapFromText: bekanntes Segment, innerhalb der Karte,
-// Größe 0,2..20. Sonst ist die ganze Nachricht ungültig.
+// Größe 0,2..20, Höhe bis MAX_LEVEL Ebenen, bekannte Kopfwerte. Sonst ist
+// die ganze Nachricht ungültig.
 bool ReadMap(Reader& r, GameMap& m) {
     m = GameMap{};
     m.name = r.Str();
     for (char& ch : m.name)   // keine Zeilenumbrüche: der Name steht in der Kartendatei auf einer Zeile
         if (static_cast<unsigned char>(ch) < 0x20 || ch == 0x7F) ch = ' ';
+    const uint8_t kind = r.U8(), theme = r.U8();
+    const uint16_t size = r.U16();
+    const uint8_t ground = r.U8(), sky = r.U8();
+    if (kind > static_cast<uint8_t>(MapKind::Mission) || theme >= static_cast<uint8_t>(MapTheme::Count) ||
+        size < mapgrid::MISSION_SIZE_MIN || size > mapgrid::MISSION_SIZE_MAX ||
+        ground >= static_cast<uint8_t>(MapGround::Count) || sky >= static_cast<uint8_t>(MapSky::Count))
+        return false;
+    m.kind = static_cast<MapKind>(kind);
+    m.theme = static_cast<MapTheme>(theme);
+    m.size = size;
+    m.ground = static_cast<MapGround>(ground);
+    m.sky = static_cast<MapSky>(sky);
+    const float half = MapHalf(m);
     const uint16_t n = r.U16();
     if (n > mapgrid::MAX_PIECES) return false;
     const std::vector<MapSegment>& segs = MapSegments();
@@ -364,7 +385,10 @@ bool ReadMap(Reader& r, GameMap& m) {
         p.z = DPos(r.I16());
         p.yaw = DAngle(r.U16());
         p.scale = static_cast<float>(r.U16()) / 1000.0f;
-        if (fabsf(p.x) > cfg::WORLD_HALF || fabsf(p.z) > cfg::WORLD_HALF || p.scale < 0.2f || p.scale > 20.0f) return false;
+        p.lift = static_cast<float>(r.U8()) / 10.0f;
+        if (fabsf(p.x) > half || fabsf(p.z) > half || p.scale < 0.2f || p.scale > 20.0f ||
+            p.lift > mapgrid::MAX_LEVEL * mapgrid::LEVEL + 0.01f)
+            return false;
         m.pieces.push_back(p);
     }
     return r.ok();

@@ -226,6 +226,7 @@ uniform vec2 shadowParams;   // x = Stärke 0..1 (0 = aus), y = Größe eines Bi
 uniform vec4 flashPos[4];
 uniform vec3 flashColor[4];
 uniform vec3 fogColor;
+uniform vec3 lightTint;
 out vec4 finalColor;
 )";
 
@@ -254,10 +255,10 @@ void main() {
     float diff = max(dot(n, l), 0.0) * (1.0 - Shadow(n, l));
     float sky = 0.5 + 0.5 * n.y;
     vec3 base = colDiffuse.rgb * texel.rgb * fragColor.rgb;
-    vec3 col = base * (0.36 + 0.16 * sky + 0.62 * diff);
+    vec3 col = base * (0.36 + 0.16 * sky + 0.62 * diff) * lightTint;
     vec3 v = normalize(viewPos - fragPosition);
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
-    col += vec3(0.10, 0.12, 0.16) * rim;
+    col += vec3(0.10, 0.12, 0.16) * rim * lightTint;
     for (int i = 0; i < 4; ++i) {
         if (flashPos[i].w <= 0.0) continue;
         vec3 dl = flashPos[i].xyz - fragPosition;
@@ -331,6 +332,7 @@ bool Assets::Init() {
     locFogColor_ = GetShaderLocation(lit_, "fogColor");
     locFogCenter_ = GetShaderLocation(lit_, "fogCenter");
     locFogParams_ = GetShaderLocation(lit_, "fogParams");
+    locLightTint_ = GetShaderLocation(lit_, "lightTint");
     // Richtung, in die das Sonnenlicht fällt: steil von oben, leicht schräg.
     // Die Sonne steht damit oben, etwas rechts (+X) und auf der Seite der
     // Spielkamera (+Z; die Kamera schaut von +Z nach -Z, siehe main.cpp).
@@ -342,6 +344,7 @@ bool Assets::Init() {
     SetShadow(MatrixIdentity(), 0, 0.0f, 0.0f);
     SetFlashes(nullptr, nullptr, 0);
     SetFog({0, 0, 0}, {0, 0, 0}, {0, 0, 0, 0});
+    SetLight({1.0f, 1.0f, 1.0f});
     ready_ = true;
     return true;
 }
@@ -451,6 +454,8 @@ void Assets::SetFlashes(const Vector4* pos, const Vector3* color, int count) {
     SetShaderValueV(lit_, locFlashPos_, p, SHADER_UNIFORM_VEC4, 4);
     SetShaderValueV(lit_, locFlashColor_, c, SHADER_UNIFORM_VEC3, 4);
 }
+
+void Assets::SetLight(Vector3 tint) { SetShaderValue(lit_, locLightTint_, &tint, SHADER_UNIFORM_VEC3); }
 
 void Assets::SetFog(Vector3 center, Vector3 color, Vector4 params) {
     SetShaderValue(lit_, locFogCenter_, &center, SHADER_UNIFORM_VEC3);

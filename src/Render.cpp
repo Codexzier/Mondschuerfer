@@ -595,7 +595,33 @@ void DrawGroundStones(const World& w, Vector3 center, Vector3 camPos, float radi
     g_assets.EndLit();
 }
 
+// Licht, Himmel und Dunst der Einsatzkarten (World::instance), je MapSky:
+// Farbe des Himmels (Hintergrund), des Dunstes, der die Ferne in den Himmel
+// übergehen lässt (ab near Meter, voll bei far, Stärke k), und die Farbe des
+// Lichts auf allen Modellen (Assets::SetLight).
+struct SkyLook {
+    Color sky, haze;
+    float near, far, k;
+    Vector3 light;
+};
+const SkyLook kSkies[] = {
+    {{140, 184, 226, 255}, {178, 202, 224, 255}, 40.0f, 150.0f, 0.75f, {1.0f, 1.0f, 1.0f}},       // Tag
+    {{222, 146, 108, 255}, {206, 148, 120, 255}, 30.0f, 120.0f, 0.8f, {1.0f, 0.8f, 0.66f}},       // Abend
+    {{12, 16, 32, 255}, {14, 18, 34, 255}, 12.0f, 60.0f, 0.92f, {0.42f, 0.5f, 0.78f}},            // Nacht
+};
+const SkyLook& SkyOf(MapSky s) { return kSkies[std::clamp(static_cast<int>(s), 0, 2)]; }
+
+// Bodenfarbe je MapGround als Faktor auf die graue Bodenplatte (terrain)
+const Color kGrounds[] = {
+    {136, 202, 89, 255},    // Gras
+    {178, 135, 91, 255},    // Erde
+    {190, 188, 172, 255},   // Stein
+    {252, 223, 155, 255},   // Sand
+};
+
 } // namespace
+
+Color World::ClearColor() const { return instance ? SkyOf(mapSky).sky : Color{14, 17, 26, 255}; }
 
 // Das Wurmloch eines Stargates (Welt und Command Center). Der Ring der
 // Kit-Modelle gate_simple/gate_complex hat seine Mitte 0,585 über dem
@@ -662,8 +688,16 @@ void World::Draw(const Camera3D& cam) const {
     // --- Grafikeffekte dieses Bildes (Optionen → Grafik, Effects.hpp) ------------
     // Sandsturm nur mit den Kameraeffekten (nicht im Karteneditor) und nicht in
     // der Übersicht des Zuschauers (dort wäre die ganze Karte im Staub).
+    // Einsatzkarte: statt des Sandsturms der Dunst und das Licht ihres Himmels.
     const float sand = tiltshift::Active() && cullR < 200.0f ? g_clientConfig.sandstorm : 0.0f;
-    fx::SetFog(focus, sand, time);
+    if (instance) {
+        const SkyLook& sk = SkyOf(mapSky);
+        fx::SetHaze(focus, sk.haze, sk.near, sk.far, sk.k);
+        g_assets.SetLight(sk.light);
+    } else {
+        fx::SetFog(focus, sand, time);
+        g_assets.SetLight({1.0f, 1.0f, 1.0f});
+    }
     // Treffer-Aufblitzen: Jede Explosion leuchtet kurz als Punktlicht (die
     // vier neuesten in Sichtweite), das Schiffe, Boden und Stationen in der
     // Nähe anstrahlt. Helligkeit k² fällt in 0,45 s von 1 auf 0. Explodiert
@@ -704,13 +738,23 @@ void World::Draw(const Camera3D& cam) const {
     //      Rand), heller, damit man sieht, wo das Spielfeld endet.
     // Der tint wird mit der (umgefärbten) Gesteinsfarbe multipliziert.
     // Beim orangefarbenen Mond (Originalfarbe) den Boden kaum abdunkeln
-    g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), orangeMoon ? Color{150, 140, 136, 255} : Color{120, 120, 128, 255});
-    g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, cfg::WORLD_HALF * 2.0f + 30.0f),
-                  orangeMoon ? Color{225, 218, 214, 255} : Color{176, 176, 184, 255});
+    // Einsatzkarte: in der Farbe ihres Bodens, das Spielfeld (fieldHalf) etwas heller.
+    if (instance) {
+        const Color g = kGrounds[std::clamp(static_cast<int>(mapGround), 0, 3)];
+        const Color dark{static_cast<unsigned char>(g.r * 0.8f), static_cast<unsigned char>(g.g * 0.8f),
+                         static_cast<unsigned char>(g.b * 0.8f), 255};
+        g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), dark);
+        g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, fieldHalf * 2.0f + 1.0f), g);
+    } else {
+        g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), orangeMoon ? Color{150, 140, 136, 255} : Color{120, 120, 128, 255});
+        g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, cfg::WORLD_HALF * 2.0f + 30.0f),
+                      orangeMoon ? Color{225, 218, 214, 255} : Color{176, 176, 184, 255});
+    }
     // Bodensteine (Optionen → Grafik): Stufe 1 nur zu Fuß (28 m um den
     // Blickpunkt), Stufe 2 auch aus dem Schiff (70 m; aber wie der Sandsturm
     // nicht im Karteneditor und nicht in der Übersicht des Zuschauers).
-    const int stoneLevel = g_clientConfig.groundStones;
+    // Einsatzkarten haben keine Mondsteine.
+    const int stoneLevel = instance ? 0 : g_clientConfig.groundStones;
     if (stoneLevel >= 1 && me.role == PlayerRole::Trooper)
         DrawGroundStones(*this, focus, cam.position, 28.0f);
     else if (stoneLevel >= 2 && tiltshift::Active() && cullR < 200.0f)
