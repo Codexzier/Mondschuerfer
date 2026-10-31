@@ -26,7 +26,8 @@
 //     öffnet das Fenster, lädt Grafik (g_assets) und Ton (g_audio) und läuft
 //     dann in der Hauptschleife, bis das Fenster geschlossen wird.
 //   - Die Klasse App verwaltet die Bildschirme (enum Screen): Hauptmenü,
-//     Einzelspiel, Pause, Optionen, Simulation, Mehrspieler und
+//     Rollenwahl, Einzelspiel, Command Center (src/CommandCenter.hpp),
+//     Pause, Optionen, Simulation, Mehrspieler und
 //     Karteneditor (src/MapEditor.hpp). Sie
 //     entscheidet jedes Frame, was gerechnet, abgespielt (Effekte, Musik)
 //     und gezeichnet wird.
@@ -81,6 +82,7 @@
 #include "Audio.hpp"
 #include "ClientConfig.hpp"
 #include "ClipPlayer.hpp"
+#include "CommandCenter.hpp"
 #include "Controls.hpp"
 #include "Effects.hpp"
 #include "Hud.hpp"
@@ -110,7 +112,12 @@ namespace {
 
 // Die Bildschirme des Spiels. Pro Frame ist genau einer aktiv (App::screen_).
 //   Menu        Hauptmenü, dahinter fliegt der Autopilot in einer Zufallswelt
-//   Playing     Einzelspiel (auch angedockt und auf den Endbildschirmen)
+//   Roles       Rollenwahl nach "Neues Spiel"/"Fortsetzen": Pilot oder SG-Team
+//               (die neue Welt steht still, die Kamera kreist wie im Menü)
+//   Playing     Einzelspiel (auch angedockt, auf den Endbildschirmen und als
+//               SG-Team im Einsatz)
+//   Command     Command Center des SG-Teams (CommandCenterScreen), die Welt
+//               steht still
 //   Paused      Einzelspiel angehalten, Pausenmenü
 //   Options     Optionen (Musik, Steuerung), geöffnet aus dem Hauptmenü oder
 //               aus der Pause; App::optionsReturn_ merkt sich, wohin "Zurück"
@@ -120,7 +127,7 @@ namespace {
 //   Multiplayer alles erledigt das MultiplayerScreen-Objekt (die Optionen
 //               der Mehrspieler-Pause auch)
 //   Editor      Karteneditor, alles erledigt das MapEditorScreen-Objekt
-enum class Screen { Menu, Playing, Paused, Options, Simulation, Multiplayer, Editor };
+enum class Screen { Menu, Playing, Paused, Options, Simulation, Multiplayer, Editor, Roles, Command };
 
 // Optionen für automatisierte Tests (Kommandozeile), im normalen Spiel ohne Bedeutung.
 // Zeiten beziehen sich auf die Spielzeit seit dem Start (App::elapsed_).
@@ -246,7 +253,12 @@ public:
 
         switch (screen_) {
             case Screen::Menu: UpdateMenuWorld(dt); break;
+            case Screen::Roles:
+                menuOrbit_ += dt * 0.06f;
+                ++roleFrames_;
+                break;
             case Screen::Playing: UpdatePlaying(dt); break;
+            case Screen::Command: command_.Update(dt); break;
             // Pause: die Welt steht still. pauseFrames_ zählt nur, damit der
             // ESC-Druck, der die Pause geöffnet hat, sie nicht sofort wieder
             // schließt (siehe DrawPause).
@@ -295,10 +307,12 @@ public:
     // der Lautstärkeregler noch gezogen wurde).
     void OnExit() {
         mp_.reset();   // Mehrspieler: beim Server abmelden (er speichert den Fortschritt)
-        const bool inGame = screen_ == Screen::Playing || screen_ == Screen::Paused ||
+        const bool inGame = screen_ == Screen::Playing || screen_ == Screen::Paused || screen_ == Screen::Command ||
                             (screen_ == Screen::Options && optionsReturn_ == Screen::Paused);
         if (inGame && world_.outcome == Outcome::None && world_.PlayerAlive()) {
-            world_.EndTrooper(world_.Me());   // zu Fuß: erst einsteigen (der Spielstand kennt nur das Schiff)
+            // Ein laufender SG-Einsatz wird verworfen (der Spielstand kennt nur
+            // die Rolle und die beendeten Einsätze)
+            world_.EndSgMission(world_.Me(), false, false);
             SaveGame(world_);
         }
         g_clientConfig.SaveIfChanged();
@@ -395,6 +409,45 @@ private:
         } else {
             hasSave_ = false;
             g_audio.Play(Sfx::Denied);
+        }
+    }
+
+    // Rollenwahl öffnen (nach NewGame bzw. Continue aus dem Hauptmenü; die
+    // Testläufe mit --mode starten ohne sie als Pilot). Vorausgewählt ist die
+    // Rolle beim letzten Speichern.
+    void OpenRoles() {
+        screen_ = Screen::Roles;
+        roleSel_ = world_.Me().lastRole == PlayerRole::Trooper ? 1 : 0;
+        roleFrames_ = 0;
+    }
+
+    // Ins Command Center (Rollenwahl SG-Team, nach einem Einsatz, Knopf an
+    // der Handelsstation). Die Rolle ist dann schon SG-Team (World::SetRole).
+    void OpenCommand() {
+        screen_ = Screen::Command;
+        command_.Open(world_);
+        controls_.Reset();
+    }
+
+    // Was im Command Center gewählt wurde (CommandCenterScreen::Draw)
+    void HandleCommand(CommandAction a) {
+        PlayerState& me = world_.Me();
+        if (a == CommandAction::Mission) {
+            // Durch das Stargate: Ankunft an einem Tor der Mondkarte
+            if (world_.StartSgMission(me, me.sgMates)) {
+                screen_ = Screen::Playing;
+                if (const Trooper* t = world_.FindTrooper(me.trooperId)) camTarget_ = t->pos;
+            } else {
+                g_audio.Play(Sfx::Denied);
+            }
+        } else if (a == CommandAction::Pilot) {
+            g_audio.Play(Sfx::UiConfirm);
+            world_.SetRole(me, PlayerRole::Pilot);
+            screen_ = Screen::Playing;
+            camTarget_ = world_.Player().pos;
+        } else if (a == CommandAction::SaveAndMenu) {
+            SaveGame(world_);
+            BackToMenu();
         }
     }
 
@@ -574,11 +627,18 @@ private:
                 g_audio.Play(Sfx::PauseOpen);
                 return;
             }
-            // Zu Fuß: Ego-Steuerung (TrooperControls), das Schiff wartet versteckt.
+            // Zu Fuß (SG-Einsatz): Ego-Steuerung (TrooperControls), das Schiff
+            // wartet versteckt. Ist der Einsatz zu Ende (zurück durch das
+            // Stargate oder gescheitert), automatisch speichern und zurück ins
+            // Command Center.
             if (OnFoot()) {
                 const Trooper* t = world_.FindTrooper(world_.Me().trooperId);
                 world_.Me().trooperInput = t ? trooperControls_.Read(t->yaw, t->pitch, dt) : TrooperInput{};
                 world_.Update(dt, ShipInput{});
+                if (world_.Me().trooperId < 0) {
+                    if (world_.outcome == Outcome::None) SaveGame(world_);
+                    OpenCommand();
+                }
                 return;
             }
             // Tastatur, Maus und Controller. Scanner und Interagieren kommen
@@ -622,11 +682,13 @@ private:
     //     JEDES Frame laufen (auch im Menü, dann mit allem auf 0 = ausblenden).
     //   - Musik: SetMusicTrack wählt die Musik für den aktuellen Bildschirm,
     //     g_audio.Update blendet beim Wechsel über (Audio.cpp, MusicMix.hpp).
-    //     Menümusik im Hauptmenü und in den Optionen daraus, Spielmusik im
-    //     Spiel, in der Pause (auch in deren Optionen), auf den
-    //     Endbildschirmen und in der Simulation – dort, solange die eigene
-    //     Piraten-Mission läuft, die Piratenmusik. Die Zielmusik stößt
-    //     UpdatePlaying beim Sieg an (PlayGoalMusic).
+    //     Menümusik im Hauptmenü, in den Optionen daraus und in der
+    //     Rollenwahl, Spielmusik im Spiel, in der Pause (auch in deren
+    //     Optionen), auf den Endbildschirmen und in der Simulation – dort,
+    //     solange die eigene Piraten-Mission läuft, die Piratenmusik. Die
+    //     Musik "Stargate" im Command Center und im Einsatz rund um das Tor
+    //     (StargateMusic). Die Zielmusik stößt UpdatePlaying beim Sieg an
+    //     (PlayGoalMusic).
     // ========================================================================
     void UpdateAudio(float dt) {
         if (screen_ == Screen::Multiplayer) {
@@ -656,7 +718,9 @@ private:
         // Menü/in der Pause) leeren, sonst kämen sie im nächsten Frame wieder.
         world_.sounds.clear();
         MusicTrack track = MusicTrack::Menu;
-        if (!MenuBackground() && screen_ != Screen::Editor) {
+        if (screen_ == Screen::Command || StargateMusic()) {
+            track = MusicTrack::Stargate;
+        } else if (!MenuBackground() && screen_ != Screen::Editor && screen_ != Screen::Roles) {
             const Mission* m = world_.FindMission(world_.Me().mission);
             track = m && m->type == MissionType::Pirates ? MusicTrack::Pirates : MusicTrack::Game;
         }
@@ -673,6 +737,19 @@ private:
             showClip = screen_ == Screen::Playing && me.dockedAt < 0;
         }
         g_clip.Update(dt, cue, showClip);
+    }
+
+    // Musik "Stargate" im Einsatz: in den ersten 10 s nach der Ankunft und
+    // solange ein Stargate für die eigene Rückkehr angewählt wird oder offen ist.
+    bool StargateMusic() const {
+        if (!OnFoot() || MenuBackground()) return false;
+        const PlayerState& me = world_.Me();
+        const Trooper* t = world_.FindTrooper(me.trooperId);
+        if (!t) return false;
+        if (t->age < 10.0f) return true;
+        for (const Stargate& g : world_.stargates)
+            if (g.toCommand && g.playerId == me.id && (g.state == GateState::Dialing || g.state == GateState::Open)) return true;
+        return false;
     }
 
     // ========================================================================
@@ -692,8 +769,9 @@ private:
     // aufgeholt. Gezielt wird auf den Boden (y = 0) unter dem Schiff.
     // ========================================================================
     void UpdateCamera(float dt) {
-        // eigene Kameras in MultiplayerScreen::Update bzw. MapEditorScreen::Update
-        if (screen_ == Screen::Multiplayer || screen_ == Screen::Editor) return;
+        // eigene Kameras in MultiplayerScreen::Update, MapEditorScreen::Update
+        // bzw. im Command Center (CommandCenter.cpp)
+        if (screen_ == Screen::Multiplayer || screen_ == Screen::Editor || screen_ == Screen::Command) return;
         const Ship& p = world_.Player();
         // Zu Fuß folgt camTarget_ der Figur (Zuhörer für die Töne, Kamera beim Einsteigen)
         const Trooper* foot = OnFoot() ? world_.FindTrooper(world_.Me().trooperId) : nullptr;
@@ -706,8 +784,8 @@ private:
         cam_.up = {0, 1, 0};
         cam_.fovy = 45.0f;
         cam_.projection = CAMERA_PERSPECTIVE;
-        if (MenuBackground()) {
-            // Hauptmenü: Kreisbahn mit Radius 52 in 34 Einheiten Höhe
+        if (MenuBackground() || screen_ == Screen::Roles) {
+            // Hauptmenü und Rollenwahl: Kreisbahn mit Radius 52 in 34 Einheiten Höhe
             float r = 52.0f;
             cam_.target = camTarget_;
             cam_.position = {camTarget_.x + sinf(menuOrbit_) * r, 34.0f, camTarget_.z + cosf(menuOrbit_) * r};
@@ -769,6 +847,16 @@ private:
             if (editor_->WantsMenu()) BackToMenu();
             return;
         }
+        if (screen_ == Screen::Command) {
+            // Das Command Center zeichnet seine eigene Kulisse (ohne Tilt-Shift)
+            BeginDrawing();
+            ClearBackground(Color{8, 10, 14, 255});
+            const CommandAction a = command_.Draw(world_);
+            ui::DrawPointer();
+            EndDrawing();
+            HandleCommand(a);
+            return;
+        }
         BeginDrawing();
         ClearBackground(Color{14, 17, 26, 255});
         // Ego-Ansicht zu Fuß: ohne Tilt-Shift und Retro-Pixel, nahe Clip-Ebene
@@ -789,7 +877,9 @@ private:
         if (opt_.noHud) { EndDrawing(); return; }
         switch (screen_) {
             case Screen::Menu: DrawMenu(); break;
+            case Screen::Roles: DrawRoles(); break;
             case Screen::Playing: DrawPlaying(); break;
+            case Screen::Command: break;       // oben behandelt
             case Screen::Paused:
                 DrawHud(world_, cam_, false);
                 DrawPause();
@@ -843,10 +933,13 @@ private:
             case 0:
                 // Gibt es eigene Karten, erst die Karte wählen (DrawMapPicker)
                 mapList_.Refresh();
-                if (mapList_.Maps().empty()) NewGame();
+                if (mapList_.Maps().empty()) { NewGame(); OpenRoles(); }
                 else pickMap_ = true;
                 break;
-            case 1: Continue(); break;
+            case 1:
+                Continue();
+                if (screen_ == Screen::Playing) OpenRoles();
+                break;
             case 2: EnterMultiplayer(MultiplayerOptions{}); break;
             case 3: EnterEditor(); break;
             case 4: StartSimulation(); break;
@@ -890,9 +983,67 @@ private:
             pickMap_ = false;
             g_audio.Play(Sfx::UiConfirm);
             NewGame(i >= 0 ? mapList_.Maps()[static_cast<size_t>(i)].stem : std::string());
+            OpenRoles();
         } else if (back || ui::BackPressed()) {
             pickMap_ = false;
             g_audio.Play(Sfx::UiBack);
+        }
+    }
+
+    // Rollenwahl über der stehenden neuen Welt: zwei Karten nebeneinander,
+    // Pilot und SG-Team. Klick, Pfeiltasten/A/D bzw. Steuerkreuz und Enter
+    // bzw. Controller-A; ESC führt zurück ins Hauptmenü (ohne zu speichern).
+    // Bedienbar erst zwei Frames nach dem Öffnen (der Klick aus dem Menü).
+    void DrawRoles() {
+        const float s = Scale();
+        const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+        DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
+        const bool live = roleFrames_ > 1;
+        TextCentered("WIE WILLST DU SPIELEN?", W * 0.5f, H * 0.14f, 52 * s, ACCENT);
+        TextCentered("Die Rolle lässt sich später wechseln: im Command Center und an der Handelsstation.", W * 0.5f,
+                     H * 0.14f + 66 * s, 20 * s, MUTED);
+        struct Card {
+            const char* title;
+            const char* sub;
+            std::string lines[3];
+        };
+        const Card cards[2] = {
+            {"PILOT", "Mit dem Raumschiff",
+             {"Kristalle scannen, abbauen und verkaufen,", "das Schiff aufrüsten, Missionen fliegen.",
+              "Ziel: 100.000 Ressourcenpunkte."}},
+            {"SG-TEAM", "Zu Fuß durch das Stargate",
+             {"Start im Command Center mit Team SG1.",
+              TextFormat("%d Proben an gelben Kristallen sammeln", cfg::SAMPLE_GOAL),
+              "und durch ein Stargate zurückkehren."}},
+        };
+        const float cw = 460 * s, ch = 250 * s, gap = 40 * s;
+        const float y = H * 0.5f - ch * 0.5f;
+        int pick = -1;
+        for (int i = 0; i < 2; ++i) {
+            const Rectangle r{W * 0.5f - cw - gap * 0.5f + i * (cw + gap), y, cw, ch};
+            if (Button(r, "", 20 * s, roleSel_ == i) && live) pick = i;
+            const Card& c = cards[i];
+            Text(c.title, r.x + 28 * s, r.y + 26 * s, 40 * s, roleSel_ == i ? ACCENT : TEXT);
+            Text(c.sub, r.x + 28 * s, r.y + 76 * s, 22 * s, MUTED);
+            for (int l = 0; l < 3; ++l) Text(c.lines[l], r.x + 28 * s, r.y + 124 * s + l * 30 * s, 20 * s, TEXT);
+        }
+        if (live) {
+            if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT)) roleSel_ = 0;
+            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) roleSel_ = 1;
+            if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) pick = roleSel_;
+        }
+        TextCentered("Klick oder Pfeiltasten und Enter: wählen    ESC: zurück", W * 0.5f, y + ch + 30 * s, 20 * s, MUTED);
+        if (pick == 0) {
+            g_audio.Play(Sfx::UiConfirm);
+            world_.SetRole(world_.Me(), PlayerRole::Pilot);
+            controls_.Reset();
+            screen_ = Screen::Playing;
+        } else if (pick == 1) {
+            g_audio.Play(Sfx::UiConfirm);
+            world_.SetRole(world_.Me(), PlayerRole::Trooper);
+            OpenCommand();
+        } else if (live && BackPressed()) {
+            BackToMenu();
         }
     }
 
@@ -917,7 +1068,7 @@ private:
             // Bedienbar erst zwei Frames nach dem Andocken: Der F-Druck, der
             // angedockt hat, gilt im ganzen Frame als "gedrückt" und würde
             // sonst sofort wieder abdocken (F = Abdocken im Fenster).
-            DockRequest req = DrawDockPanel(world_, dockFrames_ > 1);
+            DockRequest req = DrawDockPanel(world_, dockFrames_ > 1, true);
             if (req.repair) world_.Repair();
             if (req.buy >= 0) world_.BuyUpgrade(req.buy);
             if (req.buyShip >= 0) world_.BuyShip(req.buyShip, req.tradeIn);
@@ -927,6 +1078,12 @@ private:
                 world_.Undock();
                 if (world_.outcome == Outcome::None) SaveGame(world_);
             }
+            // Handelsstation: "Als SG-Team spielen" (World::SetRole dockt ab)
+            if (req.toTeam) {
+                g_audio.Play(Sfx::UiConfirm);
+                world_.SetRole(world_.Me(), PlayerRole::Trooper);
+                OpenCommand();
+            }
         }
     }
 
@@ -935,10 +1092,11 @@ private:
     // BackPressed), aber erst zwei Frames nach dem Öffnen (siehe
     // pauseFrames_ in Frame), sonst würde derselbe Tastendruck sie öffnen und
     // gleich wieder schließen.
-    // Aufbau von oben: Überschrift, fünf Knöpfe, darunter die Tastenhilfe.
-    // Der zweite Knopf lässt zum Ausprobieren des Trupps (FPS-Modus) aus dem
-    // Schiff aussteigen bzw. wieder einsteigen. Gespeichert wird immer mit
-    // dem Schiff: "Speichern" steigt vorher ein.
+    // Aufbau von oben: Überschrift, die Knöpfe, darunter die Tastenhilfe.
+    // Im SG-Einsatz gibt es den zweiten Knopf "Einsatz abbrechen": Er zählt
+    // als gescheitert (Scoreboard) und führt ins Command Center.
+    // "Speichern & zum Hauptmenü" verwirft einen laufenden Einsatz (der
+    // Spielstand kennt nur die Rolle und die beendeten Einsätze).
     // Die Höhe des Fensters ergibt sich aus diesen Teilen (ControlsMaxHeight
     // aus Hud.hpp: Platz für die längste Tastenhilfe), damit Knöpfe und
     // Tastenhilfe sich nie überlappen und die Knöpfe beim Gerätewechsel
@@ -948,10 +1106,9 @@ private:
         const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
         DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
         const bool foot = OnFoot();
-        const bool canLeave = foot || (world_.PlayerAlive() && !world_.Player().hidden && world_.Me().dockedAt < 0 &&
-                                       world_.outcome == Outcome::None);
-        std::vector<std::string> items = {"Weiterspielen", foot ? "Ins Schiff einsteigen" : "Als SG-Team aussteigen", "Optionen",
-                                          "Speichern & zum Hauptmenü", "Hauptmenü ohne Speichern"};
+        std::vector<std::string> items = {"Weiterspielen"};
+        if (foot) items.push_back("Einsatz abbrechen");
+        items.insert(items.end(), {"Optionen", "Speichern & zum Hauptmenü", "Hauptmenü ohne Speichern"});
         const float bh = 54 * s, gap = 12 * s, listTop = 100 * s;   // Knöpfe (listTop relativ zur Oberkante)
         const float helpSize = 18 * s;
         // Tastenhilfe 26 px unter dem letzten Knopf: n Knöpfe belegen n * (bh + gap) - gap
@@ -960,22 +1117,23 @@ private:
         Rectangle r{W * 0.5f - 300 * s, H * 0.5f - ph * 0.5f, 600 * s, ph};
         Panel(r);
         TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);
-        int c = ButtonList(items, {true, canLeave, true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
+        int c = ButtonList(items, {}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
         if (pauseFrames_ > 1 && (BackPressed() || IsKeyPressed(KEY_P))) c = 0;
+        if (!foot && c > 0) ++c;   // ohne "Einsatz abbrechen": dieselben Nummern wie im Einsatz
         if (c == 0) {
             screen_ = Screen::Playing;
             g_audio.Play(Sfx::PauseClose);
         } else if (c == 1) {
-            if (foot) world_.EndTrooper(world_.Me());
-            else world_.StartTrooper(world_.Me());
-            controls_.Reset();
-            screen_ = Screen::Playing;
-            g_audio.Play(Sfx::PauseClose);
+            g_audio.Play(Sfx::UiConfirm);
+            world_.EndSgMission(world_.Me(), false);
+            if (world_.outcome == Outcome::None) SaveGame(world_);
+            OpenCommand();
+            return;
         } else if (c == 2) {
             g_audio.Play(Sfx::UiConfirm);
             OpenOptions(Screen::Paused);
             return;
-        } else if (c == 3) { world_.EndTrooper(world_.Me()); SaveGame(world_); BackToMenu(); return; }
+        } else if (c == 3) { world_.EndSgMission(world_.Me(), false, false); SaveGame(world_); BackToMenu(); return; }
         else if (c == 4) BackToMenu();
         DrawControls(r.x + 70 * s, r.y + helpTop, helpSize, OnFoot());
     }
@@ -1177,6 +1335,9 @@ private:
     int pauseFrames_ = 0;      // Frames seit dem Öffnen der Pause
     int menuSel_ = 0;          // per Tastatur gewählter Knopf im Hauptmenü
     int pauseSel_ = 0;         // ... im Pausenmenü
+    int roleSel_ = 0;          // ... in der Rollenwahl (0 Pilot, 1 SG-Team)
+    int roleFrames_ = 0;       // Frames seit dem Öffnen der Rollenwahl
+    CommandCenterScreen command_;             // Command Center des SG-Teams
     int dockFrames_ = 0;       // Frames seit dem Andocken
     bool hasSave_ = false;     // Spielstand vorhanden -> "Fortsetzen" aktiv
     bool quit_ = false;

@@ -41,13 +41,15 @@
 //            Zuschauen)
 //   Pirates  "Entering Pirate Territory": im Spiel, solange die eigene
 //            Mini-Mission "Piraten abschießen" läuft
+//   Stargate "Breathing Pulse": SG-Team im Command Center und im Einsatz
+//            rund um das Stargate (Ankunft, Anwahl zur Rückkehr)
 // Das erreichte Ziel ("Deep Space Horizon") ist kein eigener Wert: Es wird
 // einmal über Audio::PlayGoalMusic() angestoßen und läuft dann anstelle von
 // Game/Pirates bis zu seinem Ende.
-enum class MusicTrack { None = -1, Menu = 0, Game = 1, Pirates = 2 };
+enum class MusicTrack { None = -1, Menu = 0, Game = 1, Pirates = 2, Stargate = 3 };
 
 struct MusicMix {
-    static constexpr int kTracks = 6;         // Anzahl der Stücke (Tabelle kSongs in Audio.cpp)
+    static constexpr int kTracks = 7;         // Anzahl der Stücke (Tabelle kSongs in Audio.cpp)
     static constexpr float kFadeIn = 1.5f;    // Sekunden von stumm bis voll (Einblenden)
     static constexpr float kFadeOut = 1.0f;   // Sekunden von voll bis stumm (Ausblenden)
     // Grundpegel: Auch bei Regler 100 % spielt die Musik nur mit 70 % der

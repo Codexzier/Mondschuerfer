@@ -58,7 +58,7 @@ constexpr float SHIP_ALTITUDE = 3.2f;
 
 // Kartenanimation (shared/MapAnim.cpp, nur Kulisse ohne Einfluss aufs Spiel)
 constexpr int MAP_ROVERS = 14;            // zusätzliche fahrende Mondfahrzeuge in der Zufallskarte
-constexpr int MAP_GATES = 5;              // Tore in der Zufallskarte; jedes leuchtet einmal pro Minute auf
+constexpr int MAP_GATES = 5;              // Tore in der Zufallskarte (Stargates der SG-Teams)
 constexpr float TRACK_TIME_MAX = 300.0f;  // längste einstellbare Dauer der Fahrspuren in Sekunden (Optionen, Seite "Grafik")
 
 // Scanner (Taste E)
@@ -349,11 +349,10 @@ constexpr float TROOPER_BULLET_SPEED = 70.0f;
 constexpr float TROOPER_BULLET_LIFE = 1.2f;
 constexpr float TROOPER_REGEN_DELAY = 5.0f;   // so lange ohne Treffer, dann lädt sich der Schild wieder auf ...
 constexpr float TROOPER_REGEN = 10.0f;        // ... mit so viel pro Sekunde
-constexpr float TROOPER_RESPAWN = 5.0f;       // Spieler gefallen: nach so vielen Sekunden wieder am Ausstiegspunkt
+constexpr float TROOPER_RESPAWN = 5.0f;       // Spieler gefallen: nach so vielen Sekunden wieder am Ankunftstor
 // KI-Figuren (Ai.cpp): Kameraden des SG-Teams und Bodenpiraten. Bisher nur
-// im Einzelspieler; beide erscheinen beim Aussteigen und verschwinden beim
-// Einsteigen.
-constexpr int SP_MATES = 3;                   // NPC-Kameraden (bis zum Command Center fest)
+// im Einzelspieler; beide gibt es nur während eines Einsatzes.
+constexpr int SG_MATES_MAX = 3;               // NPC-Kameraden, im Command Center wählbar 0 bis 3
 constexpr float MATE_DAMAGE = 12.0f;
 constexpr float MATE_FIRE_INTERVAL = 0.35f;
 constexpr float MATE_SPREAD = 0.035f;         // Streuung der Schüsse (Bogenmaß)
@@ -375,6 +374,20 @@ constexpr float TROOPER_SIGHT = 30.0f;        // so weit sehen KI-Figuren ihre G
 constexpr float YELLOW_SHARE = 0.4f;          // Anteil gelber Lagerstätten (0 = keine)
 constexpr float SAMPLE_TIME = 3.0f;           // Sekunden E halten für eine Probe
 constexpr float SAMPLE_RANGE = 3.0f;          // so nah (m, waagerecht) muss die Figur an der Lagerstättenmitte stehen
-constexpr int SAMPLE_GOAL = 5;                // Proben je Team (Anzeige; das Ziel zählt erst mit dem Stargate)
+constexpr int SAMPLE_GOAL = 5;                // Proben je Team: dann öffnet sich ein Stargate für die Rückkehr
+// Stargates und Einsätze (Trooper.cpp, Command Center in src/CommandCenter.cpp).
+// Ein Tor wird 3 s angewählt, ist dann offen und schließt sich in 1 s.
+constexpr float GATE_DIAL = 3.0f;             // Anwahl (Command Center und Rückkehr)
+constexpr float GATE_CLOSE = 1.0f;            // Schließen
+constexpr float GATE_ARRIVE_MAX = 30.0f;      // Ankunft: spätestens dann schließt das Tor
+constexpr float GATE_MATE_INTERVAL = 0.7f;    // Ankunft: Abstand der Kameraden hintereinander
+constexpr float GATE_RETURN_RANGE = 12.0f;    // Rückkehr: so nah muss ein Teammitglied am Tor sein
+constexpr float GATE_IDLE_CLOSE = 20.0f;      // Rückkehr: so lange niemand in der Nähe, dann schließt es
+constexpr float GATE_STAIR_WIDTH = 1.2f;      // Treppe vor dem Tor (der Ring schwebt über dem Boden)
+constexpr float GATE_STAIR_DEPTH = 1.82f;     // Länge der Treppe (7 Stufen)
+constexpr int SG_POINTS_SAMPLE = 100;         // Punkte je zurückgebrachte Probe
+constexpr int SG_POINTS_PIRATE = 25;          // ... je ausgeschalteten Bodenpiraten (auch bei einem gescheiterten Einsatz)
+constexpr int SG_POINTS_RETURN = 200;         // ... für die Rückkehr durch das Stargate
+constexpr int SG_LOG_MAX = 100;               // so viele Einsätze merkt sich der Spielstand (Scoreboard)
 
 } // namespace cfg

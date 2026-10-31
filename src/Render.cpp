@@ -60,6 +60,7 @@
 // ---------------------------------------------------------------------------
 #include "World.hpp"
 #include "Assets.hpp"
+#include "CommandCenter.hpp"
 #include "ClientConfig.hpp"
 #include "Effects.hpp"
 #include "Models.hpp"
@@ -173,17 +174,13 @@ float Hash01(float n) {
     return x - floorf(x);
 }
 
-// Tore (Kartenanimation, MapAnim.cpp): Jedes Tor öffnet einmal pro Minute
-// für GATE_OPEN Sekunden ein "Wurmloch". Wann, hängt von seiner Lage ab, damit
-// nicht alle gleichzeitig aufleuchten. GateTime = Sekunden seit dem letzten
-// Öffnen (0..60), GateGlow = Leuchtstärke 0..1 (in 0,3 s an, in der letzten
-// Sekunde aus).
-constexpr float GATE_PERIOD = 60.0f;
-constexpr float GATE_OPEN = 6.0f;
-float GateTime(const Deco& d, float time) { return fmodf(time + fabsf(d.pos.x * 0.37f + d.pos.z * 0.61f), GATE_PERIOD); }
-float GateGlow(float u) {
-    if (u >= GATE_OPEN) return 0.0f;
-    return std::min(1.0f, u / 0.3f) * std::clamp(GATE_OPEN - u, 0.0f, 1.0f);
+// Stargates (Trooper.cpp): Aussehen eines Tors an der Stelle einer Tor-Deko.
+// Ein Tor leuchtet nur, wenn ein SG-Team es benutzt; Tore ohne Stargate
+// (Mehrspieler, Hauptmenü) bleiben dunkel.
+GateLook GateLookOfDeco(const World& w, const Deco& d) {
+    for (const Stargate& g : w.stargates)
+        if (Dist2D(g.pos, d.pos) < 0.01f) return GateLookAt(g.state, g.t);
+    return GateLook{};
 }
 
 // Bauteile der Raketen auf den Startplätzen: wie am Raketenplatz der
@@ -600,6 +597,50 @@ void DrawGroundStones(const World& w, Vector3 center, Vector3 camPos, float radi
 
 } // namespace
 
+// Das Wurmloch eines Stargates (Welt und Command Center). Der Ring der
+// Kit-Modelle gate_simple/gate_complex hat seine Mitte 0,585 über dem
+// Fußpunkt und innen etwa 0,3 Radius (Kit-Maße, aus dem Modell abgelesen);
+// er steht in der x-y-Ebene des Modells, die Fläche zeigt also nach normal
+// (local +z). look.open lässt die Fläche wachsen, darauf laufen Wellen nach
+// außen (time); look.kawoosh schießt einen hellen Kegel nach vorn heraus.
+// Dazu ein blauer Schein am Boden. Zeichnen mit BLEND_ADDITIVE und ohne
+// Schreiben in den Tiefenpuffer (wie die anderen Leuchteffekte).
+void DrawGateWormhole(Vector3 pos, float yaw, float scale, const GateLook& look, float time) {
+    const float glow = look.glow;
+    if (glow <= 0.0f) return;
+    const float s = scale;
+    const Vector3 c{pos.x, pos.y + 0.585f * s, pos.z};
+    const Vector3 right{cosf(yaw), 0.0f, -sinf(yaw)};
+    const Vector3 normal{sinf(yaw), 0.0f, cosf(yaw)};
+    DrawGlowDisc({pos.x, pos.y + 0.1f, pos.z}, 1.1f * s, Color{70, 140, 255, static_cast<unsigned char>(90 * glow)}, 32);
+    const float radius = 0.3f * s * look.open;
+    if (radius > 0.01f) {
+        // Fläche aus 4 Ringen x 28 Abschnitten; Helligkeit je Eckpunkt
+        const int rings = 4, segs = 28;
+        auto vertex = [&](int j, int i) {
+            const float rr = radius * j / rings, a = 2.0f * PI * i / segs;
+            const float wave = 0.5f + 0.5f * sinf(static_cast<float>(j) * 2.3f - time * 8.0f);
+            const float bright = std::clamp((0.35f + 0.45f * wave + 0.25f * (1.0f - static_cast<float>(j) / rings)) * glow, 0.0f, 1.0f);
+            rlColor4ub(90, 170, 255, static_cast<unsigned char>(210 * bright));
+            rlVertex3f(c.x + right.x * cosf(a) * rr, c.y + sinf(a) * rr, c.z + right.z * cosf(a) * rr);
+        };
+        rlBegin(RL_TRIANGLES);
+        for (int j = 0; j < rings; ++j) {
+            for (int i = 0; i < segs; ++i) {
+                vertex(j, i); vertex(j + 1, i); vertex(j + 1, i + 1);
+                vertex(j, i); vertex(j + 1, i + 1); vertex(j, i + 1);
+            }
+        }
+        rlEnd();
+    }
+    if (look.kawoosh > 0.0f) {
+        const float k = look.kawoosh;
+        const Vector3 tip = Vector3Add(c, Vector3Scale(normal, 0.8f * s * k));
+        DrawCylinderEx(c, tip, 0.27f * s * look.open, 0.04f * s, 16, Color{150, 210, 255, static_cast<unsigned char>(170 * k)});
+        DrawCylinderEx(c, Vector3Lerp(c, tip, 0.8f), 0.12f * s, 0.02f * s, 12, Color{230, 245, 255, static_cast<unsigned char>(200 * k)});
+    }
+}
+
 // Zeichnet die ganze Welt aus Sicht von cam. Muss zwischen BeginMode3D(cam)
 // und EndMode3D() aufgerufen werden (siehe Dateikopf). Ändert die Welt nicht
 // (const); Animationen ergeben sich aus world.time und den Animationswerten,
@@ -678,9 +719,9 @@ void World::Draw(const Camera3D& cam) const {
     // --- Dekoration -----------------------------------------------------------
     // Felsen, Krater usw. aus WorldGen.cpp. Große Objekte ragen weit über ihren
     // Mittelpunkt hinaus, deshalb wächst der Culling-Radius mit der Größe.
-    // Rover und Tore (Kartenanimation): die Modell-IDs nur einmal nachschlagen
-    // (static, siehe Geschütztürme unten). Rover stehen nur als Startplatz in
-    // decos; gezeichnet werden sie weiter unten aus rovers.
+    // Rover und Tore: die Modell-IDs nur einmal nachschlagen (static, siehe
+    // Geschütztürme unten). Rover stehen nur als Startplatz in decos;
+    // gezeichnet werden sie weiter unten aus rovers.
     static int roverModel = -1, gateA = -1, gateB = -1;
     if (roverModel < 0) {
         roverModel = g_assets.Id("rover");
@@ -691,8 +732,8 @@ void World::Draw(const Camera3D& cam) const {
         if (d.model == roverModel) continue;
         if (Dist2D(d.pos, focus) > cullR + d.scale * 0.6f) continue;
         if (d.model == gateA || d.model == gateB) {
-            // Tor: leuchtet beim Öffnen des Wurmlochs bläulich (Effekt unten, additiv)
-            const float g = GateGlow(GateTime(d, time));
+            // Tor: leuchtet bläulich, solange ein SG-Team es benutzt (Wurmloch unten, additiv)
+            const float g = GateLookOfDeco(*this, d).glow;
             g_assets.Draw(d.model, d.pos, d.yaw, d.scale, WHITE, Vector3{0.10f * g, 0.25f * g, 0.55f * g});
         } else if (d.yScale > 0.0f) {
             // Flache, große Krater: in der Höhe anders skaliert als in der
@@ -706,6 +747,21 @@ void World::Draw(const Camera3D& cam) const {
         } else {
             g_assets.Draw(d.model, d.pos, d.yaw, d.scale);
         }
+    }
+
+    // --- Treppen vor den Stargates (Trooper.cpp) ----------------------------------
+    // Modell "stairs" (Space Kit, steigt nach +z an), in Breite, Höhe und
+    // Länge einzeln gestreckt; die oberste Stufe liegt am Sockel des Tors.
+    static int stairModel = -1;
+    if (stairModel < 0) stairModel = g_assets.Id("stairs");
+    for (const Stargate& g : stargates) {
+        const float top = GateStairTop(g);
+        if (top <= 0.0f || Dist2D(g.pos, focus) > cullR + g.scale) continue;
+        const Vector3 n = GateNormal(g);
+        const float sz = cfg::GATE_STAIR_DEPTH / 0.7f, along = 0.25f * g.scale + 0.5f * sz;
+        Matrix m = MatrixMultiply(MatrixScale(cfg::GATE_STAIR_WIDTH / 0.3f, top / 0.5f, sz), MatrixRotateY(g.yaw + PI));
+        m = MatrixMultiply(m, MatrixTranslate(g.pos.x + n.x * along, g.pos.y, g.pos.z + n.z * along));
+        g_assets.Draw(stairModel, m);
     }
 
     // --- Monorail zwischen den Stationen (Kartenanimation, MapAnim.cpp) -----------
@@ -1048,51 +1104,11 @@ void World::Draw(const Camera3D& cam) const {
         }
     }
 
-    // Tore: das "Wurmloch" (Kartenanimation). Der Ring der Kit-Modelle
-    // gate_simple/gate_complex hat seine Mitte 0,585 über dem Boden und innen
-    // etwa 0,3 Radius (Kit-Maße, aus dem Modell abgelesen); er steht in der
-    // x-y-Ebene des Modells, die Fläche zeigt also nach normal (local +z).
-    // Ablauf (u = Sekunden seit dem Öffnen): Ring leuchtet auf, ab 0,25 s
-    // wächst die Fläche, 0,45..1,5 s schießt ein heller Kegel nach vorn
-    // heraus, dann schimmert die Fläche mit nach außen laufenden Wellen,
-    // ab 5 s fällt sie zur Mitte zusammen. Dazu ein blauer Schein am Boden.
-    for (const auto& d : decos) {
-        if ((d.model != gateA && d.model != gateB) || Dist2D(d.pos, focus) > cullR + d.scale) continue;
-        const float u = GateTime(d, time);
-        const float glow = GateGlow(u);
-        if (glow <= 0.0f) continue;
-        const float s = d.scale;
-        const float open = std::clamp((u - 0.25f) / 0.35f, 0.0f, 1.0f) * std::clamp((5.8f - u) / 0.8f, 0.0f, 1.0f);
-        const Vector3 c{d.pos.x, d.pos.y + 0.585f * s, d.pos.z};
-        const Vector3 right{cosf(d.yaw), 0.0f, -sinf(d.yaw)};
-        const Vector3 normal{sinf(d.yaw), 0.0f, cosf(d.yaw)};
-        DrawGlowDisc({d.pos.x, 0.1f, d.pos.z}, 1.1f * s, Color{70, 140, 255, static_cast<unsigned char>(90 * glow)}, 32);
-        const float radius = 0.3f * s * open;
-        if (radius > 0.01f) {
-            // Fläche aus 4 Ringen x 28 Abschnitten; Helligkeit je Eckpunkt
-            const int rings = 4, segs = 28;
-            auto vertex = [&](int j, int i) {
-                const float rr = radius * j / rings, a = 2.0f * PI * i / segs;
-                const float wave = 0.5f + 0.5f * sinf(static_cast<float>(j) * 2.3f - u * 8.0f);
-                const float bright = std::clamp((0.35f + 0.45f * wave + 0.25f * (1.0f - static_cast<float>(j) / rings)) * glow, 0.0f, 1.0f);
-                rlColor4ub(90, 170, 255, static_cast<unsigned char>(210 * bright));
-                rlVertex3f(c.x + right.x * cosf(a) * rr, c.y + sinf(a) * rr, c.z + right.z * cosf(a) * rr);
-            };
-            rlBegin(RL_TRIANGLES);
-            for (int j = 0; j < rings; ++j) {
-                for (int i = 0; i < segs; ++i) {
-                    vertex(j, i); vertex(j + 1, i); vertex(j + 1, i + 1);
-                    vertex(j, i); vertex(j + 1, i + 1); vertex(j, i + 1);
-                }
-            }
-            rlEnd();
-        }
-        if (u > 0.45f && u < 1.5f) {
-            const float k = sinf(PI * (u - 0.45f) / 1.05f);
-            const Vector3 tip = Vector3Add(c, Vector3Scale(normal, 0.8f * s * k));
-            DrawCylinderEx(c, tip, 0.27f * s * open, 0.04f * s, 16, Color{150, 210, 255, static_cast<unsigned char>(170 * k)});
-            DrawCylinderEx(c, Vector3Lerp(c, tip, 0.8f), 0.12f * s, 0.02f * s, 12, Color{230, 245, 255, static_cast<unsigned char>(200 * k)});
-        }
+    // Stargates: das Wurmloch, solange ein SG-Team das Tor benutzt
+    // (DrawGateWormhole, Aussehen aus dem Zustand: GateLookAt in Trooper.cpp)
+    for (const Stargate& g : stargates) {
+        if (g.state == GateState::Idle || Dist2D(g.pos, focus) > cullR + g.scale) continue;
+        DrawGateWormhole(g.pos, g.yaw, g.scale, GateLookAt(g.state, g.t), time);
     }
 
     // Raketenflammen: zwei Kegel unter dem Fußpunkt entgegen der Längsachse

@@ -17,6 +17,9 @@
 //   lives <Leben>                         verbleibende Leben (fehlt in alten Spielständen = 3)
 //   stats <Spielzeit s> <Abschüsse> <nächste freie ID>
 //   scanner <Energie>
+//   role <0|1>                            Rolle beim Speichern: 0 Pilot, 1 SG-Team (Vorauswahl der Rollenwahl)
+//   sgmates <Anzahl>                      im Command Center gewählte Kameraden 0..3
+//   sgrun <Nr> <Erfolg> <Punkte> <Proben> <Piraten> <Sekunden>   ein beendeter SG-Einsatz (Scoreboard)
 //   player <x> <z> <Drehung> <Schild> <Ladung>
 //   deposit ... (eine Zeile je Lagerstätte)
 //   wreck ...   (eine Zeile je Wrack)
@@ -32,6 +35,8 @@
 //     kurzlebig, starten nach dem Laden einfach neu.
 //   - Höhe (y) und Geschwindigkeit: Schiffe fliegen immer in derselben Höhe
 //     (cfg::SHIP_ALTITUDE), nach dem Laden steht das eigene Schiff still.
+//   - ein laufender SG-Einsatz (Figuren, Tore): Er wird beim Speichern
+//     verworfen (main.cpp), nach dem Laden wählt man die Rolle neu.
 //   - Andock-Zustand des Spielers: Nach dem Laden ist man abgedockt, steht
 //     aber genau dort, wo man gespeichert hat (meist an einer Station, weil
 //     nach jedem Andocken gespeichert wird).
@@ -138,6 +143,12 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     // bekommen, die eine gespeicherte Lagerstätte oder ein Wrack schon hat.
     f << "stats " << me.playTime << ' ' << me.kills << ' ' << w.nextId << '\n';
     f << "scanner " << me.scanEnergy << '\n';
+    // SG-Team: Rolle, Kameraden, beendete Einsätze (älteste zuerst)
+    f << "role " << (me.role == PlayerRole::Trooper ? 1 : 0) << '\n';
+    f << "sgmates " << me.sgMates << '\n';
+    for (const SgRecord& r : me.sgLog)
+        f << "sgrun " << r.number << ' ' << (r.success ? 1 : 0) << ' ' << r.points << ' ' << r.samples << ' ' << r.pirates
+          << ' ' << r.seconds << '\n';
     f << "player " << p.pos.x << ' ' << p.pos.z << ' ' << p.yaw << ' ' << p.hp << ' ' << p.cargo << '\n';
     // deposit: id x z Drehung Größe Variante Restmenge Anfangsmenge entdeckt(0/1)
     // Probe(0 grün, 1 gelb, 2 beprobt; fehlt in älteren Spielständen: gelb
@@ -291,6 +302,17 @@ bool LoadGame(World& w) {
         }
         else if (key == "stats") ls >> me.playTime >> me.kills >> w.nextId;
         else if (key == "scanner") ls >> me.scanEnergy;
+        else if (key == "role") { int r = 0; ls >> r; me.lastRole = r == 1 ? PlayerRole::Trooper : PlayerRole::Pilot; }
+        else if (key == "sgmates") { ls >> me.sgMates; me.sgMates = std::clamp(me.sgMates, 0, cfg::SG_MATES_MAX); }
+        else if (key == "sgrun") {
+            SgRecord r;
+            int ok = 0;
+            if (ls >> r.number >> ok >> r.points >> r.samples >> r.pirates >> r.seconds &&
+                me.sgLog.size() < static_cast<size_t>(cfg::SG_LOG_MAX)) {
+                r.success = ok != 0;
+                me.sgLog.push_back(r);
+            }
+        }
         else if (key == "player") {
             float hp = 0;
             ls >> p.pos.x >> p.pos.z >> p.yaw >> hp >> p.cargo;

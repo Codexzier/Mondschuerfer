@@ -11,9 +11,10 @@
 //       Ende 10 Sekunden hält und dann zur anderen Station fährt.
 //     - Raketenstartplätze, einer neben jeder Station: Alle 20 bis 30
 //       Sekunden startet dort eine Rakete oder es landet eine.
-//     - Tore (gate_simple, gate_complex): leuchten einmal pro Minute auf, als
-//       öffnete sich ein Wurmloch (Render.cpp). In der Zufallskarte stehen
-//       cfg::MAP_GATES Tore, in eigenen Karten alle gesetzten Tore.
+//     - Tore (gate_simple, gate_complex): sind die Stargates der SG-Teams
+//       und leuchten nur, wenn ein Team sie benutzt (Trooper.cpp,
+//       Render.cpp). In der Zufallskarte stehen cfg::MAP_GATES Tore, in
+//       eigenen Karten alle gesetzten Tore.
 //     - Mondfahrzeuge (rover): fahren von Ziel zu Ziel um Felsen, Krater,
 //       Gebäude und Schienen herum und hinterlassen Reifenspuren. Wie lange
 //       die Spuren zu sehen sind, stellt man in den Optionen ein (Seite
