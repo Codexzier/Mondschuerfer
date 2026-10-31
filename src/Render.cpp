@@ -368,6 +368,15 @@ TrailState g_trail;
 constexpr float kTrailLife[4] = {0.0f, 0.3f, 0.55f, 0.9f};
 constexpr float kTrailStep = 1.0f / 50.0f;   // je Triebwerk 50 Wolken pro Sekunde
 
+// Gelbe Variante eines Kristallmodells (FPS-Modus): Kopien der drei
+// Kristallmodelle mit gelbem statt grünem Kristallmaterial
+// (assets/models/rock_crystals*Yellow.glb).
+int YellowCrystal(const World& w, int model) {
+    static const int small = g_assets.Id("rock_crystalsYellow"), largeA = g_assets.Id("rock_crystalsLargeAYellow"),
+                     largeB = g_assets.Id("rock_crystalsLargeBYellow");
+    return model == w.mdl.crystalA ? largeA : model == w.mdl.crystalB ? largeB : small;
+}
+
 // Waffe der eigenen Figur in der Ego-Ansicht: Blaster aus dem Blaster Kit
 // (Lauf zeigt im Modell nach -z wie die Schiffsnasen), rechts unten vor der
 // Kamera und mit dem Blick geneigt. Dazu ein leichtes Wippen beim Laufen,
@@ -605,9 +614,14 @@ void World::Draw(const Camera3D& cam) const {
         // sie leer ist.
         float fill = 0.55f + 0.45f * static_cast<float>(d.amount) / std::max(1, d.initial);
         // emissive: grünliches Eigenleuchten im Takt von pulse; nie ganz aus,
-        // damit die Kristalle auch im dunklen Moment noch glimmen.
-        g_assets.Draw(d.model, d.pos, d.yaw, d.scale * appear * fill, WHITE,
-                      Vector3{0.06f, 0.08f + 0.26f * pulse, 0.05f + 0.16f * pulse});
+        // damit die Kristalle auch im dunklen Moment noch glimmen. Gelbe
+        // Kristalle (Probe nötig) mit gelbem Modell und gelblichem Leuchten.
+        if (d.sample == Sample::Yellow)
+            g_assets.Draw(YellowCrystal(*this, d.model), d.pos, d.yaw, d.scale * appear * fill, WHITE,
+                          Vector3{0.08f + 0.22f * pulse, 0.07f + 0.17f * pulse, 0.02f});
+        else
+            g_assets.Draw(d.model, d.pos, d.yaw, d.scale * appear * fill, WHITE,
+                          Vector3{0.06f, 0.08f + 0.26f * pulse, 0.05f + 0.16f * pulse});
     }
 
     // --- Wracks ------------------------------------------------------------------
@@ -766,12 +780,16 @@ void World::Draw(const Camera3D& cam) const {
     // Leuchtmarkierungen für entdeckte Lagerstätten und Wracks
     // Lichtsäule (9 m bzw. 8 m hoch) und Bodenring, pulsierend mit der id als
     // Phasenversatz. Von oben weithin sichtbar, damit man Fundstellen schnell
-    // wiederfindet. Grün = Kristalle, orange = Wrack (Schrott).
+    // wiederfindet. Grün = Kristalle, gelb = gelbe Kristalle (Probe nötig),
+    // orange = Wrack (Schrott).
     for (const auto& d : deposits) {
         if (!d.revealed || Dist2D(d.pos, focus) > cullR) continue;
         float pulse = 0.6f + 0.4f * sinf(time * 2.5f + d.id);
-        DrawBeam(d.pos, 9.0f, 0.35f, Color{40, 200, 120, static_cast<unsigned char>(70 * pulse)});
-        DrawGroundRing(d.pos, 3.2f, 3.6f, Color{60, 255, 170, static_cast<unsigned char>(120 * pulse)}, 40);
+        const bool yellow = d.sample == Sample::Yellow;
+        DrawBeam(d.pos, 9.0f, 0.35f, yellow ? Color{220, 190, 40, static_cast<unsigned char>(70 * pulse)}
+                                            : Color{40, 200, 120, static_cast<unsigned char>(70 * pulse)});
+        DrawGroundRing(d.pos, 3.2f, 3.6f, yellow ? Color{255, 225, 80, static_cast<unsigned char>(120 * pulse)}
+                                                 : Color{60, 255, 170, static_cast<unsigned char>(120 * pulse)}, 40);
     }
     for (const auto& w : wrecks) {
         if (Dist2D(w.pos, focus) > cullR) continue;
@@ -799,7 +817,9 @@ void World::Draw(const Camera3D& cam) const {
         const float pulse = 0.5f + 0.5f * sinf(time * 3.0f + d.id);
         const float fill = 0.55f + 0.45f * static_cast<float>(d.amount) / std::max(1, d.initial);
         const float sc = d.scale * std::clamp(d.revealT, 0.0f, 1.0f) * fill;
-        DrawGlowDisc({d.pos.x, 0.1f, d.pos.z}, 1.5f * sc, Color{60, 255, 170, static_cast<unsigned char>(45 + 40 * pulse)});
+        const bool yellow = d.sample == Sample::Yellow;
+        DrawGlowDisc({d.pos.x, 0.1f, d.pos.z}, 1.5f * sc, yellow ? Color{255, 220, 80, static_cast<unsigned char>(45 + 40 * pulse)}
+                                                                 : Color{60, 255, 170, static_cast<unsigned char>(45 + 40 * pulse)});
         const BoundingBox b = ModelBounds(d.model);
         const float rad = std::max(b.max.x, b.max.z) * sc * 0.8f, height = b.max.y * sc;
         for (int g = 0; g < 4; ++g) {
@@ -812,7 +832,8 @@ void World::Draw(const Camera3D& cam) const {
             const float ang = Hash01(seed) * 2.0f * PI, out = Hash01(seed + 0.5f);
             const Vector3 p{d.pos.x + cosf(ang) * rad * out, height * (1.05f - 0.6f * out), d.pos.z + sinf(ang) * rad * out};
             const float len = 0.75f * k, w = 0.07f;
-            const Color c{210, 255, 235, static_cast<unsigned char>(255 * k)};
+            const Color c = yellow ? Color{255, 245, 200, static_cast<unsigned char>(255 * k)}
+                                   : Color{210, 255, 235, static_cast<unsigned char>(255 * k)};
             DrawCube(p, len, w, w, c);
             DrawCube(p, w, len, w, c);
             DrawCube(p, w, w, len, c);

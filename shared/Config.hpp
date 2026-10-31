@@ -345,5 +345,12 @@ constexpr float TROOPER_FIRE_INTERVAL = 0.15f;
 constexpr float TROOPER_DAMAGE = 20.0f;
 constexpr float TROOPER_BULLET_SPEED = 70.0f;
 constexpr float TROOPER_BULLET_LIFE = 1.2f;
+// Gelbe Kristalle (FPS-Modus): Erst nimmt ein Trupp zu Fuß eine Probe, dann
+// sind sie wieder grün und abbaubar. Bisher nur im Einzelspieler (nicht in
+// der Simulation und nicht im Mehrspieler).
+constexpr float YELLOW_SHARE = 0.4f;          // Anteil gelber Lagerstätten (0 = keine)
+constexpr float SAMPLE_TIME = 3.0f;           // Sekunden E halten für eine Probe
+constexpr float SAMPLE_RANGE = 3.0f;          // so nah (m, waagerecht) muss die Figur an der Lagerstättenmitte stehen
+constexpr int SAMPLE_GOAL = 5;                // Proben je Team (Anzeige; das Ziel zählt erst mit dem Stargate)
 
 } // namespace cfg

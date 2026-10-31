@@ -1056,7 +1056,7 @@ int World::InteractTarget(const PlayerState& ps, int* kind, int* id) const {
     best = cfg::MINING_RANGE;
     for (const auto& d : deposits) {
         float dist = Dist2D(d.pos, p.pos);
-        if (RevealedFor(d, ps) && dist <= best && d.amount > 0) { best = dist; *kind = 1; *id = d.id; }
+        if (RevealedFor(d, ps) && dist <= best && d.amount > 0 && d.sample != Sample::Yellow) { best = dist; *kind = 1; *id = d.id; }
     }
     return *kind;
 }

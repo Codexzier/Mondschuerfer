@@ -319,7 +319,7 @@ void World::UpdateAi(Ship& s, float dt) {
                         bool taken = false;
                         for (auto& o : ships)
                             if (&o != &s && o.kind == ShipKind::Miner && o.targetDeposit == d.id) taken = true;
-                        if (!taken && d.amount > 0) cand.push_back({Dist2D(d.pos, s.pos), d.id});
+                        if (!taken && d.amount > 0 && d.sample != Sample::Yellow) cand.push_back({Dist2D(d.pos, s.pos), d.id});
                     }
                     std::sort(cand.begin(), cand.end());   // Paare sortieren nach dem ersten Wert (Abstand)
                     if (!cand.empty()) {
@@ -632,7 +632,7 @@ ShipInput AutopilotInput(World& w, float dt) {
         if (wr.amount > 0 && d < 90.0f && d < best) { best = d; target = wr.pos; found = true; }
     }
     for (auto& d : w.deposits) {
-        if (!d.revealed || d.amount <= 0) continue;
+        if (!d.revealed || d.amount <= 0 || d.sample == Sample::Yellow) continue;
         float dist = Dist2D(d.pos, p.pos) + 10.0f; // Wracks leicht bevorzugen
         if (dist < best) { best = dist; target = d.pos; found = true; }
     }

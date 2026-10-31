@@ -140,9 +140,11 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     f << "scanner " << me.scanEnergy << '\n';
     f << "player " << p.pos.x << ' ' << p.pos.z << ' ' << p.yaw << ' ' << p.hp << ' ' << p.cargo << '\n';
     // deposit: id x z Drehung Größe Variante Restmenge Anfangsmenge entdeckt(0/1)
+    // Probe(0 grün, 1 gelb, 2 beprobt; fehlt in älteren Spielständen = grün)
     for (const auto& d : w.deposits)
         f << "deposit " << d.id << ' ' << d.pos.x << ' ' << d.pos.z << ' ' << d.yaw << ' ' << d.scale << ' '
-          << DepositVariant(w, d.model) << ' ' << d.amount << ' ' << d.initial << ' ' << (d.revealed ? 1 : 0) << '\n';
+          << DepositVariant(w, d.model) << ' ' << d.amount << ' ' << d.initial << ' ' << (d.revealed ? 1 : 0) << ' '
+          << static_cast<int>(d.sample) << '\n';
     // wreck: id x z Drehung Neigung Variante Restmenge Anfangsmenge Alter
     for (const auto& wr : w.wrecks)
         f << "wreck " << wr.id << ' ' << wr.pos.x << ' ' << wr.pos.z << ' ' << wr.yaw << ' ' << wr.tilt << ' '
@@ -305,6 +307,8 @@ bool LoadGame(World& w) {
             ls >> d.id >> d.pos.x >> d.pos.z >> d.yaw >> d.scale >> v >> d.amount >> d.initial >> rev;
             d.model = DepositModel(w, v);
             d.revealed = rev != 0;
+            int sample = 0;
+            if (ls >> sample && sample >= 0 && sample <= 2) d.sample = static_cast<Sample>(sample);
             // Einblend-Animation schon abgeschlossen: entdeckte Lagerstätten
             // sind nach dem Laden sofort voll sichtbar.
             d.revealT = 1.0f;

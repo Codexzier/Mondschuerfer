@@ -551,6 +551,16 @@ void World::SpawnDeposit(bool initial) {
         d.model = mdl.crystalSmall;
         d.scale = 2.8f;
     }
+    // Gelbe Kristalle (FPS-Modus, nur Einzelspieler ohne Simulation): Anteil
+    // cfg::YELLOW_SHARE, ausgewählt über die ID statt mit einer Zufallszahl,
+    // damit die Zahlenfolge von rng gleich bleibt. Gelbe sind ohne Scanner zu
+    // sehen.
+    if (!isServer && !simulation &&
+        ((static_cast<unsigned>(d.id) * 2654435761u) >> 16) % 100u < static_cast<unsigned>(cfg::YELLOW_SHARE * 100.0f)) {
+        d.sample = Sample::Yellow;
+        d.revealed = true;
+        d.revealT = initial ? 1.0f : 0.0f;
+    }
     deposits.push_back(d);
     // Server: Lagerstätten haben sich geändert -> neue Liste an die Clients
     // schicken (GameServer::SendDepositUpdates vergleicht diesen Zähler).

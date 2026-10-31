@@ -324,6 +324,7 @@ TrooperInput TrooperControls::Read(float yaw, float pitch, float dt) {
     in.jump = IsKeyPressed(KEY_SPACE);
     in.sprint = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
     in.reload = IsKeyPressed(KEY_R);
+    in.sample = IsKeyDown(KEY_E);
     // Maus nach rechts = nach rechts drehen (yaw kleiner), nach oben = hochsehen
     if (entering) skipMouse_ = 2;
     Vector2 md = GetMouseDelta();
@@ -355,6 +356,7 @@ TrooperInput TrooperControls::Read(float yaw, float pitch, float dt) {
         if (rt_.Value(GetGamepadAxisMovement(pad, GAMEPAD_AXIS_RIGHT_TRIGGER)) > 0.3f) fireDown = true;
         if (IsGamepadButtonPressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) in.jump = true;
         if (IsGamepadButtonPressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_LEFT)) in.reload = true;
+        if (IsGamepadButtonDown(pad, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) in.sample = true;
         if (padSprint_) in.sprint = true;
     }
     if (entering) fireLatch_ = fireDown;
@@ -395,7 +397,7 @@ std::string KeyHint(Act a) { return std::string("[") + KeyName(a) + "]"; }
 
 // Tastenhilfe. Tastatur: 9 Zeilen (mit Maus und Ton), Controller: 7 Zeilen.
 // Die Taste M (Ton) gibt es nur auf der Tastatur.
-// Zu Fuß: Tastatur 8 Zeilen, Controller 6 Zeilen.
+// Zu Fuß: Tastatur 9 Zeilen, Controller 7 Zeilen.
 std::vector<HelpRow> HelpRows(bool foot) { return HelpRows(ActiveDevice(), foot); }
 
 size_t MaxHelpRows() {
@@ -410,15 +412,15 @@ std::vector<HelpRow> HelpRows(Device d, bool foot) {
         switch (d) {
             case Device::Xbox:
                 return {{"Linker Stick", "Laufen (drücken: sprinten)"}, {"Rechter Stick", "Zielen"}, {"RT", "Schießen"},
-                        {"A", "Springen"},  {"X", "Nachladen"},  {"Menü-Taste", "Pause (Einsteigen)"}};
+                        {"A", "Springen"},  {"X", "Nachladen"},  {"B halten", "Probe nehmen"},  {"Menü-Taste", "Pause (Einsteigen)"}};
             case Device::PlayStation:
                 return {{"Linker Stick", "Laufen (drücken: sprinten)"}, {"Rechter Stick", "Zielen"}, {"R2", "Schießen"},
-                        {"Kreuz", "Springen"},  {"Quadrat", "Nachladen"},  {"Options", "Pause (Einsteigen)"}};
+                        {"Kreuz", "Springen"},  {"Quadrat", "Nachladen"},  {"Kreis halten", "Probe nehmen"},  {"Options", "Pause (Einsteigen)"}};
             case Device::KeyboardMouse:
             default:
                 return {{"W / S", "Vor / Zurück"},    {"A / D", "Seitlich"},       {"Maus", "Zielen"},
                         {"Linksklick", "Schießen"},   {"Leertaste", "Springen"},  {"Shift", "Sprinten"},
-                        {"R", "Nachladen"},           {"ESC", "Pause (Einsteigen)"}};
+                        {"R", "Nachladen"},           {"E halten", "Probe nehmen"}, {"ESC", "Pause (Einsteigen)"}};
         }
     }
     // Linker Stick je nach Einstellung in den Optionen (Tank-Steuerung)

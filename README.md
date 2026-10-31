@@ -157,7 +157,9 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 **Zu Fuß als SG-Team** (FPS-Modus, bisher nur im Einzelspieler zum Ausprobieren): In der Pause
 steigt man mit *Als SG-Team aussteigen* unter dem Schiff aus und läuft in der Ego-Ansicht über
 den Mond; *Ins Schiff einsteigen* holt das Schiff an diese Stelle zurück. Gespeichert wird immer
-mit dem Schiff.
+mit dem Schiff. Etwa 40 % der Kristalle sind **gelb** und ohne Scanner zu sehen: Schiffe bauen sie
+nicht ab, erst muss zu Fuß eine Probe genommen werden (3 Sekunden halten). Danach ist der Kristall
+wieder grün, und Piloten wie Händler können ihn abbauen.
 
 | Aktion | Tastatur / Maus | Xbox | PlayStation |
 |---|---|---|---|
@@ -167,6 +169,7 @@ mit dem Schiff.
 | Springen | Leertaste | A | Kreuz |
 | Sprinten | Shift halten | Linken Stick drücken | Linken Stick drücken |
 | Nachladen | R | X | Quadrat |
+| Probe nehmen (am gelben Kristall) | E halten | B halten | Kreis halten |
 
 **Im Mehrspieler** gelten dieselben Tasten. Unterschiede:
 
