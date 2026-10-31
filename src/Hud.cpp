@@ -433,8 +433,9 @@ void DrawControls(float x, float y, float size, bool foot) {
 // ===========================================================================
 // Fadenkreuz in der Bildmitte (grau beim Nachladen), oben links Schild,
 // Munition (Magazin groß, Ersatz klein, beim Nachladen ein Balken) und
-// getragene Proben, oben in der Mitte ein Pfeil zum nächsten Tor mit
-// Entfernung (Pfeil nach oben = geradeaus), unten in der Mitte die laufende
+// getragene Proben, oben in der Mitte ein Pfeil zum nächsten Stargate mit
+// Entfernung (Pfeil nach oben = geradeaus; wird eins für die Rückkehr
+// angewählt, zu diesem) und darunter der Hinweis zur Rückkehr, unten in der Mitte die laufende
 // Probe bzw. der Hinweis "[E] halten" an einem gelben Kristall. Die
 // Tastenhilfe steht die ersten 60 s zu Fuß ganz da, danach wie im Schiff mit
 // gehaltener Taste H.
@@ -508,8 +509,18 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
         TextCentered(hint, W * 0.5f, hr.y + 13 * s, 26 * s, yellow);
     }
 
-    Vector3 gate;
-    if (w.NearestGate(t.pos, &gate)) {
+    // Stargate der eigenen Rückkehr (angewählt oder offen), sonst das nächste
+    int gi = -1;
+    for (size_t i = 0; i < w.stargates.size(); ++i) {
+        const Stargate& g = w.stargates[i];
+        if (g.toCommand && g.playerId == w.Me().id && (g.state == GateState::Dialing || g.state == GateState::Open))
+            gi = static_cast<int>(i);
+    }
+    const bool homeGate = gi >= 0;
+    if (!homeGate) gi = w.NearestGate(t.pos);
+    if (gi >= 0) {
+        const Stargate& sg = w.stargates[static_cast<size_t>(gi)];
+        const Vector3 gate = sg.pos;
         const float rel = AngleDiff(t.yaw, YawTowards(t.pos, gate));   // > 0: Tor liegt links
         const Rectangle gr{W * 0.5f - 100 * s, 16 * s, 200 * s, 56 * s};
         Panel(gr);
@@ -521,8 +532,17 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
         DrawLineEx(tail, tip, 3 * s, ac);
         DrawLineEx(tip, Vector2Add(Vector2Subtract(tip, Vector2Scale(dir, 8 * s)), Vector2Scale(side, 7 * s)), 3 * s, ac);
         DrawLineEx(tip, Vector2Subtract(Vector2Subtract(tip, Vector2Scale(dir, 8 * s)), Vector2Scale(side, 7 * s)), 3 * s, ac);
-        Text("TOR", gr.x + 58 * s, gr.y + 8 * s, 16 * s, MUTED);
+        Text("STARGATE", gr.x + 58 * s, gr.y + 8 * s, 16 * s, MUTED);
         Text(TextFormat("%.0f m", Dist2D(t.pos, gate)), gr.x + 58 * s, gr.y + 24 * s, 24 * s, ac);
+        // Rückkehr: alle Proben beisammen -> zu einem Tor; angewählt; offen
+        const float hy = gr.y + gr.height + 8 * s;
+        if (homeGate && sg.state == GateState::Open)
+            TextCentered("Stargate offen: die Treppe hinauf und hindurch", W * 0.5f, hy, 20 * s, GOOD);
+        else if (homeGate)
+            TextCentered("Stargate wird angewählt ...", W * 0.5f, hy, 20 * s, ac);
+        else if (t.samples >= cfg::SAMPLE_GOAL)
+            TextCentered(TextFormat("Alle Proben: zu einem Stargate (näher als %.0f m)", cfg::GATE_RETURN_RANGE), W * 0.5f, hy,
+                         20 * s, yellow);
     }
 
     DrawNotices(w.Me());
@@ -531,8 +551,14 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
         const Rectangle dr{W * 0.5f - 260 * s, H * 0.5f - 70 * s, 520 * s, 120 * s};
         Panel(dr);
         TextCentered("GEFALLEN", W * 0.5f, dr.y + 18 * s, 40 * s, BAD);
-        TextCentered(TextFormat("Zurück am Ausstiegspunkt in %.0f s", std::max(0.0f, ceilf(cfg::TROOPER_RESPAWN - t.downT))), W * 0.5f,
-                     dr.y + 72 * s, 22 * s, TEXT);
+        // Steht kein Kamerad mehr (und kommt keiner mehr durch das Tor),
+        // scheitert der Einsatz, wenn die Zeit um ist (Trooper.cpp)
+        const bool standing = w.Me().sgArrive > 0 ||
+                              std::any_of(mates.begin(), mates.end(), [](const Trooper* m) { return !m->down; });
+        const float left = std::max(0.0f, ceilf(cfg::TROOPER_RESPAWN - t.downT));
+        TextCentered(standing ? TextFormat("Zurück am Ankunftstor in %.0f s", left)
+                              : TextFormat("Kein Kamerad steht mehr: Einsatz scheitert in %.0f s", left),
+                     W * 0.5f, dr.y + 72 * s, 22 * s, standing ? TEXT : BAD);
     }
 
     if (!simulation) {
@@ -794,7 +820,9 @@ static std::string ShipStats(const ShipType& t, const int* up, bool withGuns) {
 // Mission annehmen), Tab (Karteireiter der Handelsstation), F oder ESC (Abdocken). Controller: Zeiger mit dem linken Stick, A klickt;
 // Y (wie F) oder B (wie ESC) docken ab. Die Tasten R und 1-4 stehen nur bei
 // Tastaturbenutzung auf den Knöpfen.
-DockRequest DrawDockPanel(const World& w, bool interactive) {
+// teamButton: an der Handelsstation neben "Abdocken" der Knopf "Als SG-Team
+// spielen" (nur Einzelspieler, siehe Hud.hpp).
+DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     // Ganzen Bildschirm leicht abdunkeln (Alpha 120 von 255), damit das
@@ -996,9 +1024,13 @@ DockRequest DrawDockPanel(const World& w, bool interactive) {
             }
         }
         // "Abdocken" steht immer unten im Fenster und ist per Tastatur
-        // vorausgewählt (focused = true), daher hervorgehoben
-        Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
+        // vorausgewählt (focused = true), daher hervorgehoben. Mit teamButton
+        // teilt es sich die Zeile mit "Als SG-Team spielen".
+        const float tw = teamButton ? (bw - 12 * s) * 0.5f : bw;
+        Rectangle ub{x, r.y + r.height - 74 * s, tw, 50 * s};
         if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+        if (teamButton && Button({x + tw + 12 * s, ub.y, tw, ub.height}, "Als SG-Team spielen", 20 * s, false, interactive))
+            req.toTeam = true;
     } else if (station.type == StationType::Dealer) {
         // --- Raumschiffsverkäufer: alle Schiffstypen, die man noch nicht
         //     besitzt, kaufen (altes Schiff parken) oder mit Inzahlunggabe

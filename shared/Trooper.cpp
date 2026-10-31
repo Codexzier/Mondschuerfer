@@ -1,21 +1,28 @@
 // ---------------------------------------------------------------------------
-// Trooper.cpp: Trupp zu Fuß (FPS-Modus) – Aussteigen und Einsteigen, Bewegung
-// mit Mondschwerkraft, Hindernisse aus Deko und Stationsteilen, Schießen,
-// Nachladen, Proben an gelben Kristallen, Treffer und Fallen. Dazu werden
-// hier die KI-Figuren erzeugt: NPC-Kameraden beim Aussteigen und Gruppen von
-// Bodenpiraten bei gelben Kristallen (ihr Verhalten steht in Ai.cpp).
-// Datentypen in World.hpp (Trooper, TrooperInput, TrooperBlock, Sample).
+// Trooper.cpp: Trupp zu Fuß (FPS-Modus) – Rolle Pilot oder SG-Team, Einsatz
+// durch ein Stargate (Ankunft, Rückkehr, Punkte), Bewegung mit
+// Mondschwerkraft, Hindernisse aus Deko, Stationsteilen und den Treppen vor
+// den Toren, Schießen, Nachladen, Proben an gelben Kristallen, Treffer und
+// Fallen. Dazu werden hier die KI-Figuren erzeugt: NPC-Kameraden bei der
+// Ankunft und Gruppen von Bodenpiraten bei gelben Kristallen (ihr Verhalten
+// steht in Ai.cpp).
+// Datentypen in World.hpp (Trooper, TrooperInput, TrooperBlock, Stargate,
+// SgRecord, Sample).
 //
 // Wer benutzt die Datei?
 //   - World::Update ruft UpdateTroopers auf (nach den Spielern).
 //   - World::UpdateBullets fragt TrooperBlocked und SegmentHitsTrooper
 //     (Treffer der Bodengeschosse) und ruft DamageTrooper auf.
-//   - src/main.cpp: StartTrooper/EndTrooper (Pausenmenü), TrooperEye/
-//     TrooperAim für die Ego-Kamera. src/Hud.cpp: NearestGate, SampleTarget.
+//   - src/main.cpp: SetRole (Rollenwahl, Stationsfenster), EndSgMission
+//     (Pause), TrooperEye/TrooperAim für die Ego-Kamera.
+//     src/CommandCenter.cpp: BuildStargates, StartSgMission.
+//     src/Hud.cpp: NearestGate, SampleTarget. src/Render.cpp: Tore und
+//     Treppen (GateLookAt, GateStairTop ...).
 //
-// Bisher nur im Einzelspieler: Der Spieler steigt über die Pause aus dem
-// Schiff aus und läuft auf der Mondkarte herum. Rollenwahl, Stargates und
-// Mehrspieler kommen in späteren Schritten (siehe FPS-Plan).
+// Bisher nur im Einzelspieler: Der Spieler wählt nach "Neues Spiel" bzw.
+// "Fortsetzen" die Rolle, als SG-Team geht es vom Command Center durch ein
+// Stargate auf die Mondkarte. Mehrspieler kommt in späteren Schritten (siehe
+// FPS-Plan).
 //
 // Wie bei den Schiffen rechnet UpdateTrooperPhysics ohne Zufall, damit der
 // Mehrspieler-Client später die eigene Figur genauso vorhersagen kann wie der
@@ -76,7 +83,72 @@ float SegSegDist(Vector2 p1, Vector2 q1, Vector2 p2, Vector2 q2, float& s, float
 // Formation der Kameraden hinter ihrem Spieler: seitlich (rechts +) und nach
 // hinten, in Metern, bezogen auf seine Laufrichtung (Trooper::formYaw).
 constexpr Vector2 kMateSlots[3] = {{-0.9f, 1.0f}, {0.9f, 1.0f}, {0.0f, 1.9f}};
+
+// Maße der Kit-Tore gate_simple/gate_complex (wie in Render.cpp), mal
+// Deko-Größe: Mitte des Rings 0,585 über dem Boden, innen etwa 0,3 Radius,
+// Sockel 0,25 vor und hinter der Fläche (ModelBounds, daraus wird auch das
+// Hindernis des Tors).
+constexpr float kGateCenter = 0.585f, kGateInner = 0.3f, kGateDepth = 0.25f;
+// Die Treppe ist das Modell "stairs" (Space Kit): 7 Stufen, die Oberkanten
+// bei 0,1, 0,25, 0,4 ... 1,0 der ganzen Höhe.
+constexpr int kStairSteps = 7;
+float StairStepTop(float top, int i) { return top * (0.1f + 0.15f * static_cast<float>(i)); }
+
+// Steht noch ein Kamerad dieser Spielerfigur?
+bool TeamStanding(const World& w, const Trooper& leader) {
+    for (const Trooper& m : w.troopers)
+        if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == leader.id && !m.down) return true;
+    return false;
+}
 } // namespace
+
+// Zeit seit Beginn der Anwahl d: Der Ring leuchtet langsam auf, 0,8 s vor
+// dem Ende der Anwahl wächst die Fläche, 0,6 s davor schießt der helle Kegel
+// heraus (bis kurz nach dem Öffnen). Beim Schließen fällt alles in GATE_CLOSE
+// zusammen.
+GateLook GateLookAt(GateState state, float t) {
+    GateLook l;
+    if (state == GateState::Idle) return l;
+    if (state == GateState::Closing) {
+        const float k = std::clamp(1.0f - t / cfg::GATE_CLOSE, 0.0f, 1.0f);
+        l.glow = l.open = k;
+        return l;
+    }
+    const float d = state == GateState::Dialing ? t : cfg::GATE_DIAL + t;
+    l.glow = state == GateState::Dialing ? 0.25f + 0.75f * std::clamp(t / cfg::GATE_DIAL, 0.0f, 1.0f) : 1.0f;
+    l.open = std::clamp((d - (cfg::GATE_DIAL - 0.8f)) / 0.35f, 0.0f, 1.0f);
+    const float k = d - (cfg::GATE_DIAL - 0.6f);
+    if (k > 0.0f && k < 1.05f) l.kawoosh = sinf(PI * k / 1.05f);
+    return l;
+}
+
+Vector3 GateNormal(const Stargate& g) { return {sinf(g.yaw), 0.0f, cosf(g.yaw)}; }
+Vector3 GateRight(const Stargate& g) { return {cosf(g.yaw), 0.0f, -sinf(g.yaw)}; }
+
+// Die oberste Stufe liegt 0,4 m unter dem Rand des Wurmlochs (die Figur
+// reicht dann mit dem Oberkörper hinein), höchstens aber so hoch, dass jede
+// Stufe ohne Sprung zu schaffen ist (15 % der Höhe je Stufe).
+float GateStairTop(const Stargate& g) {
+    const float top = std::min((kGateCenter - kGateInner) * g.scale - 0.4f, cfg::TROOPER_STEP * 0.95f / 0.15f);
+    return top > 0.06f ? top : 0.0f;
+}
+
+Vector3 GateExit(const Stargate& g) {
+    const Vector3 n = GateNormal(g);
+    const float d = kGateDepth * g.scale + cfg::TROOPER_RADIUS + 0.03f;
+    return {g.pos.x + n.x * d, GateStairTop(g), g.pos.z + n.z * d};
+}
+
+// Das Hindernis des Tors hält die Figur TROOPER_RADIUS vor dem Sockel; wer
+// dort auf der obersten Stufe steht, ist im Wurmloch. Ohne Treppe (kleines
+// Tor) zählt der Boden vor dem Ring.
+bool InGatePassage(const Stargate& g, Vector3 p) {
+    const Vector3 d{p.x - g.pos.x, 0.0f, p.z - g.pos.z};
+    const float along = Vector3DotProduct(d, GateNormal(g)), side = fabsf(Vector3DotProduct(d, GateRight(g)));
+    const float top = GateStairTop(g);
+    const float halfW = top > 0.0f ? cfg::GATE_STAIR_WIDTH * 0.5f : kGateInner * g.scale * 0.8f;
+    return along > 0.0f && along < kGateDepth * g.scale + cfg::TROOPER_RADIUS + 0.25f && side < halfW && p.y >= top - 0.05f;
+}
 
 // Gefallene liegen am Boden: Die Ego-Kamera sinkt mit.
 Vector3 TrooperEye(const Trooper& t) { return {t.pos.x, t.pos.y + (t.down ? 0.12f : cfg::TROOPER_EYE), t.pos.z}; }
@@ -119,59 +191,236 @@ const Trooper* World::FindTrooper(int id) const {
 }
 
 // ===========================================================================
-// Aussteigen und Einsteigen
+// Rolle und Einsatz
 // ===========================================================================
-// Abbau und Scanner enden beim Aussteigen; das Schiff bleibt versteckt
-// stehen (hidden: nicht angreifbar, UpdatePlayer überspringt es).
-bool World::StartTrooper(PlayerState& ps) {
+// Als SG-Team bleibt das Schiff versteckt stehen (hidden: nicht angreifbar,
+// UpdatePlayer überspringt es). Abbau und Scanner enden dabei.
+void World::SetRole(PlayerState& ps, PlayerRole role) {
+    if (ps.role == role) return;
     Ship* sp = PlayerShip(ps);
-    if (ps.role == PlayerRole::Trooper || !sp || sp->dead || sp->crashing || sp->hidden || ps.dockedAt >= 0) return false;
-    if (ps.mining) SoundAt(Sfx::MineAbort, sp->pos, 1.0f, 0.0f, ps.id);
-    ps.mining = false;
-    sp->mining = false;
-    ps.scanOn = false;
+    if (role == PlayerRole::Trooper) {
+        Undock(ps);
+        if (sp) {
+            if (ps.mining) SoundAt(Sfx::MineAbort, sp->pos, 1.0f, 0.0f, ps.id);
+            sp->mining = false;
+            sp->vel = {0.0f, 0.0f, 0.0f};
+            sp->hidden = true;
+        }
+        ps.mining = false;
+        ps.scanOn = false;
+    } else {
+        EndSgMission(ps, false, false);
+        if (sp) sp->hidden = false;
+    }
+    ps.role = role;
+    ps.trooperId = -1;
+    ps.trooperInput = TrooperInput{};
+}
+
+// Jede Tor-Deko im Spielfeld wird ein Stargate (Zufallskarte: cfg::MAP_GATES,
+// eigene Karte: alle gesetzten Tore).
+void World::BuildStargates() {
+    if (!stargates.empty()) return;
+    static const int gateA = ModelId("gate_simple"), gateB = ModelId("gate_complex");
+    for (const Deco& d : decos) {
+        if ((d.model != gateA && d.model != gateB) || !InField(d.pos)) continue;
+        Stargate g;
+        g.pos = d.pos;
+        g.yaw = d.yaw;
+        g.scale = d.scale;
+        stargates.push_back(g);
+    }
+}
+
+// Das Tor ist bei der Ankunft schon offen (angewählt wurde im Command
+// Center). Der Spieler steht auf der obersten Stufe und schaut vom Tor weg;
+// die Kameraden folgen im Abstand GATE_MATE_INTERVAL (UpdateStargates).
+bool World::StartSgMission(PlayerState& ps, int mates) {
+    if (ps.role != PlayerRole::Trooper || ps.trooperId >= 0) return false;
+    BuildStargates();
+    // frei: ruhend oder gerade beim Schließen (das Command Center hält die
+    // Welt an, ein eben benutztes Tor schließt dort nicht zu Ende)
+    std::vector<int> free;
+    for (size_t i = 0; i < stargates.size(); ++i)
+        if (stargates[i].state == GateState::Idle || stargates[i].state == GateState::Closing)
+            free.push_back(static_cast<int>(i));
+    if (free.empty()) return false;
+    Stargate& g = stargates[static_cast<size_t>(free[static_cast<size_t>(RandInt(0, static_cast<int>(free.size()) - 1))])];
+    g.state = GateState::Open;
+    g.t = 0.0f;
+    g.toCommand = false;
+    g.playerId = ps.id;
+    g.awayT = 0.0f;
     BuildTrooperBlocks();
+    const Vector3 exit = GateExit(g);
+    const float yaw = YawTowards({0.0f, 0.0f, 0.0f}, GateNormal(g));
     Trooper t;
     t.id = nextTrooperId++;
     t.playerId = ps.id;
-    t.pos = {sp->pos.x, 0.0f, sp->pos.z};
-    t.home = t.pos;
-    t.yaw = sp->yaw;
-    t.formYaw = t.yaw;
+    t.pos = exit;
+    t.home = exit;
+    t.yaw = yaw;
+    t.formYaw = yaw;
     troopers.push_back(t);
-    // Mit Kameraden und Bodenpiraten (KI, Ai.cpp)
-    SpawnMates(t);
-    for (int i = 0; i < cfg::GROUND_PIRATE_GROUPS; ++i) SpawnPirateGroup(t.pos);
-    pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
-    ps.role = PlayerRole::Trooper;
     ps.trooperId = t.id;
     ps.trooperInput = TrooperInput{};
-    ps.trooperInput.yaw = t.yaw;
-    sp->vel = {0.0f, 0.0f, 0.0f};
-    sp->hidden = true;
+    ps.trooperInput.yaw = yaw;
+    ps.sgArrive = std::clamp(mates, 0, cfg::SG_MATES_MAX);
+    ps.sgArriveT = cfg::GATE_MATE_INTERVAL;
+    ps.sgArrivePos = exit;
+    ps.sgArriveYaw = yaw;
+    ps.sgPirates = 0;
+    ps.sgTime = 0.0f;
+    ps.sgEnded = 0;
+    // Bodenpiraten (KI, Ai.cpp), weit genug vom Tor
+    for (int i = 0; i < cfg::GROUND_PIRATE_GROUPS; ++i) SpawnPirateGroup(t.pos);
+    pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
+    SoundAt(Sfx::Discover, exit, 0.8f, 0.0f, ps.id);
     return true;
 }
 
-void World::EndTrooper(PlayerState& ps) {
-    if (ps.role != PlayerRole::Trooper) return;
-    Ship* sp = PlayerShip(ps);
-    if (const Trooper* t = FindTrooper(ps.trooperId); t && sp) {
-        sp->pos.x = t->pos.x;
-        sp->pos.z = t->pos.z;
-        sp->yaw = t->yaw;
+// Punkte: Proben nur bei der Rückkehr, Bodenpiraten immer. Das Scoreboard
+// behält höchstens SG_LOG_MAX Einsätze; ist es voll, fällt der schwächste
+// heraus (nie der gerade beendete).
+void World::EndSgMission(PlayerState& ps, bool success, bool record) {
+    const Trooper* t = FindTrooper(ps.trooperId);
+    if (!t) return;
+    if (record) {
+        SgRecord r;
+        r.number = ps.sgLog.empty() ? 1 : ps.sgLog.back().number + 1;
+        r.success = success;
+        r.samples = success ? t->samples : 0;
+        r.pirates = ps.sgPirates;
+        r.points = r.samples * cfg::SG_POINTS_SAMPLE + r.pirates * cfg::SG_POINTS_PIRATE + (success ? cfg::SG_POINTS_RETURN : 0);
+        r.seconds = ps.sgTime;
+        ps.sgLog.push_back(r);
+        if (ps.sgLog.size() > static_cast<size_t>(cfg::SG_LOG_MAX)) {
+            auto worst = std::min_element(ps.sgLog.begin(), ps.sgLog.end() - 1,
+                                          [](const SgRecord& a, const SgRecord& b) { return a.points < b.points; });
+            ps.sgLog.erase(worst);
+        }
+        ps.sgEnded = success ? 1 : 2;
     }
     // Mit der Figur gehen ihre Kameraden; ist danach kein Spieler mehr zu
     // Fuß, auch die Bodenpiraten.
+    const int id = ps.trooperId;
     troopers.erase(std::remove_if(troopers.begin(), troopers.end(),
-                                  [&](const Trooper& t) {
-                                      return t.id == ps.trooperId || (t.playerId < 0 && t.kind == TrooperKind::Mate && t.leaderId == ps.trooperId);
+                                  [&](const Trooper& o) {
+                                      return o.id == id || (o.playerId < 0 && o.kind == TrooperKind::Mate && o.leaderId == id);
                                   }),
                    troopers.end());
-    if (std::none_of(troopers.begin(), troopers.end(), [](const Trooper& t) { return t.playerId >= 0; })) troopers.clear();
-    if (sp) sp->hidden = false;
-    ps.role = PlayerRole::Pilot;
+    if (std::none_of(troopers.begin(), troopers.end(), [](const Trooper& o) { return o.playerId >= 0; })) troopers.clear();
+    for (Stargate& g : stargates) {
+        if (g.playerId != ps.id || g.state == GateState::Idle || g.state == GateState::Closing) continue;
+        g.state = GateState::Closing;
+        g.t = 0.0f;
+    }
     ps.trooperId = -1;
     ps.trooperInput = TrooperInput{};
+    ps.sgArrive = 0;
+}
+
+// Je Spieler im Einsatz: Dauer, nachkommende Kameraden und die Rückkehr. Hat
+// die Figur genug Proben und ist sie oder ein Kamerad nah an einem ruhenden
+// Tor, wird es angewählt; ist es offen, führt die oberste Stufe hinein.
+// Danach die Zustände aller Tore.
+void World::UpdateStargates(float dt) {
+    for (PlayerState& ps : players) {
+        const Trooper* t = ps.role == PlayerRole::Trooper ? FindTrooper(ps.trooperId) : nullptr;
+        if (!t) continue;
+        ps.sgTime += dt;
+        ps.sgArriveT -= dt;
+        if (ps.sgArrive > 0 && ps.sgArriveT <= 0.0f) {
+            const Trooper leader = *t;   // Kopie: SpawnMate vergrößert troopers
+            int slot = 0;
+            for (const Trooper& m : troopers)
+                if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == leader.id) ++slot;
+            SpawnMate(leader, slot, ps.sgArrivePos, ps.sgArriveYaw);
+            --ps.sgArrive;
+            ps.sgArriveT = cfg::GATE_MATE_INTERVAL;
+            t = FindTrooper(ps.trooperId);
+        }
+        if (t->down || t->samples < cfg::SAMPLE_GOAL) continue;
+        bool busy = false;
+        for (const Stargate& g : stargates)
+            if (g.playerId == ps.id && g.toCommand && g.state != GateState::Idle) busy = true;
+        if (busy) continue;
+        for (Stargate& g : stargates) {
+            if (g.state != GateState::Idle) continue;
+            bool near = Dist2D(g.pos, t->pos) < cfg::GATE_RETURN_RANGE;
+            for (const Trooper& m : troopers)
+                if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == t->id && !m.down &&
+                    Dist2D(g.pos, m.pos) < cfg::GATE_RETURN_RANGE)
+                    near = true;
+            if (!near) continue;
+            g.state = GateState::Dialing;
+            g.t = 0.0f;
+            g.toCommand = true;
+            g.playerId = ps.id;
+            g.awayT = 0.0f;
+            SoundAt(Sfx::ScanOn, g.pos, 1.0f, 0.0f, ps.id);
+            Notify(ps, "Stargate wird angewählt ...", Color{150, 210, 255, 255});
+            break;
+        }
+    }
+
+    for (Stargate& g : stargates) {
+        g.t += dt;
+        PlayerState* ps = g.playerId >= 0 ? FindPlayer(g.playerId) : nullptr;
+        const Trooper* t = ps ? FindTrooper(ps->trooperId) : nullptr;
+        auto close = [&]() {
+            g.state = GateState::Closing;
+            g.t = 0.0f;
+        };
+        switch (g.state) {
+            case GateState::Idle: break;
+            case GateState::Dialing:
+                if (!t) close();
+                else if (g.t >= cfg::GATE_DIAL) {
+                    g.state = GateState::Open;
+                    g.t = 0.0f;
+                    SoundAt(Sfx::Discover, g.pos, 1.0f, 0.0f, ps->id);
+                    Notify(*ps, "Stargate offen: die Treppe hinauf und hindurch", Color{150, 210, 255, 255});
+                }
+                break;
+            case GateState::Open:
+                if (!g.toCommand) {
+                    // Ankunft: zu, wenn alle durch sind (der letzte ist eine
+                    // Sekunde unterwegs) oder spätestens nach GATE_ARRIVE_MAX
+                    if (!t || (ps->sgArrive == 0 && ps->sgArriveT <= -1.0f) || g.t >= cfg::GATE_ARRIVE_MAX) close();
+                    break;
+                }
+                if (!t) {
+                    close();
+                    break;
+                }
+                {
+                    bool near = !t->down && Dist2D(g.pos, t->pos) < cfg::GATE_RETURN_RANGE;
+                    for (const Trooper& m : troopers)
+                        if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == t->id && !m.down &&
+                            Dist2D(g.pos, m.pos) < cfg::GATE_RETURN_RANGE)
+                            near = true;
+                    g.awayT = near ? 0.0f : g.awayT + dt;
+                }
+                // Im Einzelspieler gehen die Kameraden mit dem Spieler durch
+                // (die Ansicht wechselt dann ohnehin ins Command Center).
+                if (!t->down && InGatePassage(g, t->pos)) {
+                    SoundAt(Sfx::Dock, g.pos, 1.0f, 0.0f, ps->id);
+                    EndSgMission(*ps, true);
+                } else if (g.awayT >= cfg::GATE_IDLE_CLOSE) {
+                    close();
+                }
+                break;
+            case GateState::Closing:
+                if (g.t >= cfg::GATE_CLOSE) {
+                    g.state = GateState::Idle;
+                    g.t = 0.0f;
+                    g.toCommand = false;
+                    g.playerId = -1;
+                }
+                break;
+        }
+    }
 }
 
 // ===========================================================================
@@ -185,6 +434,9 @@ void World::EndTrooper(PlayerState& ps) {
 // und alles außerhalb des Spielfelds (Felswall, dort endet das Feld ohnehin).
 // Stationsteile zählen nur, wenn sie bei der aktuellen Ausbaustufe stehen;
 // zu Fuß kann man nichts abliefern, die Stufe ändert sich also nicht.
+// Die Treppe vor jedem Stargate besteht aus einer Kapsel je Stufe (quer zur
+// Treppe, Radius = halbe Stufentiefe); jede ist nur so viel höher als die
+// vorige, dass die Figur ohne Sprung hinaufsteigt.
 void World::BuildTrooperBlocks() {
     trooperBlocks.clear();
     auto add = [&](int model, Vector3 pos, float yaw, float scale, float yScale) {
@@ -220,6 +472,18 @@ void World::BuildTrooperBlocks() {
         for (const StationPart& p : st.parts)
             if (p.stage <= stStage) add(p.model, Vector3Add(st.pos, p.offset), p.yaw, p.scale, 0.0f);
     }
+    const float r = cfg::GATE_STAIR_DEPTH / (2.0f * kStairSteps), half = cfg::GATE_STAIR_WIDTH * 0.5f - r;
+    for (const Stargate& g : stargates) {
+        const float top = GateStairTop(g);
+        if (top <= 0.0f) continue;
+        const Vector3 n = GateNormal(g), side = GateRight(g);
+        for (int i = 0; i < kStairSteps; ++i) {
+            const float along = kGateDepth * g.scale + cfg::GATE_STAIR_DEPTH * (kStairSteps - 0.5f - i) / kStairSteps;
+            const Vector3 c = Vector3Add(g.pos, Vector3Scale(n, along));
+            const Vector3 a = Vector3Subtract(c, Vector3Scale(side, half)), b = Vector3Add(c, Vector3Scale(side, half));
+            trooperBlocks.push_back({{a.x, a.z}, {b.x, b.z}, r, StairStepTop(top, i)});
+        }
+    }
 }
 
 bool World::TrooperBlocked(Vector3 p) const {
@@ -238,18 +502,17 @@ bool World::TrooperLineClear(Vector3 a, Vector3 b) const {
     return true;
 }
 
-bool World::NearestGate(Vector3 p, Vector3* out) const {
-    static const int gateA = ModelId("gate_simple"), gateB = ModelId("gate_complex");
-    float best = 1e9f;
-    for (const Deco& d : decos) {
-        if (d.model != gateA && d.model != gateB) continue;
-        const float dist = Dist2D(p, d.pos);
-        if (dist < best) {
-            best = dist;
-            *out = d.pos;
+int World::NearestGate(Vector3 p) const {
+    int best = -1;
+    float bestD = 1e9f;
+    for (size_t i = 0; i < stargates.size(); ++i) {
+        const float d = Dist2D(p, stargates[i].pos);
+        if (d < bestD) {
+            bestD = d;
+            best = static_cast<int>(i);
         }
     }
-    return best < 1e9f;
+    return best;
 }
 
 int World::SampleTarget(Vector3 p, float range) const {
@@ -349,9 +612,12 @@ void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
 // unbegrenzt Ersatzmunition.
 // Schild: lädt sich nach TROOPER_REGEN_DELAY Sekunden ohne Treffer wieder auf.
 // Gefallene (DamageTrooper) nehmen keine Eingaben mehr an. Der Spieler steht
-// nach TROOPER_RESPAWN Sekunden am Ausstiegspunkt wieder auf, Kameraden nach
+// nach TROOPER_RESPAWN Sekunden am Ankunftstor wieder auf, Kameraden nach
 // MATE_RESPAWN neben ihrem Spieler; Bodenpiraten verschwinden nach 8 s.
+// Steht beim Spieler dann kein Kamerad mehr (das ganze Team ist gefallen),
+// ist der Einsatz gescheitert: zurück ins Command Center ohne Punkte für Proben.
 void World::UpdateTroopers(float dt) {
+    UpdateStargates(dt);
     UpdatePirateGroups(dt);
     for (auto& t : troopers) {
         if (t.playerId < 0 && !t.down) UpdateTrooperAi(t, dt);
@@ -400,7 +666,10 @@ void World::UpdateTroopers(float dt) {
                 t.sampleT = 0.0f;
                 SoundAt(Sfx::MineDone, t.pos, 1.0f, 0.0f, t.playerId);
                 if (PlayerState* owner = FindPlayer(t.playerId))
-                    Notify(*owner, Fmt("Probe genommen (%d / %d)", t.samples, cfg::SAMPLE_GOAL), Color{255, 225, 90, 255});
+                    Notify(*owner,
+                           t.samples >= cfg::SAMPLE_GOAL ? Fmt("Probe genommen (%d / %d): zurück zu einem Stargate!", t.samples, cfg::SAMPLE_GOAL)
+                                                         : Fmt("Probe genommen (%d / %d)", t.samples, cfg::SAMPLE_GOAL),
+                           Color{255, 225, 90, 255});
             }
         }
         if (t.reloadT > 0.0f) {
@@ -442,12 +711,17 @@ void World::UpdateTroopers(float dt) {
         t.targetId = -1;
         t.seesTarget = false;
     };
+    std::vector<int> failed;   // Spieler, deren ganzes Team gefallen ist
     for (auto& t : troopers) {
         if (!t.down) continue;
         if (t.playerId >= 0 && t.downT >= cfg::TROOPER_RESPAWN) {
+            PlayerState* ps = FindPlayer(t.playerId);
+            if (ps && ps->sgArrive == 0 && !TeamStanding(*this, t)) {
+                failed.push_back(ps->id);
+                continue;
+            }
             revive(t, t.home);
-            if (PlayerState* ps = FindPlayer(t.playerId))
-                Notify(*ps, "Zurück am Ausstiegspunkt", Color{150, 210, 255, 255});
+            if (ps) Notify(*ps, "Zurück am Ankunftstor", Color{150, 210, 255, 255});
         } else if (t.playerId < 0 && t.kind == TrooperKind::Mate && t.downT >= cfg::MATE_RESPAWN) {
             const Trooper* leader = FindTrooper(t.leaderId);
             if (leader && !leader->down) revive(t, MateSlot(*leader, t.slot));
@@ -456,6 +730,11 @@ void World::UpdateTroopers(float dt) {
     troopers.erase(std::remove_if(troopers.begin(), troopers.end(),
                                   [](const Trooper& t) { return t.down && t.kind == TrooperKind::Pirate && t.playerId < 0 && t.downT > 8.0f; }),
                    troopers.end());
+    for (int id : failed)
+        if (PlayerState* ps = FindPlayer(id)) {
+            Notify(*ps, "Das ganze Team ist gefallen. Einsatz gescheitert.", Color{255, 110, 90, 255});
+            EndSgMission(*ps, false);
+        }
 }
 
 // Das Geschoss startet etwas rechts unterhalb der Augen (an der Waffe) und
@@ -530,30 +809,30 @@ void World::DamageTrooper(Trooper& t, const Bullet& b) {
         if (PlayerState* ps = playerOf(&t)) Notify(*ps, "Ein Kamerad ist gefallen", bad);
     } else if (PlayerState* ps = playerOf(FindTrooper(b.ownerTrooper))) {
         Notify(*ps, "Bodenpirat ausgeschaltet", Color{150, 255, 170, 255});
+        ++ps->sgPirates;
     }
 }
 
 // ===========================================================================
 // KI-Figuren erzeugen
 // ===========================================================================
-// Kameraden: auf ihren Plätzen der Formation, mit den drei anderen Militär-
-// Häuten (der Spieler selbst wäre Haut 0).
-void World::SpawnMates(const Trooper& leader) {
-    for (int i = 0; i < std::min(cfg::SP_MATES, 3); ++i) {
-        Trooper m;
-        m.id = nextTrooperId++;
-        m.faction = leader.faction;
-        m.kind = TrooperKind::Mate;
-        m.ai = TrooperAiState::Follow;
-        m.leaderId = leader.id;
-        m.slot = i;
-        m.skin = i + 1;
-        m.pos = MateSlot(leader, i);
-        m.home = m.pos;
-        m.yaw = leader.yaw;
-        m.input.yaw = m.yaw;
-        troopers.push_back(m);
-    }
+// Kamerad: kommt am Ankunftstor heraus (pos, Blick yaw) und läuft dann zu
+// seinem Platz in der Formation. Häute: die drei anderen Militär-Häute (der
+// Spieler selbst wäre Haut 0).
+void World::SpawnMate(const Trooper& leader, int slot, Vector3 pos, float yaw) {
+    Trooper m;
+    m.id = nextTrooperId++;
+    m.faction = leader.faction;
+    m.kind = TrooperKind::Mate;
+    m.ai = TrooperAiState::Follow;
+    m.leaderId = leader.id;
+    m.slot = slot;
+    m.skin = slot % 3 + 1;
+    m.pos = pos;
+    m.home = pos;
+    m.yaw = yaw;
+    m.input.yaw = yaw;
+    troopers.push_back(m);
 }
 
 // Bodenpiraten: Gruppe von GROUND_PIRATE_MIN bis _MAX Figuren rund um einen

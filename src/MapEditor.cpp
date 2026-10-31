@@ -194,7 +194,7 @@ MapEditorScreen::~MapEditorScreen() {
 }
 
 void MapEditorScreen::Update(float dt) {
-    world_.time += dt;   // Züge fahren, Raketen starten, Tore leuchten (Render.cpp); Rover stehen hier still
+    world_.time += dt;   // Züge fahren, Raketen starten (Render.cpp); Rover stehen hier still
     if (uploadNet_) UpdateUpload(dt);
     if (msgT_ > 0.0f) msgT_ -= dt;
     if (backArmed_ > 0.0f) backArmed_ -= dt;

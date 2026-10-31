@@ -32,7 +32,7 @@
 //   WorldGen.cpp   Aufbau: Mondoberfläche, Stationen, Lagerstätten
 //   MapAnim.cpp    Kartenanimation: Rover, Monorail zwischen Stationen, Raketen (nur Kulisse)
 //   Ai.cpp         KI der Piraten/Händler, der Kameraden und Bodenpiraten zu Fuß und der Autopilot (Simulation)
-//   Trooper.cpp    Trupp zu Fuß (FPS-Modus): Bewegung, Hindernisse, Schüsse, Treffer, KI-Figuren erzeugen
+//   Trooper.cpp    Trupp zu Fuß (FPS-Modus): Rolle, Einsatz, Stargates, Bewegung, Hindernisse, Schüsse, Treffer, KI-Figuren erzeugen
 //   src/Render.cpp World::Draw (nur im Client)
 //
 // Abhängigkeiten: nur raylib.h/raymath.h (Datentypen wie Vector3/Color und
@@ -274,8 +274,10 @@ struct RoverBlock {
 };
 
 // ---------------------------------------------------------------------------
-// Trupp zu Fuß (FPS-Modus, Trooper.cpp). Im Einzelspieler steigt der Spieler
-// zum Ausprobieren über die Pause aus dem Schiff aus (StartTrooper).
+// Trupp zu Fuß (FPS-Modus, Trooper.cpp). Im Einzelspieler wählt der Spieler
+// nach "Neues Spiel"/"Fortsetzen" die Rolle; als SG-Team geht er vom Command
+// Center (src/CommandCenter.cpp) durch ein Stargate auf die Mondkarte
+// (StartSgMission) und kehrt mit den Proben zurück.
 // ---------------------------------------------------------------------------
 // Rolle eines Spielers: Pilot (Schiff) oder Trupp (Figur zu Fuß).
 enum class PlayerRole { Pilot = 0, Trooper = 1 };
@@ -351,6 +353,54 @@ struct TrooperBlock {
     Vector2 a{}, b{};
     float r = 1.0f;
     float h = 1.0f;
+};
+
+// Stargates (Trooper.cpp): Zustand der Tore aus der Deko (gate_simple,
+// gate_complex). Nur SG-Teams benutzen sie, Schiffe fliegen einfach hindurch.
+// Ablauf: Ruhe -> Anwahl (GATE_DIAL) -> offen -> schließt (GATE_CLOSE) -> Ruhe.
+// Der Ring schwebt über dem Boden; davor steht eine Treppe (GateStairTop),
+// über die die Figuren das Wurmloch erreichen.
+enum class GateState { Idle = 0, Dialing = 1, Open = 2, Closing = 3 };
+
+struct Stargate {
+    Vector3 pos{};               // Fußpunkt (wie die Deko)
+    float yaw = 0.0f;
+    float scale = 6.0f;
+    GateState state = GateState::Idle;
+    float t = 0.0f;              // Sekunden im aktuellen Zustand
+    bool toCommand = false;      // Verbindung: true = Rückkehr ins Command Center, false = Ankunft von dort
+    int playerId = -1;           // Spieler, dessen Team das Tor gerade benutzt
+    float awayT = 0.0f;          // offen zur Rückkehr: Sekunden ohne Teammitglied in der Nähe
+};
+
+// Aussehen eines Stargates in einem Bild (Render.cpp, Command Center):
+// Leuchten des Rings, Größe der Wurmloch-Fläche und Stärke des hellen Kegels
+// beim Öffnen, jeweils 0..1. GateLookAt rechnet es aus Zustand und Zeit darin.
+struct GateLook {
+    float glow = 0.0f;
+    float open = 0.0f;
+    float kawoosh = 0.0f;
+};
+GateLook GateLookAt(GateState state, float t);
+// Richtung (Länge 1), in die das Wurmloch zeigt: dort steht die Treppe, dort
+// kommt das Team heraus. Seitlich dazu GateRight.
+Vector3 GateNormal(const Stargate& g);
+Vector3 GateRight(const Stargate& g);
+// Höhe der obersten Treppenstufe über dem Boden (0 = keine Treppe nötig)
+float GateStairTop(const Stargate& g);
+// Ankunftspunkt: oberste Stufe direkt vor dem Wurmloch
+Vector3 GateExit(const Stargate& g);
+// Steht eine Figur an p im Wurmloch (oberste Stufe, vor der Fläche)?
+bool InGatePassage(const Stargate& g, Vector3 p);
+
+// Ein beendeter Einsatz (Scoreboard im Command Center, Spielstand).
+struct SgRecord {
+    int number = 0;              // laufende Nummer (1 = erster Einsatz)
+    bool success = false;        // durch das Stargate zurückgekehrt (sonst gescheitert)
+    int samples = 0;             // zurückgebrachte Proben
+    int pirates = 0;             // ausgeschaltete Bodenpiraten
+    int points = 0;
+    float seconds = 0.0f;        // Dauer
 };
 
 // Monorail-Strecke zwischen zwei Stationen (gerade, von Ende a nach Ende b).
@@ -547,10 +597,22 @@ struct PlayerState {
     float cueT = 0.0f;
 
     // Trupp zu Fuß (Trooper.cpp): Rolle, eigene Figur (Trooper::id, -1 =
-    // keine) und ihre Eingaben für den nächsten Update-Schritt.
+    // keine) und ihre Eingaben für den nächsten Update-Schritt. Rolle
+    // SG-Team ohne Figur heißt: im Command Center.
     PlayerRole role = PlayerRole::Pilot;
     int trooperId = -1;
     TrooperInput trooperInput;
+    // SG-Einsatz (Trooper.cpp)
+    PlayerRole lastRole = PlayerRole::Pilot;   // Einzelspieler: Rolle beim Speichern (Vorauswahl der Rollenwahl)
+    int sgMates = cfg::SG_MATES_MAX;  // im Command Center gewählte NPC-Kameraden
+    int sgArrive = 0;            // Kameraden, die noch durch das Tor kommen
+    float sgArriveT = 0.0f;      // Sekunden bis zum nächsten
+    Vector3 sgArrivePos{};       // ... dort (Ankunftstor)
+    float sgArriveYaw = 0.0f;
+    int sgPirates = 0;           // im Einsatz ausgeschaltete Bodenpiraten (Spieler und Kameraden)
+    float sgTime = 0.0f;         // Dauer des laufenden Einsatzes
+    int sgEnded = 0;             // Einsatz gerade zu Ende: 1 zurückgekehrt, 2 gescheitert (das Command Center zeigt es und setzt es zurück)
+    std::vector<SgRecord> sgLog; // eigene Einsätze, älteste zuerst (Scoreboard)
 };
 
 class World {
@@ -644,13 +706,24 @@ public:
     // Laufende Mission abbrechen (Absturz, Abmelden): Das Angebot kommt zurück.
     void FailMission(PlayerState& ps, bool notify);
 
-    // --- Trupp zu Fuß (Trooper.cpp) ------------------------------------------
-    // Einzelspieler (Test, Pausenmenü): Die Figur steigt unter dem Schiff aus,
-    // das Schiff wird so lange versteckt. false = geht gerade nicht (angedockt,
-    // Absturz, schon zu Fuß). EndTrooper: zurück ins Schiff, das an die
-    // Stelle der Figur kommt.
-    bool StartTrooper(PlayerState& ps);
-    void EndTrooper(PlayerState& ps);
+    // --- Trupp zu Fuß und Stargates (Trooper.cpp) ---------------------------
+    // Rolle wechseln (Einzelspieler: Rollenwahl, Command Center,
+    // Stationsfenster). SG-Team: dockt ab und versteckt das Schiff (es wartet
+    // dort, niemand greift es an). Pilot: beendet einen laufenden Einsatz ohne
+    // Wertung, das Schiff erscheint wieder, wo es stand.
+    void SetRole(PlayerState& ps, PlayerRole role);
+    // Stargates aus den Tor-Dekos anlegen (nur, solange es noch keine gibt).
+    void BuildStargates();
+    // Einsatz beginnen: Das Team kommt aus dem Command Center durch ein
+    // zufälliges freies Stargate, der Spieler zuerst, dann mates
+    // NPC-Kameraden nacheinander. false = kein Tor auf der Karte oder nicht
+    // in der Rolle SG-Team.
+    bool StartSgMission(PlayerState& ps, int mates);
+    // Einsatz beenden: Die Figuren des Teams verschwinden, der Spieler ist
+    // wieder im Command Center (sgEnded). success = durch das Stargate
+    // zurückgekehrt. record = false: kein Eintrag im Scoreboard (Speichern
+    // mitten im Einsatz, Rollenwechsel).
+    void EndSgMission(PlayerState& ps, bool success, bool record = true);
     Trooper* FindTrooper(int id);
     const Trooper* FindTrooper(int id) const;
     // Bewegung einer Figur aus ihren Eingaben, ohne Zufall (wie UpdateShipPhysics).
@@ -659,8 +732,8 @@ public:
     bool TrooperBlocked(Vector3 p) const;
     // Freie Sichtlinie von a nach b (kein TrooperBlock dazwischen)?
     bool TrooperLineClear(Vector3 a, Vector3 b) const;
-    // Nächstes Tor (Deko gate_simple/gate_complex) zum Punkt p, false = keins
-    bool NearestGate(Vector3 p, Vector3* out) const;
+    // Nächstes Stargate zum Punkt p (Index in stargates), -1 = keins
+    int NearestGate(Vector3 p) const;
     // Nächste gelbe Lagerstätte bis range (waagerecht) um p: ID oder -1
     int SampleTarget(Vector3 p, float range) const;
 
@@ -736,6 +809,7 @@ public:
     std::vector<RoverBlock> roverBlocks;   // Hindernisse, um die die Rover herumfahren
     std::vector<Trooper> troopers;         // Figuren zu Fuß (Trupp)
     std::vector<TrooperBlock> trooperBlocks;   // Hindernisse der Figuren (BuildTrooperBlocks)
+    std::vector<Stargate> stargates;       // Tore der SG-Teams (BuildStargates, aus der Deko)
     std::vector<StationRail> rails;        // Monorail zwischen den Stationen
     std::vector<RocketPad> pads;           // Raketenstartplätze, einer je Station
     std::string mapFile;                   // Einzelspieler: Datei der eigenen Karte (leer = Zufallskarte), für den Spielstand
@@ -837,11 +911,12 @@ public:
     void EndMission(Mission& m, bool success, bool notify = true);
     void Cue(PlayerState& ps, MissionType t, int phase);
     // Trupp (Trooper.cpp)
-    void BuildTrooperBlocks();             // aus Deko und Stationsteilen (StartTrooper)
+    void BuildTrooperBlocks();             // aus Deko, Stationsteilen und Treppen der Stargates (StartSgMission)
     void UpdateTroopers(float dt);         // Bewegung, Nachladen, Schießen (Update)
+    void UpdateStargates(float dt);        // Ankunft, Rückkehr, Zustände der Tore (UpdateTroopers)
     void FireTrooperBullet(Trooper& t);
     void DamageTrooper(Trooper& t, const Bullet& b);   // Treffer eines Bodengeschosses (UpdateBullets)
-    void SpawnMates(const Trooper& leader);            // NPC-Kameraden neben dem Spieler (StartTrooper)
+    void SpawnMate(const Trooper& leader, int slot, Vector3 pos, float yaw);   // NPC-Kamerad kommt durchs Tor
     bool SpawnPirateGroup(Vector3 team);               // Gruppe weit genug vom Team, bei einem gelben Kristall
     void UpdatePirateGroups(float dt);                 // fehlende Gruppen nach GROUND_PIRATE_RESPAWN ersetzen
     void UpdateTrooperAi(Trooper& t, float dt);        // Eingabe einer KI-Figur (Ai.cpp)

@@ -154,21 +154,33 @@ klickt, das **Steuerkreuz** wählt in Knopflisten wie die Pfeiltasten, **B** (Kr
 (Dreieck) wie F ab. Lautstärkeregler: A halten und ziehen, oder Steuerkreuz links/rechts.
 Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 
-**Zu Fuß als SG-Team** (FPS-Modus, bisher nur im Einzelspieler zum Ausprobieren): In der Pause
-steigt man mit *Als SG-Team aussteigen* unter dem Schiff aus und läuft in der Ego-Ansicht über
-den Mond; *Ins Schiff einsteigen* holt das Schiff an diese Stelle zurück. Gespeichert wird immer
-mit dem Schiff. Etwa 40 % der Kristalle sind **gelb** und ohne Scanner zu sehen: Schiffe bauen sie
+**Zu Fuß als SG-Team** (FPS-Modus, bisher nur im Einzelspieler): Nach *Neues Spiel* und
+*Fortsetzen* wählst du die Rolle: **Pilot** (mit dem Schiff wie bisher) oder **SG-Team**. Als
+SG-Team beginnst du im **Command Center**. Dort stellst du mit *Kameraden* 0 bis 3 Kameraden ein,
+rechts steht das Scoreboard deiner Einsätze (beste zuerst). *Tor anwählen* öffnet nach 3 Sekunden
+das Wurmloch, und das Team kommt auf der Mondkarte an einem der Stargates heraus, die Kameraden
+kurz nacheinander. *Als Pilot spielen* führt zurück ins Schiff; umgekehrt bringt dich an der
+Handelsstation der Knopf *Als SG-Team spielen* ins Command Center.
+
+Etwa 40 % der Kristalle sind **gelb** und ohne Scanner zu sehen: Schiffe bauen sie
 nicht ab, erst muss zu Fuß eine Probe genommen werden (3 Sekunden halten). Danach ist der Kristall
 wieder grün, und Piloten wie Händler können ihn abbauen.
 
-Mit dir steigen drei **Kameraden** (SG1-2 bis SG1-4) aus. Sie folgen dir in einer Formation, die
+Mit dir kommen bis zu drei **Kameraden** (SG1-2 bis SG1-4) durch das Tor. Sie folgen dir in einer Formation, die
 sich nach deiner Laufrichtung richtet (drehst du dich nur um, bleiben sie, wo sie sind), und
 schießen auf Gegner in Sichtweite; gefallene Kameraden kommen nach 20 Sekunden zurück. An
 gelben Kristallen, mindestens 60 m entfernt, streifen Gruppen von zwei bis vier **Bodenpiraten**
 umher. Sie greifen an, sobald sie dich oder einen Kameraden sehen, und ziehen sich mit wenig Schild
 zurück. Ist eine Gruppe ausgeschaltet, kommt später eine neue. Der Schild lädt sich nach 5 Sekunden
 ohne Treffer wieder auf. Fällst du, verlierst du deine getragenen Proben und stehst nach
-5 Sekunden am Ausstiegspunkt wieder auf.
+5 Sekunden am Ankunftstor wieder auf, solange noch ein Kamerad steht. Fällt das ganze Team, ist
+der Einsatz gescheitert.
+
+**Rückkehr:** Mit 5 Proben gehst du zu einem Stargate (näher als 12 m, auch ein Kamerad dort
+genügt). Es wird angewählt und öffnet sich nach 3 Sekunden; die Treppe hinauf und hindurch, und
+das Team ist zurück im Command Center. Punkte: 100 je Probe, 25 je ausgeschaltetem Bodenpiraten
+und 200 für die Rückkehr (ein gescheiterter Einsatz zählt nur die Piraten). *Pause → Einsatz
+abbrechen* zählt als gescheitert, *Speichern & zum Hauptmenü* verwirft einen laufenden Einsatz.
 
 | Aktion | Tastatur / Maus | Xbox | PlayStation |
 |---|---|---|---|
@@ -196,13 +208,15 @@ ohne Treffer wieder auf. Fällst du, verlierst du deine getragenen Proben und st
 **Startmenü:** Neues Spiel · Fortsetzen · Mehrspieler · Karteneditor · Simulation (spielt selbst) · Optionen · Beenden
 
 Gibt es eigene Karten, fragt *Neues Spiel* zuerst nach der Karte: *Standardkarte (Zufall)* wie
-bisher oder eine Karte aus dem Karteneditor. Der Spielstand merkt sich die Karte.
+bisher oder eine Karte aus dem Karteneditor. Der Spielstand merkt sich die Karte. Danach (und nach
+*Fortsetzen*) kommt die Rollenwahl: Pilot oder SG-Team (siehe „Zu Fuß als SG-Team“).
 
 Auf der Karte ist Leben (nur Kulisse, ohne Einfluss aufs Spiel, auch im Mehrspieler): Rover fahren
 um Felsen und Krater herum und hinterlassen Reifenspuren, die nach einer einstellbaren Zeit
 verblassen (Optionen → Grafik). Eine Monorail verbindet die Stationen; der Zug hält an jedem Ende
 10 Sekunden. Neben jeder Station startet oder landet alle 20 bis 30 Sekunden eine Rakete. Fünf Tore
-öffnen einmal pro Minute kurz ein leuchtendes Wurmloch, und entdeckte Kristalle glimmen.
+sind die Stargates der SG-Teams und leuchten, wenn ein Team sie benutzt, und entdeckte Kristalle
+glimmen.
 
 - **Scanner (E):** Kristall-Lagerstätten sind unsichtbar, bis der Scanner sie erfasst.
   Der Scanner hat 10 Energieeinheiten und verbraucht 1 pro Sekunde, er läuft also höchstens
@@ -246,7 +260,7 @@ verblassen (Optionen → Grafik). Eine Monorail verbindet die Stationen; der Zug
   - Abgeschossene Schiffe stürzen ab und hinterlassen ein **Wrack**, das du wie eine
     Lagerstätte abbauen kannst (orangefarbener Lichtstrahl).
   - Die Geschütztürme der Stationen schützen dich vor Piraten.
-- **Fortsetzen:** Das Spiel speichert automatisch beim Andocken und beim Schließen des Fensters,
+- **Fortsetzen:** Das Spiel speichert automatisch beim Andocken, nach jedem SG-Einsatz und beim Schließen des Fensters,
   außerdem über *Pause → Speichern & zum Hauptmenü*. Der Spielstand liegt als
   `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach Sieg oder Absturz wird er gelöscht.
 - **Simulation:** Ein Autopilot spielt selbst: scannen, abbauen, verkaufen, kämpfen, aufrüsten.
@@ -258,7 +272,7 @@ verblassen (Optionen → Grafik). Eine Monorail verbindet die Stationen; der Zug
   Links im Werkzeugfenster wählst du ein Segment, *Zufall generieren* füllt die Karte mit Kratern,
   Felsen und Fundstücken (Straßen, Monorail und Gebäude bleiben stehen). Bilden die
   Monorail-Schienen einen geschlossenen Kreis, fährt darauf ein Zug, im Editor und im Spiel.
-  Gesetzte Mondfahrzeuge fahren im Spiel los, gesetzte Tore leuchten einmal pro Minute auf. Die
+  Gesetzte Mondfahrzeuge fahren im Spiel los, gesetzte Tore sind Stargates für das SG-Team. Die
   Monorail zwischen den Stationen und die Raketenstartplätze zeigt der Editor mit an.
   Gespeichert wird im Ordner `karten` neben der ausführbaren Datei.
   *An Server senden* schickt die Karte an einen Mehrspieler-Server (Anmeldung mit Spielername und
@@ -362,10 +376,11 @@ Die Musikstücke von **dekker187** (erstellt mit Suno) liegen in `assets/music/`
 
 | Stück | Datei | Läuft … |
 |---|---|---|
-| *Main Menu Theme* | `main_menu_theme.mp3` | im Hauptmenü, in den Optionen aus dem Hauptmenü und in den Mehrspieler-Menüs (Serveradresse, Lobby, Anmeldung); Endlosschleife |
+| *Main Menu Theme* | `main_menu_theme.mp3` | im Hauptmenü, in den Optionen aus dem Hauptmenü, in der Rollenwahl und in den Mehrspieler-Menüs (Serveradresse, Lobby, Anmeldung); Endlosschleife |
 | *Lunar Silence 01–03* | `lunar_silence_01.mp3` … `_03.mp3` | im Spiel: Einzelspiel samt Pause und Endbildschirmen, Simulation, Mehrspieler-Spiel und Zuschauen; nacheinander, nach dem dritten wieder das erste |
 | *Entering Pirate Territory* | `enteringPirateTerritory.mp3` | im Spiel, solange die eigene Mini-Mission „Piraten abschießen“ läuft (Endlosschleife, beginnt jedes Mal von vorn) |
 | *Deep Space Horizon* | `deepSpaceHorizon.mp3` | einmal, sobald man das Ziel (100.000) erreicht; danach wieder die Spielmusik |
+| *Breathing Pulse* | `breathingPulse.mp3` | als SG-Team im Command Center, in den ersten 10 Sekunden eines Einsatzes und solange ein Stargate für die Rückkehr angewählt wird oder offen ist (Endlosschleife, beginnt jedes Mal von vorn) |
 
 Beim Wechsel zwischen den Stücken blendet die Musik weich über (das alte Stück wird in 1 s
 leiser, das neue in 1,5 s lauter). Menü- und Spielmusik, die gerade nicht laufen, werden angehalten
@@ -501,6 +516,7 @@ Mondschuerfer/
 │   ├── main.cpp          Fenster, Menüs, Spielzustände, Kamera
 │   ├── Render.cpp        3D-Darstellung und Effekte
 │   ├── Hud.cpp/.hpp      HUD, Radar, Stations- und Endbildschirme
+│   ├── CommandCenter.*   Command Center des SG-Teams (Kulisse, Team, Scoreboard)
 │   ├── Ui.cpp/.hpp       UI-Bausteine (Knöpfe, Schieberegler, Umschalter, Textfelder), Controller in Menüs
 │   ├── Options.cpp/.hpp  Bildschirm "Optionen" (Karteireiter Ton, Grafik, Steuerung)
 │   ├── TiltShift.cpp/.hpp Kameraeffekte: Tilt-Shift, Kantenglättung (MSAA), FXAA, Retro-Pixel (Werte aus den Optionen)
