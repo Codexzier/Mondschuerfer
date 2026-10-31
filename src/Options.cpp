@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Ton" (Musik
 // an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA, Stil-Look,
-// Schatten, Sandsturm, Triebwerksschweif, Treffer-Aufblitzen, Fahrspuren) und "Steuerung"
+// Schatten, Sandsturm, Triebwerksschweif, Treffer-Aufblitzen, Bodensteine, Fahrspuren) und "Steuerung"
 // (Tank-Steuerung an/aus, Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
@@ -29,8 +29,8 @@
 //      "Grafik":    Schieberegler für Tilt-Shift, Kantenglättung (MSAA),
 //                   FXAA und Stil-Look (alle umgesetzt in TiltShift.cpp),
 //                   für die Grafikeffekte Schatten, Sandsturm,
-//                   Triebwerksschweif und Treffer-Aufblitzen (Effects.cpp,
-//                   Render.cpp) sowie für die Dauer der Fahrspuren der Rover
+//                   Triebwerksschweif, Treffer-Aufblitzen und Bodensteine
+//                   (Effects.cpp, Render.cpp) sowie für die Dauer der Fahrspuren der Rover
 //                   (Render.cpp)
 //      "Steuerung": Umschalter Tank-Steuerung, feste Tabelle (kControls unten)
 //   5. Knopf "Zurück".
@@ -119,10 +119,10 @@ constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Höhe des Inhalts der einzelnen Seiten (in derselben Reihenfolge wie in Draw):
 //   Ton:       vier Zeilen, Hinweiszeile 42
-//   Grafik:    neun Zeilen, Hinweiszeile 42
+//   Grafik:    zehn Zeilen, Hinweiszeile 42
 //   Steuerung: eine Zeile (Tank-Steuerung), Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
 float SoundHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
-float GraphicsHeight() { return 9.0f * (kRowH + kRowGap) + 42.0f; }
+float GraphicsHeight() { return 10.0f * (kRowH + kRowGap) + 42.0f; }
 
 // Stufen des Reglers "Fahrspuren": so viele Sekunden bleiben die Reifenspuren
 // der Rover sichtbar (0 = keine Spuren). Die letzte Stufe ist
@@ -137,6 +137,7 @@ constexpr int kShadowSizes[] = {0, 1024, 2048, 4096};
 const char* const kPixelNames[] = {"Aus", "Retro-Pixel fein", "Retro-Pixel mittel", "Retro-Pixel grob"};
 const char* const kShadowNames[] = {"Aus", "Niedrig", "Mittel", "Hoch"};
 const char* const kTrailNames[] = {"Aus", "Kurz", "Mittel", "Lang"};
+const char* const kStoneNames[] = {"Aus", "Nur zu Fuß", "Immer"};
 float ControlsHeight() { return (kRowH + kRowGap) + 30.0f + 30.0f + kControlCount * kTableRowH; }
 
 // Gesamthöhe des Fensters: Rand 24, Überschrift 64, Karteireiter, Abstand 20,
@@ -288,7 +289,7 @@ void OptionsScreen::SetTrackLevel(int level, bool save) {
 // Treffer-Aufblitzen stehen in der Datei als Wert 0..1, Stufe = Zehntel.
 // Alle anderen Dateien lesen die Werte jedes Frame aus g_clientConfig.
 int OptionsScreen::EffectLevels(int row) {
-    return row == ROW_SAND || row == ROW_FLASH ? 11 : 4;
+    return row == ROW_SAND || row == ROW_FLASH ? 11 : row == ROW_STONES ? 3 : 4;
 }
 
 int OptionsScreen::EffectLevel(int row) {
@@ -302,6 +303,7 @@ int OptionsScreen::EffectLevel(int row) {
         case ROW_SAND: return static_cast<int>(std::lround(g_clientConfig.sandstorm * 10.0f));
         case ROW_TRAIL: return std::clamp(g_clientConfig.trail, 0, 3);
         case ROW_FLASH: return static_cast<int>(std::lround(g_clientConfig.hitFlash * 10.0f));
+        case ROW_STONES: return std::clamp(g_clientConfig.groundStones, 0, 2);
         default: return 0;
     }
 }
@@ -312,6 +314,7 @@ std::string OptionsScreen::EffectText(int row) {
         case ROW_PIXEL: return kPixelNames[level];
         case ROW_SHADOWS: return kShadowNames[level];
         case ROW_TRAIL: return kTrailNames[level];
+        case ROW_STONES: return kStoneNames[level];
         default: return level > 0 ? std::to_string(level * 10) + " %" : std::string("Aus");
     }
 }
@@ -324,6 +327,7 @@ void OptionsScreen::SetEffectLevel(int row, int level, bool save) {
         case ROW_SAND: g_clientConfig.sandstorm = level / 10.0f; break;
         case ROW_TRAIL: g_clientConfig.trail = level; break;
         case ROW_FLASH: g_clientConfig.hitFlash = level / 10.0f; break;
+        case ROW_STONES: g_clientConfig.groundStones = level; break;
         default: return;
     }
     if (save) g_clientConfig.Save();
@@ -359,7 +363,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_TILT;
         rows[n++] = ROW_MSAA;
         rows[n++] = ROW_FXAA;
-        for (int r = ROW_PIXEL; r <= ROW_FLASH; ++r) rows[n++] = r;
+        for (int r = ROW_PIXEL; r <= ROW_STONES; ++r) rows[n++] = r;
         rows[n++] = ROW_TRACKS;
     } else if (tab == TAB_CONTROLS) {
         rows[n++] = ROW_TANK;
@@ -447,7 +451,7 @@ bool OptionsScreen::Draw() {
         if (sel_ == ROW_MSAA) msaaStep = dir;
         if (sel_ == ROW_FXAA) fxaaStep = 0.1f * dir;
         if (sel_ == ROW_TRACKS) trackStep = dir;
-        if (sel_ >= ROW_PIXEL && sel_ <= ROW_FLASH) effectStep = dir;
+        if (sel_ >= ROW_PIXEL && sel_ <= ROW_STONES) effectStep = dir;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
             else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
@@ -642,13 +646,13 @@ bool OptionsScreen::Draw() {
         y += (kRowH + kRowGap) * s;
 
         // Zeilen der Grafikeffekte (Stil-Look, Schatten, Sandsturm,
-        // Triebwerksschweif, Treffer-Aufblitzen): alle gleich gebaut, ein
+        // Triebwerksschweif, Treffer-Aufblitzen, Bodensteine): alle gleich gebaut, ein
         // Regler mit EffectLevels Stufen (Wert 0 .. 1 wie bei der
         // Kantenglättung) und der Anzeige EffectText daneben.
         static const char* const kEffectNames[kEffectRows] = {"Stil-Look", "Schatten", "Sandsturm", "Triebwerksschweif",
-                                                              "Treffer-Aufblitzen"};
+                                                              "Treffer-Aufblitzen", "Bodensteine"};
         bool overEffect = false;
-        for (int row = ROW_PIXEL; row <= ROW_FLASH; ++row) {
+        for (int row = ROW_PIXEL; row <= ROW_STONES; ++row) {
             bool& dragging = draggingEffect_[row - ROW_PIXEL];
             const Rectangle rowR{x, y, iw, kRowH * s};
             const bool over = CheckCollisionPointRec(mouse, rowR);

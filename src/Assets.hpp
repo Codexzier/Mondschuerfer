@@ -93,6 +93,13 @@ public:
     // gleichmäßige Skalierung.
     void Draw(int id, Vector3 pos, float yaw, float scale, Color tint = WHITE, Vector3 emissive = {0, 0, 0});
 
+    // Eigene Dreiecke (rlBegin(RL_TRIANGLES) ... rlEnd() mit rlNormal3f je
+    // Fläche) mit derselben Beleuchtung wie die Modelle zeichnen: alles
+    // zwischen BeginLit() und EndLit(). Die Farbe kommt aus rlColor4ub, es gibt
+    // kein Leuchten. Render.cpp zeichnet so die Bodensteine.
+    void BeginLit();
+    void EndLit();
+
     // Abmessungen des geladenen Modells (lädt es bei Bedarf), schon um den
     // Kit-Versatz korrigiert. Zur Zeit nirgends benutzt: Die Spiellogik nimmt
     // ModelBounds() aus shared/Models.hpp, weil der Server keine Modelle lädt.

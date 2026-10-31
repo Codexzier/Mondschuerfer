@@ -237,7 +237,7 @@ void Minimap(const World& w) {
     for (const auto& d : w.deposits) {
         if (!d.revealed) continue;
         Vector2 m = map(d.pos);
-        DrawRectangleV({m.x - 2 * s, m.y - 2 * s}, {4 * s, 4 * s}, GOOD);
+        DrawRectangleV({m.x - 2 * s, m.y - 2 * s}, {4 * s, 4 * s}, d.sample == Sample::Yellow ? Color{255, 225, 90, 255} : GOOD);
     }
     for (const auto& wr : w.wrecks) {
         Vector2 m = map(wr.pos);
@@ -415,11 +415,13 @@ void DrawControls(float x, float y, float size, bool foot) {
 // ===========================================================================
 // HUD zu Fuß (Trupp, Ego-Ansicht)
 // ===========================================================================
-// Fadenkreuz in der Bildmitte (grau beim Nachladen), oben links Schild und
-// Munition (Magazin groß, Ersatz klein, beim Nachladen ein Balken), oben in
-// der Mitte ein Pfeil zum nächsten Tor mit Entfernung (Pfeil nach oben =
-// geradeaus). Die Tastenhilfe steht die ersten 60 s zu Fuß ganz da, danach
-// wie im Schiff mit gehaltener Taste H.
+// Fadenkreuz in der Bildmitte (grau beim Nachladen), oben links Schild,
+// Munition (Magazin groß, Ersatz klein, beim Nachladen ein Balken) und
+// getragene Proben, oben in der Mitte ein Pfeil zum nächsten Tor mit
+// Entfernung (Pfeil nach oben = geradeaus), unten in der Mitte die laufende
+// Probe bzw. der Hinweis "[E] halten" an einem gelben Kristall. Die
+// Tastenhilfe steht die ersten 60 s zu Fuß ganz da, danach wie im Schiff mit
+// gehaltener Taste H.
 static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
@@ -432,7 +434,8 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     DrawRectangleRec({cx - th * 0.5f, cy + gap, th, len}, cc);
     DrawCircleV({cx, cy}, 1.5f * s, cc);
 
-    Rectangle pr{16 * s, 16 * s, 300 * s, 170 * s};
+    const Color yellow{255, 225, 90, 255};
+    Rectangle pr{16 * s, 16 * s, 300 * s, 200 * s};
     Panel(pr);
     float x = pr.x + 18 * s, y = pr.y + 14 * s, bw = pr.width - 36 * s;
     Text("SG-TEAM", x, y, 20 * s, MUTED);
@@ -446,6 +449,22 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     Text(TextFormat("%d", t.mag), x, y, 36 * s, t.mag == 0 ? BAD : ACCENT);
     TextRight(TextFormat("/ %d", t.ammo), x + bw, y + 14 * s, 20 * s, t.ammo == 0 ? BAD : MUTED);
     if (t.reloadT > 0.0f) Bar({x, y + 42 * s, bw, 6 * s}, 1.0f - t.reloadT / cfg::TROOPER_RELOAD, Color{255, 200, 120, 255});
+    y += 56 * s;
+    Text("PROBEN", x, y, 18 * s, MUTED);
+    TextRight(TextFormat("%d / %d", t.samples, cfg::SAMPLE_GOAL), x + bw, y, 18 * s, yellow);
+
+    if (t.sampleId >= 0) {
+        const Rectangle hr{W * 0.5f - 300 * s, H - 110 * s, 600 * s, 80 * s};
+        Panel(hr);
+        TextCentered(TextFormat("PROBE WIRD GENOMMEN ...  %.1f / %.0f s", t.sampleT, cfg::SAMPLE_TIME), W * 0.5f, hr.y + 12 * s, 22 * s, yellow);
+        Bar({hr.x + 20 * s, hr.y + 44 * s, hr.width - 40 * s, 16 * s}, t.sampleT / cfg::SAMPLE_TIME, yellow);
+    } else if (w.SampleTarget(t.pos, cfg::SAMPLE_RANGE) >= 0) {
+        const std::string hint = controls::KeyHint(controls::Act::Scan) + " halten: Probe nehmen";
+        const float tw = Width(hint, 26 * s) + 40 * s;
+        const Rectangle hr{W * 0.5f - tw * 0.5f, H - 90 * s, tw, 50 * s};
+        Panel(hr);
+        TextCentered(hint, W * 0.5f, hr.y + 13 * s, 26 * s, yellow);
+    }
 
     Vector3 gate;
     if (w.NearestGate(t.pos, &gate)) {
@@ -639,6 +658,10 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
             } else if (p.cargo >= p.cargoMax) {
                 hint = "Lager voll! Zur Handelsstation fliegen.";
                 hc = Color{255, 200, 120, 255};
+            } else if (w.SampleTarget(p.pos, cfg::MINING_RANGE) >= 0) {
+                // Gelbe Kristalle baut kein Schiff ab (FPS-Modus)
+                hint = "Gelbe Kristalle: Erst muss ein SG-Team eine Probe nehmen.";
+                hc = Color{255, 225, 90, 255};
             }
             if (!hint.empty()) {
                 // Panel passt sich der Textbreite an (20 px Rand je Seite)

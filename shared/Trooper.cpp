@@ -1,13 +1,14 @@
 // ---------------------------------------------------------------------------
 // Trooper.cpp: Trupp zu Fuß (FPS-Modus) – Aussteigen und Einsteigen, Bewegung
-// mit Mondschwerkraft, Hindernisse aus Deko und Stationsteilen, Schießen und
-// Nachladen. Datentypen in World.hpp (Trooper, TrooperInput, TrooperBlock).
+// mit Mondschwerkraft, Hindernisse aus Deko und Stationsteilen, Schießen,
+// Nachladen und Proben an gelben Kristallen. Datentypen in World.hpp
+// (Trooper, TrooperInput, TrooperBlock, Sample).
 //
 // Wer benutzt die Datei?
 //   - World::Update ruft UpdateTroopers auf (nach den Spielern).
 //   - World::UpdateBullets fragt TrooperBlocked (Treffer der Bodengeschosse).
 //   - src/main.cpp: StartTrooper/EndTrooper (Pausenmenü), TrooperEye/
-//     TrooperAim für die Ego-Kamera. src/Hud.cpp: NearestGate.
+//     TrooperAim für die Ego-Kamera. src/Hud.cpp: NearestGate, SampleTarget.
 //
 // Bisher nur im Einzelspieler: Der Spieler steigt über die Pause aus dem
 // Schiff aus und läuft auf der Mondkarte herum. Rollenwahl, Stargates und
@@ -107,7 +108,7 @@ void World::EndTrooper(PlayerState& ps) {
 // Jedes Deko- und Stationsteil wird zu einer Kapsel: die Grundfläche aus
 // ModelBounds (gedreht und skaliert wie beim Zeichnen), entlang der längeren
 // Seite gestreckt, Radius = halbe kürzere Seite, oben flach in Höhe der
-// Oberkante. Ausgelassen werden flache Teile (unter 0,3 m), Teile über
+// Oberkante. Ausgelassen werden flache Teile (unter 0,1 m), Teile über
 // Kopfhöhe, Krater (man läuft über den Rand hinweg), Rover (fahren weg)
 // und alles außerhalb des Spielfelds (Felswall, dort endet das Feld ohnehin).
 // Stationsteile zählen nur, wenn sie bei der aktuellen Ausbaustufe stehen;
@@ -118,7 +119,7 @@ void World::BuildTrooperBlocks() {
         const BoundingBox b = ModelBounds(model);
         const float ys = yScale > 0.0f ? yScale : scale;
         const float bottom = pos.y + b.min.y * ys, top = pos.y + b.max.y * ys;
-        if (top < 0.3f || bottom > cfg::TROOPER_HEIGHT) return;
+        if (top < 0.1f || bottom > cfg::TROOPER_HEIGHT) return;
         const float cx = (b.min.x + b.max.x) * 0.5f * scale, cz = (b.min.z + b.max.z) * 0.5f * scale;
         const float hx = (b.max.x - b.min.x) * 0.5f * scale, hz = (b.max.z - b.min.z) * 0.5f * scale;
         Vector3 la{cx, 0.0f, cz}, lb{cx, 0.0f, cz};
@@ -168,6 +169,19 @@ bool World::NearestGate(Vector3 p, Vector3* out) const {
         }
     }
     return best < 1e9f;
+}
+
+int World::SampleTarget(Vector3 p, float range) const {
+    int id = -1;
+    float best = range;
+    for (const Deposit& d : deposits) {
+        const float dist = Dist2D(p, d.pos);
+        if (d.sample == Sample::Yellow && d.amount > 0 && dist <= best) {
+            best = dist;
+            id = d.id;
+        }
+    }
+    return id;
 }
 
 // ===========================================================================
@@ -242,8 +256,11 @@ void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
 }
 
 // ===========================================================================
-// Schritt aller Figuren: Bewegung, Nachladen, Schießen
+// Schritt aller Figuren: Bewegung, Probe, Nachladen, Schießen
 // ===========================================================================
+// Probe: E gedrückt halten an einem gelben Kristall (bis SAMPLE_RANGE). Nach
+// SAMPLE_TIME Sekunden ist er beprobt (wieder grün, abbaubar), die Figur
+// trägt eine Probe mehr. Loslassen oder Weggehen bricht ab.
 // Nachladen mit R oder automatisch beim Abdrücken mit leerem Magazin. Ohne
 // Ersatzmunition gibt es nur den Ton "Abgelehnt".
 void World::UpdateTroopers(float dt) {
@@ -254,6 +271,26 @@ void World::UpdateTroopers(float dt) {
         t.age += dt;
         t.fireCd -= dt;
         t.hitFlash = std::max(0.0f, t.hitFlash - dt * 3.0f);
+        const int target = in.sample ? SampleTarget(t.pos, cfg::SAMPLE_RANGE) : -1;
+        if (target != t.sampleId) {
+            SoundAt(target >= 0 ? Sfx::MineStart : Sfx::MineAbort, t.pos, 1.0f, 0.0f, t.playerId);
+            t.sampleId = target;
+            t.sampleT = 0.0f;
+        }
+        if (target >= 0) {
+            t.sampleT += dt;
+            Deposit* d = FindDeposit(target);
+            if (d && t.sampleT >= cfg::SAMPLE_TIME) {
+                d->sample = Sample::Taken;
+                ++depositRevision;
+                ++t.samples;
+                t.sampleId = -1;
+                t.sampleT = 0.0f;
+                SoundAt(Sfx::MineDone, t.pos, 1.0f, 0.0f, t.playerId);
+                if (PlayerState* owner = FindPlayer(t.playerId))
+                    Notify(*owner, Fmt("Probe genommen (%d / %d)", t.samples, cfg::SAMPLE_GOAL), Color{255, 225, 90, 255});
+            }
+        }
         if (t.reloadT > 0.0f) {
             t.reloadT -= dt;
             if (t.reloadT <= 0.0f) {
@@ -286,7 +323,7 @@ void World::FireTrooperBullet(Trooper& t) {
     const Vector3 fwd = ForwardFromYaw(t.yaw);
     const Vector3 right{-fwd.z, 0.0f, fwd.x};
     Bullet b;
-    b.pos = Vector3Add(Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.6f)), Vector3Add(Vector3Scale(right, 0.12f), {0.0f, -0.1f, 0.0f}));
+    b.pos = Vector3Add(Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.2f)), Vector3Add(Vector3Scale(right, 0.04f), {0.0f, -0.033f, 0.0f}));
     b.vel = Vector3Scale(dir, cfg::TROOPER_BULLET_SPEED);
     b.life = cfg::TROOPER_BULLET_LIFE;
     b.damage = cfg::TROOPER_DAMAGE;

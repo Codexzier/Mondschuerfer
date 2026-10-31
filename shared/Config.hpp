@@ -326,16 +326,18 @@ constexpr int MP_DEPOSITS_MAX = 240;          // Obergrenze für Lagerstätten a
 constexpr float MP_SPAWN_DISTANCE = 24.0f;    // Abstand des neuen Schiffs zur Handelsstation
 
 // Trupp zu Fuß (FPS-Modus, shared/Trooper.cpp). Längen in Metern, Tempo in m/s.
+// Die Figur ist ein Drittel so groß wie ein Mensch in Weltgröße (sonst wirken
+// Gebäude und Stargates neben ihr winzig); das Tempo ist davon unabhängig.
 constexpr float MOON_GRAVITY = 1.62f;         // Schwerkraft des Mondes (m/s²): Sprünge tragen weit
 constexpr float TROOPER_WALK = 4.0f;          // Gehen
 constexpr float TROOPER_SPRINT = 7.0f;        // Sprinten (nur vorwärts)
 constexpr float TROOPER_ACCEL = 30.0f;        // so schnell folgt das Tempo am Boden der Eingabe (m/s²)
 constexpr float TROOPER_AIR_CONTROL = 0.25f;  // Anteil davon in der Luft
-constexpr float TROOPER_JUMP = 2.2f;          // Absprung nach oben: gut 1,4 m hoch, knapp 3 s in der Luft
-constexpr float TROOPER_RADIUS = 0.4f;        // Kollision mit Felsen und Stationsteilen
-constexpr float TROOPER_HEIGHT = 1.8f;        // Teile, die höher anfangen, gehen über den Kopf hinweg
-constexpr float TROOPER_EYE = 1.65f;          // Augenhöhe (Ego-Kamera)
-constexpr float TROOPER_STEP = 0.5f;          // so hohe Kanten steigt die Figur ohne Sprung hinauf
+constexpr float TROOPER_JUMP = 1.27f;         // Absprung nach oben: knapp 0,5 m hoch (fast Figurengröße), gut 1,5 s in der Luft
+constexpr float TROOPER_RADIUS = 0.13f;       // Kollision mit Felsen und Stationsteilen
+constexpr float TROOPER_HEIGHT = 0.6f;        // Teile, die höher anfangen, gehen über den Kopf hinweg
+constexpr float TROOPER_EYE = 0.55f;          // Augenhöhe (Ego-Kamera)
+constexpr float TROOPER_STEP = 0.2f;          // so hohe Kanten steigt die Figur ohne Sprung hinauf (Bodenplatten der Stationen: 0,18 m)
 constexpr float TROOPER_PITCH_MAX = 1.45f;    // Blick nach oben/unten (Bogenmaß, gut 80°)
 constexpr float TROOPER_HP = 100.0f;          // Schild
 constexpr int TROOPER_MAG = 30;               // Schuss pro Magazin
@@ -345,5 +347,12 @@ constexpr float TROOPER_FIRE_INTERVAL = 0.15f;
 constexpr float TROOPER_DAMAGE = 20.0f;
 constexpr float TROOPER_BULLET_SPEED = 70.0f;
 constexpr float TROOPER_BULLET_LIFE = 1.2f;
+// Gelbe Kristalle (FPS-Modus): Erst nimmt ein Trupp zu Fuß eine Probe, dann
+// sind sie wieder grün und abbaubar. Bisher nur im Einzelspieler (nicht in
+// der Simulation und nicht im Mehrspieler).
+constexpr float YELLOW_SHARE = 0.4f;          // Anteil gelber Lagerstätten (0 = keine)
+constexpr float SAMPLE_TIME = 3.0f;           // Sekunden E halten für eine Probe
+constexpr float SAMPLE_RANGE = 3.0f;          // so nah (m, waagerecht) muss die Figur an der Lagerstättenmitte stehen
+constexpr int SAMPLE_GOAL = 5;                // Proben je Team (Anzeige; das Ziel zählt erst mit dem Stargate)
 
 } // namespace cfg

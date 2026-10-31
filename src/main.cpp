@@ -772,10 +772,10 @@ private:
         BeginDrawing();
         ClearBackground(Color{14, 17, 26, 255});
         // Ego-Ansicht zu Fuß: ohne Tilt-Shift und Retro-Pixel, nahe Clip-Ebene
-        // 5 cm (die Waffe steht dicht vor der Kamera); sonst die Werte aus main().
+        // 2 cm (die Waffe steht dicht vor der Kamera); sonst die Werte aus main().
         const bool ego = OnFoot() && !MenuBackground();
         tiltshift::SetEgoView(ego);
-        rlSetClipPlanes(ego ? 0.05 : 0.5, ego ? 1000.0 : 2500.0);
+        rlSetClipPlanes(ego ? 0.02 : 0.5, ego ? 1000.0 : 2500.0);
         tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
         BeginMode3D(cam_);
         world_.Draw(cam_);

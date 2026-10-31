@@ -154,6 +154,12 @@ struct Ship {
     int mission = -1;
 };
 
+// Zustand einer Lagerstätte im FPS-Modus (Zahlenwerte bleiben fest, sie
+// stehen im Spielstand): grün wie bisher; gelb = erst muss ein Trupp zu Fuß
+// eine Probe nehmen, Schiffe bauen sie nicht ab; beprobt = danach wieder
+// grün und abbaubar.
+enum class Sample { Green = 0, Yellow = 1, Taken = 2 };
+
 // Eine Kristall-Lagerstätte, die abgebaut werden kann.
 struct Deposit {
     int id = 0;
@@ -165,6 +171,7 @@ struct Deposit {
     int initial = 0;                // Anfangsmenge (Render.cpp lässt die Kristalle mit amount/initial schrumpfen)
     bool revealed = false;          // Einzelspieler/Client: für den eigenen Spieler entdeckt
     float revealT = 0.0f;           // Einblend-Animation (0..1)
+    Sample sample = Sample::Green;  // gelbe sind von Anfang an entdeckt (ohne Scanner sichtbar)
     // Server: IDs der Spieler, die sie entdeckt haben. Jeder Spieler muss
     // selbst scannen; der Server schickt jedem nur die von ihm entdeckten
     // (Zuschauer bekommen alle).
@@ -282,6 +289,7 @@ struct TrooperInput {
     bool jump = false;
     bool sprint = false;
     bool reload = false;   // einmaliger Druck
+    bool sample = false;   // gedrückt halten = Probe nehmen (an einem gelben Kristall)
 };
 
 // Eine Figur zu Fuß. Später nutzen auch die Bodenpiraten diese Struktur
@@ -301,6 +309,9 @@ struct Trooper {
     float fireCd = 0.0f;
     float hitFlash = 0.0f;        // wie Ship::hitFlash
     float age = 0.0f;             // Sekunden seit dem Aussteigen (Tastenhilfe im HUD)
+    int samples = 0;              // getragene Proben
+    int sampleId = -1;            // Lagerstätte, an der gerade eine Probe entsteht (-1 = keine)
+    float sampleT = 0.0f;         // Sekunden der laufenden Probe (fertig bei cfg::SAMPLE_TIME)
 };
 
 // Hindernis für Figuren: Kapsel a-b mit Radius r auf dem Boden, oben flach
@@ -618,6 +629,8 @@ public:
     bool TrooperBlocked(Vector3 p) const;
     // Nächstes Tor (Deko gate_simple/gate_complex) zum Punkt p, false = keins
     bool NearestGate(Vector3 p, Vector3* out) const;
+    // Nächste gelbe Lagerstätte bis range (waagerecht) um p: ID oder -1
+    int SampleTarget(Vector3 p, float range) const;
 
     // Kurzformen für den Einzelspieler (wirken auf den eigenen Spieler)
     void Dock(int station) { Dock(Me(), station); }
@@ -755,6 +768,9 @@ public:
     void PickRoverTarget(Rover& r);
     bool RoverPathClear(Vector2 a, Vector2 b) const;
     void SpawnDeposit(bool initial); // WorldGen.cpp
+    // FPS-Modus: wird die Lagerstätte mit dieser ID gelb? (WorldGen.cpp; auch
+    // für ältere Spielstände ohne Probe-Zustand, Save.cpp)
+    bool StartsYellow(int depositId) const;
     int DepositTarget() const;       // gewünschte Anzahl Lagerstätten
     Vector3 RandomFreePos(float minDistStations, float minDistPlayer);   // WorldGen.cpp
     Ship MakeShip(ShipKind kind, Vector3 pos);

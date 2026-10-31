@@ -120,9 +120,10 @@ private:
 // ===========================================================================
 // Tastatur und Maus: W/S vor/zurück, A/D seitlich, Maus zielen (der Zeiger
 // ist dabei eingefangen, main.cpp), Linksklick schießen, Leertaste springen,
-// Shift sprinten, R nachladen. Controller: linker Stick laufen, rechter Stick
-// zielen, RT/R2 schießen, A/Kreuz springen, linken Stick drücken = sprinten
-// (bis der Stick losgelassen wird), X/Quadrat nachladen. Pause wie im Flug
+// Shift sprinten, R nachladen, E halten = Probe nehmen. Controller: linker
+// Stick laufen, rechter Stick zielen, RT/R2 schießen, A/Kreuz springen,
+// linken Stick drücken = sprinten (bis der Stick losgelassen wird),
+// X/Quadrat nachladen, B/Kreis halten = Probe. Pause wie im Flug
 // (PilotControls::PausePressed).
 class TrooperControls {
 public:
