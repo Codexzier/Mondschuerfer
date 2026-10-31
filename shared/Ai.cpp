@@ -462,7 +462,8 @@ void World::UpdateConvoy(Ship& s, float dt) {
 // Auch hier "drückt die KI nur Tasten": Sie füllt Trooper::input, danach
 // läuft dieselbe Physik wie für den Spieler (World::UpdateTroopers).
 //   Kamerad: Follow – läuft auf seinen Platz in der Formation hinter dem
-//            Spieler (MateSlot) und sprintet bei großem Abstand. Attack –
+//            Spieler (MateSlot, nach seiner Laufrichtung) und sprintet bei
+//            großem Abstand. Attack –
 //            Gegner in Sichtweite: dreht sich zu ihm und schießt, läuft dabei
 //            aber weiter mit (seitwärts oder rückwärts).
 //   Pirat:   Patrol – streift um seinen gelben Kristall (home) und wartet an
@@ -562,7 +563,7 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
                 t.waitT = Rand(1.5f, 4.0f);
             }
         } else {
-            move = Vector3Scale(toward(t.goal), 0.6f);
+            move = Vector3Scale(toward(t.goal), 0.3f);
             faceYaw = YawTowards(t.pos, t.goal);
         }
     } else if (t.ai == TrooperAiState::Retreat) {

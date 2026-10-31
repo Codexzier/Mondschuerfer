@@ -323,7 +323,8 @@ struct Trooper {
     float downT = 0.0f;           // Sekunden seit dem Fallen
     float calmT = 0.0f;           // Sekunden seit dem letzten Treffer (Schild lädt nach TROOPER_REGEN_DELAY)
     Vector3 home{};               // Spieler: Ausstiegspunkt; Pirat: Mitte seiner Streife
-    float animT = 0.0f;           // Uhr der Laufanimation (Render.cpp), läuft schneller, je schneller die Figur ist
+    float walked = 0.0f;          // zurückgelegter Weg in Metern (Laufanimation, Render.cpp)
+    float formYaw = 0.0f;         // Spieler: Richtung seiner Formation (folgt der Laufrichtung, nicht dem Blick)
     // Nur KI-Figuren (Ai.cpp):
     TrooperKind kind = TrooperKind::Mate;
     TrooperAiState ai = TrooperAiState::Follow;

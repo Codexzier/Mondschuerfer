@@ -74,7 +74,7 @@ float SegSegDist(Vector2 p1, Vector2 q1, Vector2 p2, Vector2 q2, float& s, float
 }
 
 // Formation der Kameraden hinter ihrem Spieler: seitlich (rechts +) und nach
-// hinten, in Metern.
+// hinten, in Metern, bezogen auf seine Laufrichtung (Trooper::formYaw).
 constexpr Vector2 kMateSlots[3] = {{-0.9f, 1.0f}, {0.9f, 1.0f}, {0.0f, 1.9f}};
 } // namespace
 
@@ -82,7 +82,7 @@ constexpr Vector2 kMateSlots[3] = {{-0.9f, 1.0f}, {0.9f, 1.0f}, {0.0f, 1.9f}};
 Vector3 TrooperEye(const Trooper& t) { return {t.pos.x, t.pos.y + (t.down ? 0.12f : cfg::TROOPER_EYE), t.pos.z}; }
 
 Vector3 MateSlot(const Trooper& leader, int slot) {
-    const Vector3 fwd = ForwardFromYaw(leader.yaw);
+    const Vector3 fwd = ForwardFromYaw(leader.formYaw);
     const Vector2 off = kMateSlots[slot % 3];
     return {leader.pos.x - fwd.z * off.x - fwd.x * off.y, leader.pos.y, leader.pos.z + fwd.x * off.x - fwd.z * off.y};
 }
@@ -137,6 +137,7 @@ bool World::StartTrooper(PlayerState& ps) {
     t.pos = {sp->pos.x, 0.0f, sp->pos.z};
     t.home = t.pos;
     t.yaw = sp->yaw;
+    t.formYaw = t.yaw;
     troopers.push_back(t);
     // Mit Kameraden und Bodenpiraten (KI, Ai.cpp)
     SpawnMates(t);
@@ -366,7 +367,15 @@ void World::UpdateTroopers(float dt) {
         t.fireCd -= dt;
         t.hitFlash = std::max(0.0f, t.hitFlash - dt * 3.0f);
         const float speed = Vector2Length({t.vel.x, t.vel.z});
-        t.animT += dt * (speed > 0.4f ? std::max(1.0f, speed * 0.5f) : 1.0f);
+        t.walked += speed * dt;
+        // Formation der Kameraden (MateSlot): dreht sich langsam in die
+        // Laufrichtung, solange der Spieler läuft. Dreht er sich nur auf der
+        // Stelle um, bleiben die Kameraden, wo sie sind.
+        if (t.playerId >= 0 && speed > 1.0f) {
+            const float travel = YawTowards({0.0f, 0.0f, 0.0f}, {t.vel.x, 0.0f, t.vel.z});
+            const float turn = 1.5f * dt;
+            t.formYaw += std::clamp(AngleDiff(t.formYaw, travel), -turn, turn);
+        }
         if (t.down) {
             t.downT += dt;
             continue;

@@ -327,10 +327,10 @@ constexpr float MP_SPAWN_DISTANCE = 24.0f;    // Abstand des neuen Schiffs zur H
 
 // Trupp zu Fuß (FPS-Modus, shared/Trooper.cpp). Längen in Metern, Tempo in m/s.
 // Die Figur ist ein Drittel so groß wie ein Mensch in Weltgröße (sonst wirken
-// Gebäude und Stargates neben ihr winzig); das Tempo ist davon unabhängig.
+// Gebäude und Stargates neben ihr winzig).
 constexpr float MOON_GRAVITY = 1.62f;         // Schwerkraft des Mondes (m/s²): Sprünge tragen weit
-constexpr float TROOPER_WALK = 4.0f;          // Gehen
-constexpr float TROOPER_SPRINT = 7.0f;        // Sprinten (nur vorwärts)
+constexpr float TROOPER_WALK = 2.4f;          // Gehen
+constexpr float TROOPER_SPRINT = 4.2f;        // Sprinten (nur vorwärts)
 constexpr float TROOPER_ACCEL = 30.0f;        // so schnell folgt das Tempo am Boden der Eingabe (m/s²)
 constexpr float TROOPER_AIR_CONTROL = 0.25f;  // Anteil davon in der Luft
 constexpr float TROOPER_JUMP = 1.27f;         // Absprung nach oben: knapp 0,5 m hoch (fast Figurengröße), gut 1,5 s in der Luft

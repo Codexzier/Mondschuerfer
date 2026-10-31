@@ -312,30 +312,35 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
     // die eigene Figur nicht (Ego-Ansicht). Das Modell ist 3,77 Einheiten hoch
     // und wird auf TROOPER_HEIGHT verkleinert; es schaut nach +z, deshalb
     // yaw + PI. Animation nach Zustand: gefallen "death" (einmal), in der Luft
-    // "jump", schnell "run", langsam "walk", im Kampf "shoot", sonst "idle".
-    // Die Uhr animT läuft beim Laufen schneller (Trooper.cpp). Die Waffe
-    // (Blaster wie in der Ego-Ansicht) sitzt in der rechten Hand und zeigt in
-    // die Blickrichtung der Figur.
+    // "jump", ab 0,8 m/s "run", langsamer "walk", im Kampf "shoot", sonst "idle".
+    // Damit die Füße nicht über den Boden rutschen, läuft walk/run nach dem
+    // zurückgelegten Weg (Trooper::walked): Die Animationen bewegen die Füße
+    // mit 1,5 bzw. 7,1 Modelleinheiten pro Sekunde, nach dem Verkleinern also
+    // mit 0,24 bzw. 1,13 m/s. Die Waffe (Blaster wie in der Ego-Ansicht) sitzt
+    // in der rechten Hand und zeigt in die Blickrichtung der Figur.
     static const int blaster = g_assets.Id("blaster/blaster-a");
     for (const Trooper& t : w.troopers) {
         if (t.id == me.trooperId || Dist2D(t.pos, focus) > cullR) continue;
         const float speed = Vector2Length({t.vel.x, t.vel.z});
+        const float scale = cfg::TROOPER_HEIGHT / 3.77f;
         const char* anim = "idle";
-        float at = t.animT;
+        float at = t.age;
         if (t.down) {
             anim = "death";
             at = t.downT;
         } else if (!t.onGround) {
             anim = "jump";
-        } else if (speed > cfg::TROOPER_WALK + 0.5f) {
+        } else if (speed > 0.8f) {
             anim = "run";
-        } else if (speed > 0.4f) {
+            at = t.walked / (7.1f * scale);
+        } else if (speed > 0.1f) {
             anim = "walk";
+            at = t.walked / (1.5f * scale);
         } else if (t.targetId >= 0 || t.fireCd > 0.0f) {
             anim = "shoot";
         }
         const float hf = t.hitFlash * hitFlash;
-        const Vector3 hand = g_assets.DrawCharacter(t.skin, anim, at, !t.down, TRS(t.pos, t.yaw + PI, cfg::TROOPER_HEIGHT / 3.77f),
+        const Vector3 hand = g_assets.DrawCharacter(t.skin, anim, at, !t.down, TRS(t.pos, t.yaw + PI, scale),
                                                     WHITE, Vector3{0.9f * hf, 0.45f * hf, 0.3f * hf});
         if (!t.down) g_assets.Draw(blaster, TRS(hand, t.yaw, t.pitch, 0.0f, 0.183f));
     }
