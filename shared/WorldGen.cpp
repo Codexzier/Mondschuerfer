@@ -518,6 +518,14 @@ void BuildShipDealer(Station& d) {
 // Neue Lagerstätten sind zunächst unentdeckt (revealed = false bzw. leere
 // revealedFor-Liste); erst der Scanner eines Spielers deckt sie auf.
 // ===========================================================================
+// Gelbe Kristalle (FPS-Modus, nur Einzelspieler ohne Simulation): Anteil
+// cfg::YELLOW_SHARE, ausgewählt über die ID statt mit einer Zufallszahl,
+// damit die Zahlenfolge von rng gleich bleibt.
+bool World::StartsYellow(int depositId) const {
+    return !isServer && !simulation &&
+           ((static_cast<unsigned>(depositId) * 2654435761u) >> 16) % 100u < static_cast<unsigned>(cfg::YELLOW_SHARE * 100.0f);
+}
+
 void World::SpawnDeposit(bool initial) {
     Deposit d;
     d.id = nextId++;   // IDs sind für Schiffe, Lagerstätten und Wracks gemeinsam fortlaufend
@@ -551,12 +559,8 @@ void World::SpawnDeposit(bool initial) {
         d.model = mdl.crystalSmall;
         d.scale = 2.8f;
     }
-    // Gelbe Kristalle (FPS-Modus, nur Einzelspieler ohne Simulation): Anteil
-    // cfg::YELLOW_SHARE, ausgewählt über die ID statt mit einer Zufallszahl,
-    // damit die Zahlenfolge von rng gleich bleibt. Gelbe sind ohne Scanner zu
-    // sehen.
-    if (!isServer && !simulation &&
-        ((static_cast<unsigned>(d.id) * 2654435761u) >> 16) % 100u < static_cast<unsigned>(cfg::YELLOW_SHARE * 100.0f)) {
+    // Gelbe Kristalle sind ohne Scanner zu sehen (StartsYellow).
+    if (StartsYellow(d.id)) {
         d.sample = Sample::Yellow;
         d.revealed = true;
         d.revealT = initial ? 1.0f : 0.0f;

@@ -768,6 +768,9 @@ public:
     void PickRoverTarget(Rover& r);
     bool RoverPathClear(Vector2 a, Vector2 b) const;
     void SpawnDeposit(bool initial); // WorldGen.cpp
+    // FPS-Modus: wird die Lagerstätte mit dieser ID gelb? (WorldGen.cpp; auch
+    // für ältere Spielstände ohne Probe-Zustand, Save.cpp)
+    bool StartsYellow(int depositId) const;
     int DepositTarget() const;       // gewünschte Anzahl Lagerstätten
     Vector3 RandomFreePos(float minDistStations, float minDistPlayer);   // WorldGen.cpp
     Ship MakeShip(ShipKind kind, Vector3 pos);
