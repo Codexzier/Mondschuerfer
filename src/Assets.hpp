@@ -93,6 +93,17 @@ public:
     // gleichmäßige Skalierung.
     void Draw(int id, Vector3 pos, float yaw, float scale, Color tint = WHITE, Vector3 emissive = {0, 0, 0});
 
+    // Animierte Figur (FPS-Modus): characters/characterMedium.glb mit einer
+    // Haut aus characters/Skins (skin = Index in kCharacterSkins, Assets.cpp:
+    // 0..3 militär, 4 Cyborg) und einer Animation des Modells (anim = Name,
+    // z. B. "idle", "walk", "run", "shoot", "death"; time in Sekunden).
+    // loop = false: Die Animation bleibt am Ende stehen (Fallen).
+    // Das Modell steht wie alle Modelle auf dem Boden und schaut nach +z; die
+    // Drehung steckt in world. Liefert die Lage der rechten Hand in
+    // Weltkoordinaten (dort zeichnet Render.cpp die Waffe).
+    Vector3 DrawCharacter(int skin, const char* anim, float time, bool loop, const Matrix& world, Color tint = WHITE,
+                          Vector3 emissive = {0, 0, 0});
+
     // Eigene Dreiecke (rlBegin(RL_TRIANGLES) ... rlEnd() mit rlNormal3f je
     // Fläche) mit derselben Beleuchtung wie die Modelle zeichnen: alles
     // zwischen BeginLit() und EndLit(). Die Farbe kommt aus rlColor4ub, es gibt
@@ -156,6 +167,12 @@ private:
     void ApplyPalette(Entry& e);
 
     std::vector<Entry> entries_;       // Index = Modell-ID; wächst mit, wenn neue IDs dazukommen
+    // Animierte Figur (DrawCharacter): Animationen und Häute, beim ersten Aufruf geladen
+    bool charLoaded_ = false;
+    ModelAnimation* charAnims_ = nullptr;
+    int charAnimCount_ = 0;
+    int charHand_ = -1;                // Knochen "RightHand"
+    std::vector<Texture2D> charSkins_;
     std::string assetDir_;
     MoonColor moon_ = MoonColor::Grey;
 

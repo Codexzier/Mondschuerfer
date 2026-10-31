@@ -25,6 +25,7 @@
 #include "Assets.hpp"
 #include "Effects.hpp"
 #include "Models.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -346,6 +347,13 @@ bool Assets::Init() {
 }
 
 void Assets::Shutdown() {
+    if (charAnims_) UnloadModelAnimations(charAnims_, charAnimCount_);
+    charAnims_ = nullptr;
+    charAnimCount_ = 0;
+    for (const Texture2D& t : charSkins_)
+        if (t.id > 0) UnloadTexture(t);
+    charSkins_.clear();
+    charLoaded_ = false;
     for (auto& e : entries_)
         if (e.loaded) UnloadModel(e.model);
     entries_.clear();
@@ -475,6 +483,48 @@ void Assets::Draw(int id, const Matrix& world, Color tint, Vector3 emissive) {
 
 void Assets::Draw(int id, Vector3 pos, float yaw, float scale, Color tint, Vector3 emissive) {
     Draw(id, TRS(pos, yaw, scale), tint, emissive);
+}
+
+// Häute der Figur in der Reihenfolge von Trooper::skin (shared/World.hpp)
+namespace {
+const char* const kCharacterSkins[] = {"militaryMaleA", "militaryMaleB", "militaryFemaleA", "militaryFemaleB", "cyborg",
+                                       "survivorMaleA", "survivorMaleB", "zombieA",         "zombieB",         "zombieC"};
+}
+
+// Die Animationen tastet raylib beim Laden in festen Schritten von 17 ms ab
+// (GLTF_ANIMDELAY in rmodels.c), daraus ergibt sich das Bild zur Zeit time.
+// UpdateModelAnimation verformt das Netz auf dem Prozessor und lädt es neu in
+// die Grafikkarte; das geht vor jeder Figur, weil DrawModel sofort zeichnet.
+// Die Haut wird als Textur des Materials eingesetzt (UnloadModel gibt
+// Texturen nicht frei, Shutdown tut es für die Häute).
+Vector3 Assets::DrawCharacter(int skin, const char* anim, float time, bool loop, const Matrix& world, Color tint, Vector3 emissive) {
+    static const int id = Id("characters/characterMedium");
+    Entry* e = Ensure(id);
+    if (!e || e->model.meshCount == 0) return {world.m12, world.m13, world.m14};
+    if (!charLoaded_) {
+        charLoaded_ = true;
+        const std::string path = assetDir_ + "models/characters/characterMedium.glb";
+        charAnims_ = LoadModelAnimations(path.c_str(), &charAnimCount_);
+        for (const char* name : kCharacterSkins)
+            charSkins_.push_back(LoadTexture((assetDir_ + "models/characters/Skins/" + name + ".png").c_str()));
+        for (int i = 0; i < e->model.boneCount; ++i)
+            if (strcmp(e->model.bones[i].name, "RightHand") == 0) charHand_ = i;
+    }
+    Vector3 hand{0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < charAnimCount_; ++i) {
+        const ModelAnimation& a = charAnims_[i];
+        if (strcmp(a.name, anim) != 0 || a.frameCount <= 0 || !IsModelAnimationValid(e->model, a)) continue;
+        int frame = static_cast<int>(time * 1000.0f / 17.0f);
+        frame = loop ? frame % a.frameCount : std::min(frame, a.frameCount - 1);
+        if (frame < 0) frame = 0;
+        UpdateModelAnimation(e->model, a, frame);
+        if (charHand_ >= 0) hand = a.framePoses[frame][charHand_].translation;
+        break;
+    }
+    if (skin >= 0 && skin < static_cast<int>(charSkins_.size()) && charSkins_[static_cast<size_t>(skin)].id > 0)
+        for (int i = 0; i < e->model.materialCount; ++i) e->model.materials[i].maps[MATERIAL_MAP_DIFFUSE].texture = charSkins_[static_cast<size_t>(skin)];
+    Draw(id, world, tint, emissive);
+    return Vector3Transform(hand, MatrixMultiply(e->base, world));
 }
 
 // raylibs Sammelpuffer zeichnet mit dem Shader, der beim Leeren eingestellt
