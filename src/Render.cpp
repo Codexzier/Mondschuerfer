@@ -309,7 +309,8 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
     // die eigene Figur nicht (Ego-Ansicht). Das Modell ist 3,77 Einheiten hoch
     // und wird auf TROOPER_HEIGHT verkleinert; es schaut nach +z, deshalb
     // yaw + PI. Animation nach Zustand: gefallen "death" (einmal), in der Luft
-    // "jump", ab 0,8 m/s "run", langsamer "walk", im Kampf "shoot", sonst "idle".
+    // "jump", ab 0,8 m/s "run", langsamer "walk", im Kampf "shoot", sonst "idle"
+    // (Zombies: "attack" nach einem Schlag statt "shoot").
     // Damit die Füße nicht über den Boden rutschen, läuft walk/run nach dem
     // zurückgelegten Weg (Trooper::walked): Die Animationen bewegen die Füße
     // mit 1,5 bzw. 7,1 Modelleinheiten pro Sekunde, nach dem Verkleinern also
@@ -322,6 +323,7 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
         const float scale = cfg::TROOPER_HEIGHT / 3.77f;
         const char* anim = "idle";
         float at = t.age;
+        bool loop = !t.down;
         if (t.down) {
             anim = "death";
             at = t.downT;
@@ -333,13 +335,20 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
         } else if (speed > 0.1f) {
             anim = "walk";
             at = t.walked / (1.5f * scale);
+        } else if (t.zombie) {
+            // Zombie: Schlag nach jedem Hieb einmal abspielen, sonst stehen
+            if (t.fireCd > 0.0f) {
+                anim = "attack";
+                at = cfg::ZOMBIE_HIT_INTERVAL - t.fireCd;
+                loop = false;
+            }
         } else if (t.targetId >= 0 || t.fireCd > 0.0f) {
             anim = "shoot";
         }
         const float hf = t.hitFlash * hitFlash;
-        const Vector3 hand = g_assets.DrawCharacter(t.skin, anim, at, !t.down, TRS(t.pos, t.yaw + PI, scale),
+        const Vector3 hand = g_assets.DrawCharacter(t.skin, anim, at, loop, TRS(t.pos, t.yaw + PI, scale),
                                                     WHITE, Vector3{0.9f * hf, 0.45f * hf, 0.3f * hf});
-        if (!t.down) g_assets.Draw(blaster, TRS(hand, t.yaw, t.pitch, 0.0f, 0.183f));
+        if (!t.down && !t.zombie) g_assets.Draw(blaster, TRS(hand, t.yaw, t.pitch, 0.0f, 0.183f));   // Zombies ohne Waffe
     }
 
     // --- Schiffe -------------------------------------------------------------------

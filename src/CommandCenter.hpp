@@ -8,8 +8,9 @@
 //   eigene 3D-Kulisse (Halle aus dem Modular Space Kit, Konsolen aus dem
 //   Space Station Kit, das Heimat-Stargate und das Team davor) und darüber
 //   die Bedienung: Team SG1 mit 0 bis 3 NPC-Kameraden, Auftrag, Scoreboard
-//   der eigenen Einsätze (beste zuerst) und die Knöpfe "Tor anwählen", "Ziel"
-//   (Mondkarte oder eine Einsatzkarte aus dem Ordner "karten"), "Als Pilot
+//   der eigenen Einsätze (beste zuerst) mit der Vorschau der gewählten
+//   Einsatzkarte und die Knöpfe "Tor anwählen", "Ziel" (Mondkarte oder eine
+//   Einsatzkarte aus "karten" bzw. assets/karten), "Als Pilot
 //   spielen" und "Speichern & zum Hauptmenü". Die Anwahl dauert GATE_DIAL
 //   Sekunden; danach geht das Team durch ein Stargate auf die Mondkarte bzw.
 //   in die eigene Welt der Einsatzkarte (World::StartSgMission,
@@ -62,6 +63,8 @@ private:
     bool moonGate_ = false;              // steht auf der Mondkarte ein Stargate?
     std::vector<MapFileInfo> targets_;   // Einsatzkarten im Ordner "karten"
     int target_ = 0;                     // Ziel: 0 = Mondkarte, sonst targets_[target_ - 1]
+    std::string previewStem_;            // Vorschaubild: Einsatzkarte, die in preview_ steht ("" = keine)
+    GameMap preview_;
 };
 
 // Wurmloch eines Stargates mit Fußpunkt pos, Drehung yaw und Größe scale

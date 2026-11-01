@@ -3,6 +3,7 @@
 // und Erklärung: MapFiles.hpp).
 // ---------------------------------------------------------------------------
 #include "MapFiles.hpp"
+#include "Assets.hpp"
 #include "raylib.h"
 #include <algorithm>
 #include <cstdio>
@@ -13,6 +14,9 @@ namespace {
 const char* kExt = ".karte";
 
 std::string PathOf(const std::string& stem) { return MapDir() + stem + kExt; }
+// Mitgelieferte Karten (assets/karten, nur lesen)
+std::string BuiltinDir() { return g_assets.AssetDir() + "karten/"; }
+std::string BuiltinPathOf(const std::string& stem) { return BuiltinDir() + stem + kExt; }
 
 bool ReadFile(const std::string& path, std::string& text) {
     std::ifstream f(path, std::ios::binary);
@@ -26,26 +30,33 @@ bool ReadFile(const std::string& path, std::string& text) {
 
 std::string MapDir() { return std::string(GetApplicationDirectory()) + "karten/"; }
 
+// Erst die eigenen Karten, dann die mitgelieferten, die keine eigene Karte
+// mit demselben Dateinamen ersetzt.
 std::vector<MapFileInfo> ListMaps() {
     std::vector<MapFileInfo> list;
-    if (!DirectoryExists(MapDir().c_str())) return list;
-    FilePathList files = LoadDirectoryFilesEx(MapDir().c_str(), kExt, false);
-    for (unsigned int i = 0; i < files.count; ++i) {
-        std::string stem = GetFileNameWithoutExt(files.paths[i]);
-        GameMap m;
-        if (!LoadMapFile(stem, m)) continue;
-        list.push_back({stem, m.name.empty() ? stem : m.name, m.kind, m.theme, m.size, m.sky});
+    for (const std::string& dir : {MapDir(), BuiltinDir()}) {
+        if (!DirectoryExists(dir.c_str())) continue;
+        FilePathList files = LoadDirectoryFilesEx(dir.c_str(), kExt, false);
+        for (unsigned int i = 0; i < files.count; ++i) {
+            std::string stem = GetFileNameWithoutExt(files.paths[i]);
+            if (std::any_of(list.begin(), list.end(), [&](const MapFileInfo& o) { return o.stem == stem; })) continue;
+            GameMap m;
+            if (!LoadMapFile(stem, m)) continue;
+            list.push_back({stem, m.name.empty() ? stem : m.name, m.kind, m.theme, m.size, m.sky});
+        }
+        UnloadDirectoryFiles(files);
     }
-    UnloadDirectoryFiles(files);
     std::sort(list.begin(), list.end(), [](const MapFileInfo& a, const MapFileInfo& b) { return a.name < b.name; });
     return list;
 }
 
-bool MapFileExists(const std::string& stem) { return FileExists(PathOf(stem).c_str()); }
+bool MapFileExists(const std::string& stem) {
+    return FileExists(PathOf(stem).c_str()) || FileExists(BuiltinPathOf(stem).c_str());
+}
 
 bool LoadMapFile(const std::string& stem, GameMap& out) {
     std::string text;
-    if (stem.empty() || !ReadFile(PathOf(stem), text)) return false;
+    if (stem.empty() || (!ReadFile(PathOf(stem), text) && !ReadFile(BuiltinPathOf(stem), text))) return false;
     return MapFromText(text, out);
 }
 

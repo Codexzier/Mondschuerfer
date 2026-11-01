@@ -808,7 +808,7 @@ void World::DamageTrooper(Trooper& t, const Bullet& b) {
     } else if (t.kind == TrooperKind::Mate) {
         if (PlayerState* ps = playerOf(&t)) Notify(*ps, "Ein Kamerad ist gefallen", bad);
     } else if (PlayerState* ps = playerOf(FindTrooper(b.ownerTrooper))) {
-        Notify(*ps, "Bodenpirat ausgeschaltet", Color{150, 255, 170, 255});
+        Notify(*ps, t.zombie ? "Zombie ausgeschaltet" : "Bodenpirat ausgeschaltet", Color{150, 255, 170, 255});
         ++ps->sgPirates;
     }
 }
@@ -840,7 +840,8 @@ void World::SpawnMate(const Trooper& leader, int slot, Vector3 pos, float yaw) {
 // Team entfernt ist und noch keine Gruppe hat. Gibt es keinen, ein
 // zufälliger Punkt 60 bis 140 m vom Team. false = kein Platz gefunden.
 // Einsatzkarte: an einem freien Gegner-Startplatz (enemySpots), sonst wie
-// oben, nur mit kürzeren Abständen.
+// oben, nur mit kürzeren Abständen. Mit dem Thema Friedhof (World::zombies)
+// ist die Gruppe aus ZOMBIE_MIN bis _MAX Zombies.
 bool World::SpawnPirateGroup(Vector3 team) {
     const float spacing = instance ? 6.0f : 20.0f;   // Abstand zur nächsten Gruppe
     auto taken = [&](Vector3 p) {
@@ -873,7 +874,7 @@ bool World::SpawnPirateGroup(Vector3 team) {
         if (!found) return false;
     }
     c.y = 0.0f;
-    const int n = RandInt(cfg::GROUND_PIRATE_MIN, cfg::GROUND_PIRATE_MAX);
+    const int n = zombies ? RandInt(cfg::ZOMBIE_MIN, cfg::ZOMBIE_MAX) : RandInt(cfg::GROUND_PIRATE_MIN, cfg::GROUND_PIRATE_MAX);
     const int group = nextPirateGroup++;
     for (int i = 0; i < n; ++i) {
         const float a = 2.0f * PI * i / n + Rand(-0.3f, 0.3f);
@@ -885,6 +886,11 @@ bool World::SpawnPirateGroup(Vector3 team) {
         p.group = group;
         p.skin = 4;
         p.hp = p.maxHp = cfg::GROUND_PIRATE_HP;
+        if (zombies) {
+            p.zombie = true;
+            p.skin = RandInt(7, 9);   // zombieA bis C
+            p.hp = p.maxHp = cfg::ZOMBIE_HP;
+        }
         p.home = c;
         p.pos = {c.x + cosf(a) * 2.5f, 0.0f, c.z + sinf(a) * 2.5f};
         p.goal = p.pos;

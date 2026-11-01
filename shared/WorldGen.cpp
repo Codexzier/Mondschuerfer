@@ -239,6 +239,7 @@ void World::NewInstance(const GameMap& m, unsigned int newSeed) {
     fieldHalf = MapHalf(m);
     mapGround = m.ground;
     mapSky = m.sky;
+    zombies = m.theme == MapTheme::Graveyard;   // Friedhof: Zombies statt Bodenpiraten
     ResolveModels();
 
     players.push_back(PlayerState{});

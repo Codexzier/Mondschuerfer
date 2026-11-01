@@ -29,6 +29,8 @@ const char* SegmentGroupName(SegmentGroup g) {
         case SegmentGroup::Graves: return "Friedhof";
         case SegmentGroup::GraveWalls: return "Friedhofsmauer";
         case SegmentGroup::Markers: return "Markierungen";
+        case SegmentGroup::Farm: return "Hof & Mühle";
+        case SegmentGroup::Crypts: return "Gruft & Licht";
         default: return "";
     }
 }
@@ -225,6 +227,31 @@ const std::vector<MapSegment>& MapSegments() {
         {MARKER_GATE, "Stargate", G::Markers, mapgrid::GATE_SCALE},
         {MARKER_CRYSTAL, "Kristallplatz", G::Markers, 1.0f},
         {MARKER_ENEMY, "Gegner-Startplatz", G::Markers, 1.0f},
+
+        // Für die vier mitgelieferten Einsatzkarten (assets/karten) ergänzt.
+        // Windrad und Wasserrad sind nur die Räder, das Haus dazu entsteht
+        // aus Mauern und Dach.
+        {"fantasy-town/windmill", "Windrad", G::Farm, 1.0f},
+        {"fantasy-town/watermill", "Wasserrad", G::Farm, 1.0f},
+        {"graveyard/hay-bale", "Heuballen", G::Farm, 1.0f},
+        {"graveyard/hay-bale-bundled", "Heubündel", G::Farm, 1.0f},
+        {"graveyard/pumpkin", "Feldkürbis", G::Farm, 1.0f},
+        {"graveyard/pumpkin-tall", "Hoher Kürbis", G::Farm, 1.0f},
+        {"fantasy-town/stall-red", "Marktstand rot", G::Farm, 1.0f},
+        {"fantasy-town/banner-red", "Banner", G::Farm, 1.0f},
+        {"fantasy-town/wheel", "Wagenrad", G::Farm, 1.0f},
+        {"fantasy-town/stall-stool", "Hocker", G::Farm, 1.0f},
+
+        {"graveyard/crypt-small", "Kleine Gruft", G::Crypts, 1.0f},
+        {"graveyard/crypt-small-roof", "Dach kleine Gruft", G::Crypts, 1.0f},
+        {"graveyard/crypt-large-roof", "Dach große Gruft", G::Crypts, 1.0f},
+        {"graveyard/fire-basket", "Feuerkorb", G::Crypts, 1.0f},
+        {"graveyard/candle-multiple", "Kerzen", G::Crypts, 1.0f},
+        {"graveyard/lightpost-double", "Doppellaterne", G::Crypts, 1.0f},
+        {"graveyard/lantern-candle", "Kerzenlaterne", G::Crypts, 1.0f},
+        {"graveyard/gravestone-cross-large", "Großes Grabkreuz", G::Crypts, 1.0f},
+        {"graveyard/gravestone-decorative", "Verzierter Grabstein", G::Crypts, 1.0f},
+        {"graveyard/urn-round", "Urne", G::Crypts, 1.0f},
     };
     return list;
 }
