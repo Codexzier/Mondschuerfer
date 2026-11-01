@@ -798,6 +798,7 @@ public:
     // Einsatzkarte (NewInstance): eigene Welt nur für das SG-Team
     bool instance = false;
     float fieldHalf = cfg::WORLD_HALF;     // halbe Kantenlänge des Spielfelds (Einsatzkarte: GameMap::size / 2)
+    MapTheme mapTheme = MapTheme::Village;    // Thema der Einsatzkarte (Render.cpp: Gras oder Bodensteine)
     MapGround mapGround = MapGround::Grass;   // Boden und Himmel der Einsatzkarte (Render.cpp)
     MapSky mapSky = MapSky::Day;
     std::vector<Vector3> enemySpots;       // Gegner-Startplätze der Einsatzkarte (SpawnPirateGroup)

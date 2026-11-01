@@ -237,6 +237,7 @@ void World::NewInstance(const GameMap& m, unsigned int newSeed) {
     rng.seed(seed);
     instance = true;
     fieldHalf = MapHalf(m);
+    mapTheme = m.theme;
     mapGround = m.ground;
     mapSky = m.sky;
     zombies = m.theme == MapTheme::Graveyard;   // Friedhof: Zombies statt Bodenpiraten

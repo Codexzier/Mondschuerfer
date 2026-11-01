@@ -6,7 +6,8 @@
 // Wofür ist die Datei da?
 //   - Schatten (Schattenkarte, g_clientConfig.shadows): Schiffe und andere
 //     bewegte Objekte (Rover, Züge, Raketen, Personen) werfen echte Schatten
-//     auf Boden, Stationen und Felsen. Dazu wird die Szene vor dem
+//     auf Boden, Stationen und Felsen; auf Einsatzkarten auch alle Teile der
+//     Karte (Häuser, Bäume, Mauern). Dazu wird die Szene vor dem
 //     eigentlichen Bild noch einmal aus Sicht der Sonne gezeichnet, aber nur
 //     die Tiefe (Entfernung zur Sonne) jedes Bildpunkts gespeichert – die
 //     "Schattenkarte". Beim normalen Zeichnen prüft der Beleuchtungs-Shader
@@ -91,6 +92,9 @@ bool BeginShadowPass(const Camera3D& cam, float drawRange);
 // Nach den Schattenwerfern: zurück zum vorherigen Bild und zur Kamera, die
 // Schattenkarte an den Beleuchtungs-Shader geben.
 void EndShadowPass();
+// Zwischen Begin- und EndShadowPass: Reicht ein Schattenwerfer bei p mit
+// Halbmesser r in das Gebiet der Schattenkarte? (Kreis um das Quadrat)
+bool InShadowArea(Vector3 p, float r);
 
 // --- Sandsturm -----------------------------------------------------------------
 // Einmal pro World::Draw: stellt den Nebel für dieses Bild ein (amount 0 =

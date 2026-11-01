@@ -435,7 +435,8 @@ und setzen später an derselben Stelle fort.
   Pixel mit weniger Farbstufen zerlegt (wie 360, 240 bzw. 160 Bildzeilen). HUD und Menüs bleiben
   scharf; FXAA ist dabei ohne Wirkung.
 - **Schatten** – Schiffe und andere bewegte Objekte (Rover, Züge, Raketen, Personen) werfen echte
-  Schatten auf Boden, Stationen und Felsen (Schattenkarte). Stufen Aus, Niedrig, Mittel (Standard)
+  Schatten auf Boden, Stationen und Felsen (Schattenkarte); auf Einsatzkarten auch Häuser, Bäume
+  und Mauern. Stufen Aus, Niedrig, Mittel (Standard)
   und Hoch (schärfere Kanten, mehr Grafikspeicher). „Aus“ zeigt wie bisher runde Schatten unter den
   Schiffen.
 - **Sandsturm** – Staub in der Farbe des Mondes, der die Sicht einschränkt: Nur ein Kreis um das
@@ -451,6 +452,8 @@ und setzen später an derselben Stelle fort.
 - **Bodensteine** – viele kleine, kantige Steine (Low-Poly) auf dem Boden, damit man zu Fuß nicht
   über eine glatte Fläche läuft: Aus, Nur zu Fuß (Standard) oder Immer (auch aus dem Schiff, nicht
   im Karteneditor und nicht in der Kartenübersicht des Zuschauers). Reine Optik, ohne Kollision.
+  Auf Einsatzkarten mit dem Thema Dorf oder Wald wächst stattdessen Gras, auf dem Friedhof liegen
+  graue Feldsteine.
 - **Fahrspuren (Rover)** – wie lange die Reifenspuren der Rover sichtbar bleiben: Aus, 15 s, 30 s,
   1 min (Standard), 2 min oder 5 min. Danach verblassen sie; „Aus“ spart am meisten Leistung.
 
