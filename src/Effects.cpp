@@ -110,6 +110,8 @@ int prevFbo_ = 0;                // vor dem Schattendurchgang eingestellter Fram
 int prevViewport_[4] = {0, 0, 0, 0};
 Matrix prevProj_{}, prevView_{};
 Matrix lightVP_{};               // Blick- mal Projektionsmatrix der Sonne
+Vector3 shadowCenter_{};         // Mitte des Gebiets der Schattenkarte (am Boden) ...
+float shadowHalf_ = 0.0f;        // ... und seine halbe Kantenlänge
 
 Shader effect_{};
 bool effectTried_ = false, effectOk_ = false;
@@ -222,6 +224,8 @@ bool BeginShadowPass(const Camera3D& cam, float drawRange) {
     const float a = Vector3DotProduct(center, right), b = Vector3DotProduct(center, up);
     center = Vector3Add(center, Vector3Scale(right, roundf(a / texel) * texel - a));
     center = Vector3Add(center, Vector3Scale(up, roundf(b / texel) * texel - b));
+    shadowCenter_ = center;
+    shadowHalf_ = half;
     const Vector3 eye = Vector3Subtract(center, Vector3Scale(sun, 150.0f));
     const Matrix view = MatrixLookAt(eye, center, up);
     const Matrix proj = MatrixOrtho(-half, half, -half, half, 1.0, 300.0);
@@ -252,6 +256,11 @@ void EndShadowPass() {
     rlEnableTexture(shadowDepth_);
     rlActiveTextureSlot(0);
     g_assets.SetShadow(lightVP_, kShadowSlot, kShadowStrength, 1.0f / static_cast<float>(shadowSize_));
+}
+
+bool InShadowArea(Vector3 p, float r) {
+    // Quadrat schräg zur Sonne: der Kreis um seine Ecken (Faktor √2)
+    return Dist2D(p, shadowCenter_) < shadowHalf_ * 1.415f + r;
 }
 
 // Radien aus der Stärke a (0..1): bei 10 % bleibt fast alles sichtbar

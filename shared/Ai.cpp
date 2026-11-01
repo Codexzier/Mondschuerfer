@@ -467,8 +467,8 @@ void World::UpdateConvoy(Ship& s, float dt) {
 //            Gegner in Sichtweite: dreht sich zu ihm und schießt, läuft dabei
 //            aber weiter mit (seitwärts oder rückwärts).
 //   Pirat:   Patrol – streift um seinen gelben Kristall (home) und wartet an
-//            jedem Punkt kurz. Attack – Gegner in Sichtweite: hält 8 bis 14 m
-//            Abstand, macht Seitwärtsschritte und schießt. Retreat – unter
+//            jedem Punkt kurz. Attack – Gegner in Sichtweite: hält 45 bis 80 %
+//            der Sichtweite Abstand, macht Seitwärtsschritte und schießt. Retreat – unter
 //            GROUND_PIRATE_RETREAT des Schilds läuft er 6 s vom Gegner weg;
 //            danach greift er wieder an oder flieht erneut, bis sich der
 //            Schild aufgeladen hat.
@@ -477,9 +477,9 @@ void World::UpdateConvoy(Ship& s, float dt) {
 //            geradewegs auf sein Ziel zu (ZOMBIE_CHASE) und schlägt aus der
 //            Nähe zu (ZOMBIE_REACH, alle ZOMBIE_HIT_INTERVAL Sekunden). Er
 //            schießt nicht und flieht nie.
-// Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis TROOPER_SIGHT (Kameraden:
-// MATE_SIGHT_CELLS Rasterfelder der Karte) mit freier Sichtlinie
-// (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
+// Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis zur Sichtweite
+// (TROOPER_SIGHT_CELLS Rasterfelder der Karte, für alle KI-Figuren gleich) mit
+// freier Sichtlinie (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
 // Visier (DamageTrooper) und behält ihn bis zur anderthalbfachen Sichtweite.
 // Zielen: Die Blickrichtung dreht mit begrenztem Tempo zum Ziel (das wirkt
 // wie eine Reaktionszeit); geschossen wird erst, wenn sie fast passt und die
@@ -490,6 +490,7 @@ void World::UpdateConvoy(Ship& s, float dt) {
 void World::UpdateTrooperAi(Trooper& t, float dt) {
     TrooperInput& in = t.input;
     const bool pirate = t.kind == TrooperKind::Pirate;
+    const float sight = cfg::TROOPER_SIGHT_CELLS * (instance ? mapgrid::MISSION_CELL : mapgrid::CELL);
     in.forward = in.strafe = 0.0f;
     in.fire = in.jump = in.sprint = in.reload = in.sample = false;
 
@@ -497,8 +498,6 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
     t.thinkT -= dt;
     if (t.thinkT <= 0.0f) {
         t.thinkT = Rand(0.3f, 0.5f);
-        const float sight = pirate ? cfg::TROOPER_SIGHT
-                                   : cfg::MATE_SIGHT_CELLS * (instance ? mapgrid::MISSION_CELL : mapgrid::CELL);
         const Trooper* cur = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
         if (cur && (cur->down || Dist2D(cur->pos, t.pos) > sight * 1.5f)) cur = nullptr;
         int best = -1;
@@ -599,8 +598,8 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
     } else if (target) {
         const Vector3 dir = toward(target->pos);
         const float d = Dist2D(target->pos, t.pos);
-        if (!t.seesTarget || d > 14.0f) move = dir;
-        else if (d < 8.0f) move = Vector3Negate(dir);
+        if (!t.seesTarget || d > sight * 0.8f) move = dir;
+        else if (d < sight * 0.45f) move = Vector3Negate(dir);
         t.strafeT -= dt;
         if (t.strafeT <= 0.0f) {
             t.strafeT = Rand(1.2f, 2.5f);

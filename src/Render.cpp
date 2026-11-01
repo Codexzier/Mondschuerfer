@@ -504,32 +504,15 @@ void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 mid) {
     rlVertex3f(c.x, c.y, c.z);
 }
 
-// center = Mitte des Kreises (Blickpunkt), radius in Metern.
-void DrawGroundStones(const World& w, Vector3 center, Vector3 camPos, float radius) {
-    constexpr float CELL = 1.0f, DENSITY = 0.6f, LOD = 0.002f, EDGE = 4.0f;
-    const int x0 = static_cast<int>(floorf((center.x - radius) / CELL));
-    const int z0 = static_cast<int>(floorf((center.z - radius) / CELL));
-    const int n = static_cast<int>(2.0f * radius / CELL) + 2;
-    static std::vector<GroundStone> grid;   // nur wiederverwendeter Speicher
-    grid.assign(static_cast<size_t>(n * n), GroundStone{});
-    for (int iz = 0; iz < n; ++iz) {
-        for (int ix = 0; ix < n; ++ix) {
-            uint32_t seed = StoneHash(x0 + ix, z0 + iz);
-            if (StoneRand(seed) > DENSITY) continue;
-            const float x = (x0 + ix + StoneRand(seed)) * CELL, z = (z0 + iz + StoneRand(seed)) * CELL;
-            const float size = StoneRand(seed);
-            float r = 0.03f + 0.15f * size * size * size;
-            const float d = Dist2D({x, 0.0f, z}, center);
-            const float minR = LOD * Vector3Distance({x, 0.0f, z}, camPos);
-            if (d > radius || r <= minR) continue;
-            r *= std::min(std::clamp((radius - d) / EDGE, 0.0f, 1.0f), std::clamp((r - minR) / (0.3f * r), 0.0f, 1.0f));
-            grid[static_cast<size_t>(iz * n + ix)] = GroundStone{x, z, r, seed};
-        }
-    }
-
-    // Grundflächen freiräumen: Stein in Modellkoordinaten umrechnen (Drehung
-    // zurück, durch scale teilen) und gegen die Grenzen aus ModelBounds prüfen.
-    // Teile, die erst 0,3 m über dem Boden anfangen, dürfen Steine unter sich haben.
+// Grundflächen freiräumen (Bodensteine und Gras): grid ist ein Raster aus
+// n x n Zellen der Kantenlänge cell, Zelle (0, 0) hat die Nummer (x0, z0).
+// Jeder Stein bzw. jedes Büschel wird in Modellkoordinaten umgerechnet
+// (Drehung zurück, durch scale teilen) und gegen die Grenzen aus ModelBounds
+// geprüft. Teile, die erst 0,3 m über dem Boden anfangen, dürfen Steine
+// unter sich haben.
+void ClearFootprints(const World& w, std::vector<GroundStone>& grid, int x0, int z0, int n, float cell,
+                     Vector3 center, float radius) {
+    const float CELL = cell;
     auto clear = [&](int model, Vector3 pos, float yaw, float scale) {
         const BoundingBox b = ModelBounds(model);
         if (pos.y + b.min.y * scale > 0.3f) return;
@@ -563,11 +546,41 @@ void DrawGroundStones(const World& w, Vector3 center, Vector3 camPos, float radi
             if (p.stage <= stStage) clear(p.model, Vector3Add(st.pos, p.offset), p.yaw, p.scale);
     }
     for (const RocketPad& pad : w.pads) clear(padPlatform, pad.pos, 0.0f, PAD_SCALE);
+}
+
+// center = Mitte des Kreises (Blickpunkt), radius in Metern.
+void DrawGroundStones(const World& w, Vector3 center, Vector3 camPos, float radius) {
+    constexpr float CELL = 1.0f, DENSITY = 0.6f, LOD = 0.002f, EDGE = 4.0f;
+    const int x0 = static_cast<int>(floorf((center.x - radius) / CELL));
+    const int z0 = static_cast<int>(floorf((center.z - radius) / CELL));
+    const int n = static_cast<int>(2.0f * radius / CELL) + 2;
+    static std::vector<GroundStone> grid;   // nur wiederverwendeter Speicher
+    grid.assign(static_cast<size_t>(n * n), GroundStone{});
+    for (int iz = 0; iz < n; ++iz) {
+        for (int ix = 0; ix < n; ++ix) {
+            uint32_t seed = StoneHash(x0 + ix, z0 + iz);
+            if (StoneRand(seed) > DENSITY) continue;
+            const float x = (x0 + ix + StoneRand(seed)) * CELL, z = (z0 + iz + StoneRand(seed)) * CELL;
+            const float size = StoneRand(seed);
+            float r = 0.03f + 0.15f * size * size * size;
+            const float d = Dist2D({x, 0.0f, z}, center);
+            const float minR = LOD * Vector3Distance({x, 0.0f, z}, camPos);
+            if (d > radius || r <= minR) continue;
+            r *= std::min(std::clamp((radius - d) / EDGE, 0.0f, 1.0f), std::clamp((r - minR) / (0.3f * r), 0.0f, 1.0f));
+            grid[static_cast<size_t>(iz * n + ix)] = GroundStone{x, z, r, seed};
+        }
+    }
+
+    ClearFootprints(w, grid, x0, z0, n, CELL, center, radius);
 
     // Farben: zwischen dunklem und hellem Gestein der Mondfarbe (wie MoonTone
-    // in Assets.cpp), damit sich die Steine vom Boden abheben.
+    // in Assets.cpp), damit sich die Steine vom Boden abheben. Einsatzkarte
+    // (Friedhof): graue Feldsteine, unabhängig von der Mondfarbe.
     Color dark{104, 106, 116, 255}, light{170, 172, 182, 255};
-    if (g_assets.GetMoonColor() == MoonColor::Blue) {
+    if (w.instance) {
+        dark = Color{96, 94, 90, 255};
+        light = Color{158, 154, 146, 255};
+    } else if (g_assets.GetMoonColor() == MoonColor::Blue) {
         dark = Color{72, 88, 132, 255};
         light = Color{128, 148, 200, 255};
     } else if (g_assets.GetMoonColor() == MoonColor::Orange) {
@@ -602,6 +615,69 @@ void DrawGroundStones(const World& w, Vector3 center, Vector3 camPos, float radi
     }
     rlEnd();
     g_assets.EndLit();
+}
+
+// ---------------------------------------------------------------------------
+// Gras (Einsatzkarten mit dem Thema Dorf oder Wald, statt der Bodensteine)
+// ---------------------------------------------------------------------------
+// Büschel aus drei schmalen, nach außen geneigten Halmen um den Blickpunkt.
+// Wie bei den Steinen folgt alles aus der Zellennummer (StoneHash, Zellen von
+// 0,4 m), nichts wird gespeichert. Halme 5 bis 14 cm hoch (die Figur ist
+// 0,6 m groß), unten dunkler als an der Spitze. Die Normale zeigt nach oben,
+// so sind sie beleuchtet wie der Boden darunter; beide Seiten sind sichtbar
+// (ohne Backface-Culling). Kleine Büschel fallen mit dem Abstand zur Kamera
+// weg, am Rand des Kreises wachsen sie aus dem Boden. Keine Halme auf Wegen
+// und in Grundflächen (ClearFootprints).
+void DrawGroundGrass(const World& w, Vector3 center, Vector3 camPos, float radius) {
+    constexpr float CELL = 0.4f, DENSITY = 0.85f, LOD = 0.004f, EDGE = 4.0f;
+    const int x0 = static_cast<int>(floorf((center.x - radius) / CELL));
+    const int z0 = static_cast<int>(floorf((center.z - radius) / CELL));
+    const int n = static_cast<int>(2.0f * radius / CELL) + 2;
+    static std::vector<GroundStone> grid;   // nur wiederverwendeter Speicher (r = Höhe des Büschels)
+    grid.assign(static_cast<size_t>(n * n), GroundStone{});
+    for (int iz = 0; iz < n; ++iz) {
+        for (int ix = 0; ix < n; ++ix) {
+            uint32_t seed = StoneHash(x0 + ix, z0 + iz);
+            if (StoneRand(seed) > DENSITY) continue;
+            const float x = (x0 + ix + StoneRand(seed)) * CELL, z = (z0 + iz + StoneRand(seed)) * CELL;
+            float h = 0.05f + 0.09f * StoneRand(seed);
+            const float d = Dist2D({x, 0.0f, z}, center);
+            const float minH = LOD * Vector3Distance({x, 0.0f, z}, camPos);
+            if (d > radius || h <= minH) continue;
+            h *= std::min(std::clamp((radius - d) / EDGE, 0.0f, 1.0f), std::clamp((h - minH) / (0.3f * h), 0.0f, 1.0f));
+            grid[static_cast<size_t>(iz * n + ix)] = GroundStone{x, z, h, seed};
+        }
+    }
+    ClearFootprints(w, grid, x0, z0, n, CELL, center, radius);
+
+    const Color dark{52, 96, 34, 255}, light{138, 186, 74, 255};
+    g_assets.BeginLit();
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    rlNormal3f(0.0f, 1.0f, 0.0f);
+    for (const GroundStone& st : grid) {
+        if (st.r <= 0.0f) continue;
+        uint32_t seed = st.seed;
+        const Color base = ColorLerp(dark, light, 0.4f * StoneRand(seed));
+        const Color tip = ColorLerp(dark, light, 0.5f + 0.5f * StoneRand(seed));
+        const float yaw = StoneRand(seed) * 2.0f * PI;
+        const float halfW = 0.1f * st.r;
+        for (int i = 0; i < 3; ++i) {
+            const float a = yaw + i * 2.0f * PI / 3.0f + (StoneRand(seed) - 0.5f) * 0.8f;
+            const float h = st.r * (0.7f + 0.3f * StoneRand(seed));
+            const float lean = h * (0.25f + 0.35f * StoneRand(seed));
+            const float ca = cosf(a), sa = sinf(a);
+            const float bx = st.x + ca * 0.015f, bz = st.z + sa * 0.015f;
+            rlColor4ub(base.r, base.g, base.b, 255);
+            rlVertex3f(bx - sa * halfW, 0.0f, bz + ca * halfW);
+            rlVertex3f(bx + sa * halfW, 0.0f, bz - ca * halfW);
+            rlColor4ub(tip.r, tip.g, tip.b, 255);
+            rlVertex3f(bx + ca * lean, h, bz + sa * lean);
+        }
+    }
+    rlEnd();
+    g_assets.EndLit();   // zeichnet die Halme, erst danach wieder mit Backface-Culling
+    rlEnableBackfaceCulling();
 }
 
 // Licht, Himmel und Dunst der Einsatzkarten (World::instance), je MapSky:
@@ -732,10 +808,15 @@ void World::Draw(const Camera3D& cam) const {
     fx::SetScreenFlash(screenFlash);
     // Schattenkarte: die bewegten Objekte zuerst aus Sicht der Sonne zeichnen
     // (nur ihre Tiefe zählt, siehe Effects.hpp). Ist die Option aus, gibt es
-    // stattdessen weiter unten die einfachen runden Schatten.
+    // stattdessen weiter unten die einfachen runden Schatten. Auf einer
+    // Einsatzkarte werfen auch alle Teile der Karte (Häuser, Bäume, Mauern)
+    // Schatten, soweit sie in das Gebiet der Schattenkarte reichen.
     const bool shadowMap = fx::BeginShadowPass(cam, cullR);
     if (shadowMap) {
         DrawMovingModels(*this, focus, cullR, 0.0f);
+        if (instance)
+            for (const auto& d : decos)
+                if (fx::InShadowArea(d.pos, d.scale * 0.6f)) g_assets.Draw(d.model, d.pos, d.yaw, d.scale);
         fx::EndShadowPass();
     }
 
@@ -762,12 +843,19 @@ void World::Draw(const Camera3D& cam) const {
     // Bodensteine (Optionen → Grafik): Stufe 1 nur zu Fuß (28 m um den
     // Blickpunkt), Stufe 2 auch aus dem Schiff (70 m; aber wie der Sandsturm
     // nicht im Karteneditor und nicht in der Übersicht des Zuschauers).
-    // Einsatzkarten haben keine Mondsteine.
-    const int stoneLevel = instance ? 0 : g_clientConfig.groundStones;
-    if (stoneLevel >= 1 && me.role == PlayerRole::Trooper)
+    // Einsatzkarten (dort ist man immer zu Fuß): Dorf und Wald bekommen ab
+    // Stufe 1 Gras (20 m) statt der Steine, der Friedhof graue Feldsteine.
+    const int stoneLevel = g_clientConfig.groundStones;
+    if (instance) {
+        if (stoneLevel >= 1 && me.role == PlayerRole::Trooper) {
+            if (mapTheme == MapTheme::Graveyard) DrawGroundStones(*this, focus, cam.position, 28.0f);
+            else DrawGroundGrass(*this, focus, cam.position, 20.0f);
+        }
+    } else if (stoneLevel >= 1 && me.role == PlayerRole::Trooper) {
         DrawGroundStones(*this, focus, cam.position, 28.0f);
-    else if (stoneLevel >= 2 && tiltshift::Active() && cullR < 200.0f)
+    } else if (stoneLevel >= 2 && tiltshift::Active() && cullR < 200.0f) {
         DrawGroundStones(*this, focus, cam.position, 70.0f);
+    }
 
     // --- Dekoration -----------------------------------------------------------
     // Felsen, Krater usw. aus WorldGen.cpp. Große Objekte ragen weit über ihren
