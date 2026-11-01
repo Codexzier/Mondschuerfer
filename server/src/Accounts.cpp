@@ -477,6 +477,7 @@ bool Accounts::Load(std::string& error) {
             else if (k == "kills") ParseInt(v, p.kills, 0, 1000000000);
             else if (k == "deaths") ParseInt(v, p.deaths, 0, 1000000000);
             else if (k == "goals") ParseInt(v, p.goals, 0, 1000000000);
+            else if (k == "role") ParseInt(v, p.role, 0, 1);
             else if (k == "lives") ParseInt(v, p.lives, 1, limits::MAX_LIVES);
             else if (k == "upgrades") {
                 // "1,2,0,3" -> vier Stufen, jeweils auf 0..UPGRADE_LEVELS begrenzt
@@ -698,6 +699,7 @@ void Accounts::SaveAccounts() {
         out += " kills=" + std::to_string(p.kills);
         out += " deaths=" + std::to_string(p.deaths);
         out += " goals=" + std::to_string(p.goals);
+        out += " role=" + std::to_string(p.role);
         if (p.hasPos)
             out += " pos=" + NumText(p.posX) + "," + NumText(p.posZ) + "," + NumText(p.yaw) + "," + std::to_string(p.posSeed);
         out += "\n";

@@ -17,6 +17,9 @@
 //     den Fortschritt über Accounts (Datenordner).
 //   - Nimmt Karten aus dem Karteneditor an (MapUpload, nur mit Berechtigung)
 //     und schickt allen die aktive Karte (MapData).
+//   - SG-Teams (FPS-Modus): Rollenwahl, Teams im Command Center, Anwahl des
+//     Stargates; die Figuren rechnet die Welt (shared/Trooper.cpp) wie die
+//     Schiffe, der Client sagt seine eigene Figur nur voraus.
 //   - Veröffentlicht jede Sekunde einen Statusbericht für die Webseite und
 //     übernimmt dort geänderte Einstellungen (SharedState).
 //
@@ -150,6 +153,9 @@ private:
         int queueWindowSteps = 0;           // Schritte im laufenden Fenster
         uint64_t noInteractUntilTick = 0;   // kurz nach dem Abdocken "Interaktion" ignorieren (sonst sofort wieder angedockt)
 
+        // --- SG-Team (siehe HandleTeamAction) ---
+        bool roleChosen = false;            // Rollenwahl nach der Anmeldung erledigt (bis dahin ist das Schiff versteckt)
+
         // --- Chat (siehe HandleChat) ---
         bool chatting = false;              // Chat-Eingabe offen (Sprechblase am Schiff, ApplyInputs)
         double chatTokens = 0.0;            // Flutbremse: so viele Nachrichten darf er gerade schicken
@@ -183,6 +189,19 @@ private:
         std::string name;
         double until = 0.0;         // Now(), ab dem das Schiff verschwindet
         int deaths = 0;             // PlayerState::deaths beim Abmelden (erhöht = abgeschossen)
+        bool onFoot = false;        // SG-Team im Einsatz: statt des Schiffs bleibt die Figur stehen
+    };
+
+    // SG-Team im Mehrspieler (bis zu cfg::SG_TEAM_MAX Spieler), gebildet im
+    // Command Center. Der Gründer wählt das Tor an, sobald alle anderen
+    // bereit sind; nach der Anwahl kommt er als Erster durch ein freies
+    // Stargate der Mondkarte, die anderen folgen (PlayerState::sgFollowers).
+    // Nach dem Einsatz bleibt das Team zusammen.
+    struct SgTeam {
+        int number = 0;             // SG-Nummer (1 = SG1)
+        std::vector<int> members;   // Spieler-IDs, Gründer zuerst
+        std::vector<int> ready;     // Spieler-IDs, die "Bereit" gesetzt haben
+        float dialT = -1.0f;        // Anwahl: Sekunden seit dem Start, -1 = keine
     };
 
     // --- Zeit -------------------------------------------------------------------
@@ -202,6 +221,10 @@ private:
     void ApplyBanCommands();    // Bereich "Sperren" der Webseite: Konto/Adresse sperren, entsperren, trennen
     void BanNotice(const std::string& text, bool error = false);   // wie MapNotice
     void RemoveSurplusPirates();
+    // Aktive Karte auch in der eigenen Welt: Stargates und Hindernisse der
+    // Figuren kommen aus der Deko und müssen zu dem passen, was die Clients
+    // zeichnen. Laufende Einsätze enden ohne Wertung.
+    void ApplyMapToWorld();
     int NewPlayerId();
     void RestoreProgress(PlayerState& ps, const PlayerProgress& p);
     PlayerProgress CaptureProgress(const PlayerState& ps) const;
@@ -214,6 +237,14 @@ private:
     void SendSnapshots();
     void SendDepositUpdates();
     void Housekeeping();
+    // SG-Teams: Anwahl weiterzählen, danach der Einsatz (StartSgMission);
+    // Teamliste an alle im Command Center schicken (bei Änderung und 1/s)
+    void UpdateTeams();
+    void SendTeams();
+    SgTeam* TeamOf(int playerId);
+    SgTeam* FindTeam(int number);
+    bool TeamBusy(const SgTeam& t) const;   // Anwahl läuft oder jemand ist im Einsatz
+    void LeaveTeam(int playerId);
 
     // --- Netzwerk -------------------------------------------------------------------
     void ServiceNetwork(uint32_t timeoutMs);
@@ -233,6 +264,7 @@ private:
     void HandleDockAction(Client& c, const net::DockActionMsg& m);
     void HandleChat(Client& c, const net::ChatMsg& m);
     void HandleChatTyping(Client& c, const net::ChatTypingMsg& m);
+    void HandleTeamAction(Client& c, const net::TeamActionMsg& m);
     void HandleLeave(Client& c);
     void BadPacket(Client& c, const char* what);
     void FailLogin(Client& c, net::ErrorCode code, const std::string& text = std::string());
@@ -262,6 +294,7 @@ private:
     net::DepositsMsg MakeDeposits(const Client& c) const;
     net::PlayersMsg MakePlayers() const;
     net::HighscoresMsg MakeHighscores() const;
+    net::TeamsMsg MakeTeams(const PlayerState& ps) const;
 
     // --- Zählen und Schutzmaßnahmen ---------------------------------------------------
     int PlayersOnline() const;
@@ -302,6 +335,9 @@ private:
     World world_;
     net::ModelIds models_{};            // Modell-ID -> Variantennummer fürs Netz
     std::vector<uint8_t> mapData_;      // aktive Karte als fertige MapData-Nachricht (nach jedem Welcome)
+    std::vector<Deco> baseDecos_;       // Zufalls-Deko der Welt (für den Wechsel zurück zur Standardkarte)
+    std::vector<SgTeam> teams_;
+    bool teamsChanged_ = false;         // Teamliste neu schicken (SendTeams)
     std::string mapNotice_;             // für den Status (ServerStatus::mapNotice)
     int mapNoticeSeq_ = 0;
     bool mapNoticeError_ = false;

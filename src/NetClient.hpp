@@ -19,12 +19,16 @@
 //         nicht bestätigten Eingaben werden erneut angewendet
 //         ("Reconciliation"). So fühlt sich die Steuerung direkt an, obwohl
 //         der Server bestimmt, was wirklich passiert.
+//       * SG-Team im Einsatz: die eigene Figur genauso vorhersagen
+//         (World::UpdateTrooperPhysics), fremde Figuren interpolieren,
+//         Stargates und Bodengeschosse übernehmen.
 //   - Ereignisse (Töne, Explosionen, Meldungen, Ziel erreicht) an das Spiel
 //     weitergeben.
 //   - Die aktive Karte des Servers (MapData) in die Spiegelwelt setzen.
 //   - Chat: Nachrichten und "tippt gerade" schicken, empfangene Zeilen
 //     weitergeben (das Chatfenster selbst ist src/Chat.hpp).
 //   - Karten hochladen (Karteneditor, UploadMap).
+//   - SG-Teams: Rollenwahl und Command Center (SendTeamAction, Teams).
 //
 // Benutzt von: src/Multiplayer.cpp (Menüs, Anzeige), src/MapEditor.cpp
 // ("An Server senden"). Abhängigkeiten: ENet,
@@ -82,7 +86,9 @@ public:
     // anderen und aktualisiert Partikel in der Spiegelwelt.
     // dt = echte Bildzeit, NICHT auf 1/20 s gekürzt: Die Eingabeuhr muss genau
     // 30 Eingaben pro Sekunde erzeugen, so viele, wie der Server verbraucht.
-    void Update(float dt, const ShipInput& held, bool scanPressed, bool interactPressed);
+    // foot: Eingaben der eigenen Figur zu Fuß (SG-Team im Einsatz), sonst
+    // nullptr (dann bleibt eine Figur stehen und behält ihren Blick).
+    void Update(float dt, const ShipInput& held, bool scanPressed, bool interactPressed, const TrooperInput* foot = nullptr);
 
     // Stationsfenster: Anfrage an den Server
     void SendDockAction(net::DockActionType action, int param = 0);
@@ -91,6 +97,11 @@ public:
     // Chat-Eingabe offen ist (Sprechblase am eigenen Schiff für die anderen).
     void SendChat(const std::string& text);
     void SendChatTyping(bool typing);
+
+    // SG-Teams: Rollenwahl und Command Center (param siehe net::TeamActionType)
+    void SendTeamAction(net::TeamActionType action, int param = 0);
+    const net::TeamsMsg& Teams() const;   // Stand vom Server (nur in der Rolle SG-Team)
+    bool TakeTeamResult();                // true einmalig, wenn ein eigener Einsatz gerade zu Ende ging
 
     // --- Spielwelt ---------------------------------------------------------------
     bool WorldReady() const;              // Welcome empfangen, Welt aufgebaut

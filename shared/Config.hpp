@@ -350,8 +350,9 @@ constexpr float TROOPER_BULLET_LIFE = 1.2f;
 constexpr float TROOPER_REGEN_DELAY = 5.0f;   // so lange ohne Treffer, dann lädt sich der Schild wieder auf ...
 constexpr float TROOPER_REGEN = 10.0f;        // ... mit so viel pro Sekunde
 constexpr float TROOPER_RESPAWN = 5.0f;       // Spieler gefallen: nach so vielen Sekunden wieder am Ankunftstor
-// KI-Figuren (Ai.cpp): Kameraden des SG-Teams und Bodenpiraten. Bisher nur
-// im Einzelspieler; beide gibt es nur während eines Einsatzes.
+// KI-Figuren (Ai.cpp): Kameraden des SG-Teams (nur Einzelspieler, im
+// Mehrspieler sind die Kameraden andere Spieler) und Bodenpiraten. Beide gibt
+// es nur während eines Einsatzes.
 constexpr int TROOPER_SIGHT_CELLS = 6;        // so viele Rasterfelder weit nehmen KI-Figuren Gegner ins Visier (Mondkarte mapgrid::CELL, Einsatzkarte mapgrid::MISSION_CELL)
 constexpr int SG_MATES_MAX = 3;               // NPC-Kameraden, im Command Center wählbar 0 bis 3
 constexpr float MATE_DAMAGE = 12.0f;
@@ -385,6 +386,7 @@ constexpr float YELLOW_SHARE = 0.4f;          // Anteil gelber Lagerstätten (0 
 constexpr float SAMPLE_TIME = 3.0f;           // Sekunden E halten für eine Probe
 constexpr float SAMPLE_RANGE = 3.0f;          // so nah (m, waagerecht) muss die Figur an der Lagerstättenmitte stehen
 constexpr int SAMPLE_GOAL = 5;                // Proben je Team: dann öffnet sich ein Stargate für die Rückkehr
+constexpr int SG_TEAM_MAX = 4;                // Mehrspieler: so viele Spieler je SG-Team (SG1, SG2 ...)
 // Stargates und Einsätze (Trooper.cpp, Command Center in src/CommandCenter.cpp).
 // Ein Tor wird 3 s angewählt, ist dann offen und schließt sich in 1 s.
 constexpr float GATE_DIAL = 3.0f;             // Anwahl (Command Center und Rückkehr)

@@ -63,7 +63,7 @@ struct DockRequest {
     bool tradeIn = false;  // ... dabei das alte Schiff in Zahlung geben
     int switchShip = -1;   // Handelsstation, Tab "Schiff": zu diesem Schiffstyp wechseln, -1 = nein
     int acceptMission = -1;   // Handelsstation, Tab "Missionen": Missionsart (MissionType) annehmen, -1 = nein
-    bool toTeam = false;      // Handelsstation: "Als SG-Team spielen" (ins Command Center, nur Einzelspieler)
+    bool toTeam = false;      // Handelsstation: "Als SG-Team spielen" (ins Command Center)
 };
 
 // Stationsfenster des eigenen Spielers (w.Me()). Handelsstation: Tab
@@ -78,7 +78,7 @@ struct DockRequest {
 // gilt im Simulationsmodus (der Autopilot entscheidet) und in den ersten
 // beiden Frames nach dem Andocken (der F-Druck, der angedockt hat, würde
 // sonst sofort wieder abdocken; die Aufrufer zählen dafür dockFrames_).
-// teamButton = true (nur Einzelspieler, main.cpp): an der Handelsstation
+// teamButton = true (main.cpp, Multiplayer.cpp): an der Handelsstation
 // zusätzlich der Knopf "Als SG-Team spielen" (DockRequest::toTeam).
 // Muss jedes Frame aufgerufen werden, solange w.Me().dockedAt >= 0 ist.
 DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton = false);

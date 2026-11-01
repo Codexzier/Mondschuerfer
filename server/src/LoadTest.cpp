@@ -1260,6 +1260,12 @@ void LoadTest::OnWelcome(Bot& b, const net::WelcomeMsg& m) {
 
     b.lastError = net::ErrorCode::None;
     b.nextInputAt = now;
+    // Rollenwahl wie im Spiel: Pilot (sonst bliebe das Schiff versteckt)
+    if (!b.spectator) {
+        net::TeamActionMsg role;
+        role.action = net::TeamActionType::Role;
+        SendTo(b, net::Encode(role), true);
+    }
     b.nextPingAt = now + PING_INTERVAL;
     SetPhase(b, Phase::InGame);
 }
