@@ -477,8 +477,9 @@ void World::UpdateConvoy(Ship& s, float dt) {
 //            geradewegs auf sein Ziel zu (ZOMBIE_CHASE) und schlägt aus der
 //            Nähe zu (ZOMBIE_REACH, alle ZOMBIE_HIT_INTERVAL Sekunden). Er
 //            schießt nicht und flieht nie.
-// Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis TROOPER_SIGHT mit freier
-// Sichtlinie (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
+// Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis TROOPER_SIGHT (Kameraden:
+// MATE_SIGHT_CELLS Rasterfelder der Karte) mit freier Sichtlinie
+// (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
 // Visier (DamageTrooper) und behält ihn bis zur anderthalbfachen Sichtweite.
 // Zielen: Die Blickrichtung dreht mit begrenztem Tempo zum Ziel (das wirkt
 // wie eine Reaktionszeit); geschossen wird erst, wenn sie fast passt und die
@@ -496,10 +497,12 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
     t.thinkT -= dt;
     if (t.thinkT <= 0.0f) {
         t.thinkT = Rand(0.3f, 0.5f);
+        const float sight = pirate ? cfg::TROOPER_SIGHT
+                                   : cfg::MATE_SIGHT_CELLS * (instance ? mapgrid::MISSION_CELL : mapgrid::CELL);
         const Trooper* cur = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
-        if (cur && (cur->down || Dist2D(cur->pos, t.pos) > cfg::TROOPER_SIGHT * 1.5f)) cur = nullptr;
+        if (cur && (cur->down || Dist2D(cur->pos, t.pos) > sight * 1.5f)) cur = nullptr;
         int best = -1;
-        float bestD = cfg::TROOPER_SIGHT;
+        float bestD = sight;
         for (const Trooper& o : troopers) {
             if (o.down || o.faction == t.faction) continue;
             const float d = Dist2D(o.pos, t.pos);
