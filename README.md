@@ -154,7 +154,7 @@ klickt, das **Steuerkreuz** wählt in Knopflisten wie die Pfeiltasten, **B** (Kr
 (Dreieck) wie F ab. Lautstärkeregler: A halten und ziehen, oder Steuerkreuz links/rechts.
 Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 
-**Zu Fuß als SG-Team** (FPS-Modus, bisher nur im Einzelspieler): Nach *Neues Spiel* und
+**Zu Fuß als SG-Team** (FPS-Modus; Mehrspieler siehe [Regeln im Mehrspieler](#regeln-im-mehrspieler-kurz)): Nach *Neues Spiel* und
 *Fortsetzen* wählst du die Rolle: **Pilot** (mit dem Schiff wie bisher) oder **SG-Team**. Als
 SG-Team beginnst du im **Command Center**. Dort stellst du mit *Kameraden* 0 bis 3 Kameraden ein,
 rechts steht das Scoreboard deiner Einsätze (beste zuerst). *Ziel* wählt, wohin das Tor führt:
@@ -207,7 +207,7 @@ abbrechen* zählt als gescheitert, *Speichern & zum Hauptmenü* verwirft einen l
 
 | Taste | Aktion im Mehrspieler |
 |---|---|
-| ESC / P (Controller: Menü-Taste) | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt). Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bekommt nur keine Steuerbefehle. |
+| ESC / P (Controller: Menü-Taste) | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt), zu Fuß zusätzlich *Einsatz abbrechen*. Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bzw. deine Figur bekommt nur keine Steuerbefehle. |
 | ESC / F im Stationsfenster (Controller: B / Y) | Abdocken |
 | Tab | im Anmeldefenster zwischen Name und Passwort wechseln |
 | Zuschauer: Mausrad / Ziehen / R / ESC | Zoom / Karte verschieben / ganze Karte / Zuschauen beenden (Controller: rechter Stick / A halten und linken Stick bewegen / – / B) |
@@ -340,7 +340,8 @@ dabei selbst voraus, damit sich die Steuerung direkt anfühlt).
        Ziffern, `_` und `-`; jeden Namen gibt es pro Server nur einmal (Groß/Klein egal).
        Passwort: mindestens 6 Zeichen.
      - **Anmelden** bei jedem weiteren Mal – du spielst mit deinem letzten Stand weiter.
-4. **Abmelden:** ESC → *Abmelden & zum Hauptmenü*. Der Server speichert deinen Fortschritt.
+4. **Rolle wählen:** Pilot oder SG-Team (vorausgewählt ist die zuletzt gespielte Rolle).
+5. **Abmelden:** ESC → *Abmelden & zum Hauptmenü*. Der Server speichert deinen Fortschritt.
 
 Das Passwort verlässt deinen Rechner nicht: Das Spiel berechnet daraus einen Schlüssel, und nur
 damit meldet es sich an. Die Spielverbindung selbst ist aber **nicht verschlüsselt** – nimm für das
@@ -357,6 +358,13 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
   alle Spieler sehen es, und eine **neue Runde** beginnt mit Kontostand 0 – die Aufrüstungen
   behältst du.
 - Was alle zusammen abliefern, lässt die Handelsstationen wachsen.
+- **SG-Teams:** Im Command Center gründest du ein Team (SG1, SG2 …, bis zu 4 Spieler) oder trittst
+  einem bei. Alle melden *Bereit*, der Gründer wählt das Tor an; das Team kommt nacheinander durch
+  dasselbe Stargate auf die Mondkarte (Einsatzkarten gibt es im Mehrspieler noch nicht). Die Kameraden
+  sind die Mitspieler (keine NPC-Kameraden), die Gegner Bodenpiraten. Die 5 Proben zählen für das
+  ganze Team; nach dem Einsatz ist das Team wieder zusammen im Command Center. Allein geht es mit
+  *Tor anwählen (allein)*. Zum SG-Team wechselst du angedockt an einer Handelsstation, zurück ins
+  Schiff im Command Center. Piloten sehen die Teams (auch auf der Minikarte) und die gelben Kristalle.
 - Die **Pause** hält die Welt nicht an.
 - Die Anzahl der Piraten, Stationen, die Mondfarbe und die maximale Spielerzahl stellt der
   Betreiber des Servers ein.

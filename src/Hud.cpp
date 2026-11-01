@@ -509,11 +509,14 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
         TextCentered(hint, W * 0.5f, hr.y + 13 * s, 26 * s, yellow);
     }
 
-    // Stargate der eigenen Rückkehr (angewählt oder offen), sonst das nächste
+    // Stargate der eigenen Rückkehr bzw. der des Teams (angewählt oder
+    // offen), sonst das nächste
+    const PlayerState& me = w.Me();
     int gi = -1;
     for (size_t i = 0; i < w.stargates.size(); ++i) {
         const Stargate& g = w.stargates[i];
-        if (g.toCommand && g.playerId == w.Me().id && (g.state == GateState::Dialing || g.state == GateState::Open))
+        if (g.toCommand && (g.playerId == me.id || (g.team != 0 && g.team == me.sgTeam)) &&
+            (g.state == GateState::Dialing || g.state == GateState::Open))
             gi = static_cast<int>(i);
     }
     const bool homeGate = gi >= 0;
@@ -552,9 +555,13 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
         Panel(dr);
         TextCentered("GEFALLEN", W * 0.5f, dr.y + 18 * s, 40 * s, BAD);
         // Steht kein Kamerad mehr (und kommt keiner mehr durch das Tor),
-        // scheitert der Einsatz, wenn die Zeit um ist (Trooper.cpp)
-        const bool standing = w.Me().sgArrive > 0 ||
-                              std::any_of(mates.begin(), mates.end(), [](const Trooper* m) { return !m->down; });
+        // scheitert der Einsatz, wenn die Zeit um ist (Trooper.cpp).
+        // Mehrspieler: Mitspieler des Teams zählen ebenso.
+        const bool standing = me.sgArrive > 0 ||
+                              std::any_of(mates.begin(), mates.end(), [](const Trooper* m) { return !m->down; }) ||
+                              std::any_of(w.troopers.begin(), w.troopers.end(), [&](const Trooper& o) {
+                                  return o.playerId >= 0 && o.id != t.id && o.team != 0 && o.team == me.sgTeam && !o.down;
+                              });
         const float left = std::max(0.0f, ceilf(cfg::TROOPER_RESPAWN - t.downT));
         TextCentered(standing ? TextFormat("Zurück am Ankunftstor in %.0f s", left)
                               : TextFormat("Kein Kamerad steht mehr: Einsatz scheitert in %.0f s", left),
@@ -562,12 +569,13 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     }
 
     if (!simulation) {
+        const float lb = H - g_leftReserve;   // Mehrspieler: über dem Chatfenster
         if (t.age < 60.0f || (IsKeyDown(KEY_H) && !TextInputActive()))
-            DrawControls(18 * s, H - ControlsHeight(16 * s, true) - 16 * s, 16 * s, true);
+            DrawControls(18 * s, lb - ControlsHeight(16 * s, true) - 16 * s, 16 * s, true);
         else if (controls::ActiveDevice() == controls::Device::KeyboardMouse)
-            Text("[H] Steuerung anzeigen", 18 * s, H - 30 * s, 16 * s, Color{200, 205, 215, 170});
+            Text("[H] Steuerung anzeigen", 18 * s, lb - 30 * s, 16 * s, Color{200, 205, 215, 170});
         else
-            Text("Steuerung: in der Pause " + controls::KeyHint(controls::Act::Pause), 18 * s, H - 30 * s, 16 * s,
+            Text("Steuerung: in der Pause " + controls::KeyHint(controls::Act::Pause), 18 * s, lb - 30 * s, 16 * s,
                  Color{200, 205, 215, 170});
     }
 }

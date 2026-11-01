@@ -332,6 +332,7 @@ struct Trooper {
     TrooperAiState ai = TrooperAiState::Follow;
     TrooperInput input;           // Eingabe, die die KI für diesen Schritt berechnet hat
     int skin = 0;                 // Haut (Render.cpp): 0..3 militär (SG-Team), 4 Cyborg (Bodenpirat), 7..9 Zombie
+    int team = 0;                 // Spielerfigur: Team ihres Spielers (PlayerState::sgTeam, 0 = allein oder KI)
     bool zombie = false;          // Pirat als Zombie (World::zombies): schießt nicht, schlägt aus der Nähe zu
     int leaderId = -1;            // Kamerad: Figur, der er folgt
     int slot = 0;                 // Kamerad: Platz in der Formation hinter ihr
@@ -371,6 +372,7 @@ struct Stargate {
     float t = 0.0f;              // Sekunden im aktuellen Zustand
     bool toCommand = false;      // Verbindung: true = Rückkehr ins Command Center, false = Ankunft von dort
     int playerId = -1;           // Spieler, dessen Team das Tor gerade benutzt
+    int team = 0;                // ... und sein Team (PlayerState::sgTeam, 0 = nur dieser Spieler)
     float awayT = 0.0f;          // offen zur Rückkehr: Sekunden ohne Teammitglied in der Nähe
 };
 
@@ -614,6 +616,11 @@ struct PlayerState {
     float sgTime = 0.0f;         // Dauer des laufenden Einsatzes
     int sgEnded = 0;             // Einsatz gerade zu Ende: 1 zurückgekehrt, 2 gescheitert (das Command Center zeigt es und setzt es zurück)
     std::vector<SgRecord> sgLog; // eigene Einsätze, älteste zuerst (Scoreboard)
+    // Mehrspieler: Team aus mehreren Spielern (GameServer). Im Einzelspieler
+    // bleibt sgTeam 0, das Team ist dann nur der Spieler mit seinen Kameraden.
+    int sgTeam = 0;              // Nummer des Teams (SG1, SG2 ...), 0 = allein
+    std::vector<int> sgFollowers;// Anführer: Teammitglieder (Spieler-IDs), die nach ihm durch das Tor kommen
+    int sgGate = -1;             // Ankunftstor des laufenden Einsatzes (Index in stargates)
 };
 
 class World {
@@ -724,9 +731,15 @@ public:
     void BuildStargates();
     // Einsatz beginnen: Das Team kommt aus dem Command Center durch ein
     // zufälliges freies Stargate, der Spieler zuerst, dann mates
-    // NPC-Kameraden nacheinander. false = kein Tor auf der Karte oder nicht
-    // in der Rolle SG-Team.
-    bool StartSgMission(PlayerState& ps, int mates);
+    // NPC-Kameraden nacheinander und danach die Mitspieler aus
+    // ps.sgFollowers (Mehrspieler). false = kein Tor auf der Karte oder nicht
+    // in der Rolle SG-Team. gate >= 0: durch dieses (schon offene) Tor, ohne
+    // neue Bodenpiraten (ein Mitspieler kommt nach, UpdateStargates).
+    bool StartSgMission(PlayerState& ps, int mates, int gate = -1);
+    // Gehören die beiden zum selben Team (derselbe Spieler oder gleiches sgTeam)?
+    static bool SameTeam(const PlayerState& a, const PlayerState& b) { return a.id == b.id || (a.sgTeam != 0 && a.sgTeam == b.sgTeam); }
+    // Proben, die das Team des Spielers gerade trägt (alle Spielerfiguren des Teams)
+    int TeamSamples(const PlayerState& ps) const;
     // Einsatz beenden: Die Figuren des Teams verschwinden, der Spieler ist
     // wieder im Command Center (sgEnded). success = durch das Stargate
     // zurückgekehrt. record = false: kein Eintrag im Scoreboard (Speichern

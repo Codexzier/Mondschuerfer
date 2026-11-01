@@ -34,6 +34,7 @@
 #include "TiltShift.hpp"
 #include "raylib.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -324,6 +325,12 @@ void MultiplayerScreen::EnterPlaying() {
     autoDockT_ = 0.0f;
     chat_.Clear();
     chatTypingSent_ = false;
+    // Rollenwahl: vorausgewählt ist die zuletzt gespielte Rolle (Serverkonto)
+    roleChoice_ = true;
+    roleSel_ = net_.Welcome().lastRole == 1 ? 1 : 0;
+    roleFrames_ = 0;
+    inCommand_ = false;
+    lookTrooper_ = -1;
     ResetAutopilot();   // Autopilot-Zustand (Ai.cpp) gehört jetzt der Spiegelwelt
     SetStatus("", MUTED);
 
@@ -517,22 +524,28 @@ void MultiplayerScreen::Update(float frameDt) {
     // --- 0. Chat: Enter öffnet die Eingabe, ESC schließt sie ---------------------
     // Vor der Flugsteuerung, die bei offener Eingabe ruht. Ob die Eingabe offen
     // ist, erfährt der Server (Sprechblase am Schiff für die anderen).
-    const bool chatAllowed = phase_ == Phase::Playing && net_.WorldReady() && !paused_ && goalAnimT_ < 0.0f;
+    const bool chatAllowed = phase_ == Phase::Playing && net_.WorldReady() && !paused_ && goalAnimT_ < 0.0f && !roleChoice_ && !inCommand_;
     chat_.Update(chatAllowed);
     if (chat_.Active() != chatTypingSent_) {
         chatTypingSent_ = chat_.Active();
         net_.SendChatTyping(chatTypingSent_);
     }
 
-    // --- 1. Eingaben fürs eigene Schiff (nur im Spiel) ---------------------------
+    // --- 1. Eingaben fürs eigene Schiff bzw. die Figur (nur im Spiel) ------------
+    // Nicht in der Rollenwahl und im Command Center (dort nur Knöpfe).
     ShipInput held;
     bool scan = false, interact = false;
-    if (phase_ == Phase::Playing && net_.WorldReady()) ReadGameInput(dt, held, scan, interact);
+    TrooperInput foot;
+    bool onFoot = false;
+    if (phase_ == Phase::Playing && net_.WorldReady() && !roleChoice_) {
+        if (OwnTrooper()) onFoot = ReadFootInput(dt, foot);
+        else if (!InCommand()) ReadGameInput(dt, held, scan, interact);
+    }
 
     // --- 2. Netzwerk: Pakete abarbeiten, Eingaben senden, Welt nachführen --------
     // Muss in JEDER Phase laufen, sonst würden z. B. die Lobby-Infos nicht
     // aktualisiert und die Verbindung liefe in eine Zeitüberschreitung.
-    net_.Update(frameDt, held, scan, interact);
+    net_.Update(frameDt, held, scan, interact, onFoot ? &foot : nullptr);
 
     // --- 3. Was ist passiert? -------------------------------------------------------
     HandleNetwork();
@@ -561,6 +574,25 @@ void MultiplayerScreen::Update(float frameDt) {
         const Ship& p = w.Player();
         if (!p.dead && !p.hidden) hadShip_ = true;
 
+        // Rollenwahl: Testablauf mit Autopilot nimmt gleich "Pilot". Kommt
+        // der Spieler nach einem Verbindungsabbruch zurück und ist noch zu Fuß
+        // unterwegs, gilt die Rolle schon (der Server kennt sie).
+        if (roleChoice_) {
+            ++roleFrames_;
+            if (opt_.autopilot) ChooseRole(0);
+            else if (OwnTrooper()) roleChoice_ = false;
+        }
+        // Command Center: beim Betreten zurücksetzen, dann jedes Frame die Uhr
+        const bool cmd = !roleChoice_ && InCommand();
+        if (cmd && !inCommand_) {
+            command_.OpenOnline();
+            paused_ = false;
+            optionsOpen_ = false;
+            controls_.Reset();
+        }
+        inCommand_ = cmd;
+        if (cmd) command_.Update(dt);
+
         // Andocken verfolgen. dockFrames_ zählt die Frames seit dem Andocken:
         // Das Stationsfenster wird erst ab dem 2. Frame bedienbar, damit ein
         // F-Druck nicht im selben Moment andockt UND wieder abdockt (wie main.cpp).
@@ -587,7 +619,7 @@ void MultiplayerScreen::Update(float frameDt) {
                 goalAnimT_ = -1.0f;
                 dockFrames_ = 0;   // dieselbe Taste darf nicht auch das Stationsfenster bedienen
             }
-        } else if (!paused_ && w.Me().dockedAt < 0 && !chat_.Busy() && PilotControls::PausePressed()) {
+        } else if (!paused_ && !roleChoice_ && !inCommand_ && w.Me().dockedAt < 0 && !chat_.Busy() && PilotControls::PausePressed()) {
             paused_ = true;
             pauseSel_ = 0;
             pauseFrames_ = 0;
@@ -653,6 +685,53 @@ void MultiplayerScreen::ReadGameInput(float dt, ShipInput& held, bool& scan, boo
     padZoom_ += fi.zoom;   // UpdatePlayingCamera rechnet es wie Mausrad-Rasten ein
 }
 
+// Zu Fuß: Ego-Steuerung wie im Einzelspieler (TrooperControls). Den Blick
+// führen wir hier: Bei einer neuen Figur beginnt er mit ihrer Blickrichtung
+// (vom Tor weg). In der Pause, beim Tippen im Chat und gefallen gibt es keine
+// Eingaben; die Figur bleibt dann stehen (NetClient::Update mit nullptr).
+bool MultiplayerScreen::ReadFootInput(float dt, TrooperInput& in) {
+    const Trooper* t = OwnTrooper();
+    if (!t) return false;
+    if (t->id != lookTrooper_) {
+        lookTrooper_ = t->id;
+        lookYaw_ = t->yaw;
+        lookPitch_ = t->pitch;
+    }
+    if (paused_ || chat_.Busy() || t->down) return false;
+    in = trooperControls_.Read(lookYaw_, lookPitch_, dt);
+    lookYaw_ = in.yaw;
+    lookPitch_ = in.pitch;
+    return true;
+}
+
+const Trooper* MultiplayerScreen::OwnTrooper() const {
+    if (!net_.WorldReady()) return nullptr;
+    const World& w = net_.GetWorld();
+    const PlayerState& me = w.Me();
+    return me.role == PlayerRole::Trooper && me.trooperId >= 0 ? w.FindTrooper(me.trooperId) : nullptr;
+}
+
+bool MultiplayerScreen::InCommand() const {
+    if (!net_.WorldReady()) return false;
+    const PlayerState& me = net_.GetWorld().Me();
+    return me.role == PlayerRole::Trooper && me.trooperId < 0;
+}
+
+bool MultiplayerScreen::CaptureCursor() const {
+    return phase_ == Phase::Playing && !roleChoice_ && !paused_ && !chat_.Busy() && OwnTrooper() != nullptr;
+}
+
+// Rolle an den Server schicken. Die Spiegelwelt übernimmt sie gleich, damit
+// das Command Center sofort erscheint bzw. verschwindet; der nächste Snapshot
+// bestätigt sie (oder stellt sie zurück, falls der Server ablehnt).
+void MultiplayerScreen::ChooseRole(int role) {
+    roleChoice_ = false;
+    net_.SendTeamAction(net::TeamActionType::Role, role);
+    net_.GetWorld().Me().role = role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
+    controls_.Reset();
+    snapCam_ = true;
+}
+
 // Autopilot an der Station: Reparatur bzw. Upgrades als Anfrage an den Server
 // schicken (NICHT AutopilotDockActions aus Ai.cpp – das würde die Spiegelwelt
 // direkt verändern, der Server wüsste davon nichts), nach ~1,5 s abdocken.
@@ -690,6 +769,20 @@ void MultiplayerScreen::UpdatePlayingCamera(float dt) {
     const World& w = net_.GetWorld();
     const Ship& p = w.Player();
     const bool hasShip = !p.dead && !p.hidden;
+
+    // Zu Fuß: Ego-Kamera in Augenhöhe mit weitem Blickwinkel (wie main.cpp).
+    // camTarget_ folgt der Figur (Hörposition); zurück im Schiff springt die
+    // Kamera direkt dorthin.
+    if (const Trooper* t = OwnTrooper()) {
+        camTarget_ = Vector3{t->pos.x, 0.0f, t->pos.z};
+        snapCam_ = true;
+        cam_.up = {0, 1, 0};
+        cam_.fovy = 70.0f;
+        cam_.projection = CAMERA_PERSPECTIVE;
+        cam_.position = TrooperEye(*t);
+        cam_.target = Vector3Add(cam_.position, TrooperAim(*t));
+        return;
+    }
 
     // Mausrad und rechter Stick (padZoom_, in Mausrad-Rasten; ReadGameInput).
     // Über dem Chatfenster blättert das Mausrad bei offener Eingabe im Verlauf.
@@ -894,11 +987,25 @@ void MultiplayerScreen::UpdateAudio(float dt) {
     // Zuschauen, solange die eigene Piraten-Mission läuft die Piratenmusik,
     // sonst (Adresse, Lobby, Anmeldung) die Menümusik. Beim Wechsel blendet
     // g_audio.Update weich über.
+    // SG-Team: im Command Center und im Einsatz wie im Einzelspieler (main.cpp,
+    // StargateMusic) die Stargate-Musik: in den ersten 10 s nach der Ankunft
+    // und solange ein Tor für die Rückkehr des Teams angewählt wird oder offen ist.
     MusicTrack track = MusicTrack::Menu;
-    if (phase_ == Phase::Playing && net_.WorldReady()) {
+    if (phase_ == Phase::Playing && net_.WorldReady() && !roleChoice_) {
         const World& w = net_.GetWorld();
-        const Mission* m = w.FindMission(w.Me().mission);
-        track = m && m->type == MissionType::Pirates ? MusicTrack::Pirates : MusicTrack::Game;
+        const PlayerState& me = w.Me();
+        bool stargate = inCommand_;
+        if (const Trooper* t = OwnTrooper()) {
+            stargate = t->age < 10.0f;
+            for (const Stargate& g : w.stargates)
+                if (g.toCommand && (g.playerId == me.id || (g.team != 0 && g.team == me.sgTeam)) &&
+                    (g.state == GateState::Dialing || g.state == GateState::Open))
+                    stargate = true;
+        }
+        const Mission* m = w.FindMission(me.mission);
+        track = stargate ? MusicTrack::Stargate : m && m->type == MissionType::Pirates ? MusicTrack::Pirates : MusicTrack::Game;
+    } else if (phase_ == Phase::Playing && net_.WorldReady()) {
+        track = MusicTrack::Menu;   // Rollenwahl (wie im Einzelspieler)
     } else if (phase_ == Phase::Playing || phase_ == Phase::Spectating) {
         track = MusicTrack::Game;
     }
@@ -1185,22 +1292,48 @@ void MultiplayerScreen::DrawPlaying() {
         return;
     }
     World& w = net_.GetWorld();
+    if (inCommand_) {
+        DrawCommand();
+        return;
+    }
+    // Zu Fuß: Ego-Ansicht ohne Tilt-Shift, nahe Clip-Ebene 2 cm (die Waffe
+    // steht dicht vor der Kamera), wie im Einzelspieler (main.cpp)
+    const bool ego = OwnTrooper() != nullptr;
+    tiltshift::SetEgoView(ego);
+    rlSetClipPlanes(ego ? 0.02 : 0.5, ego ? 1000.0 : 2500.0);
     tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
     BeginMode3D(cam_);
     w.Draw(cam_);
-    controls_.DrawTarget3D(elapsed_);   // Mausziel (nur wenn eins gesetzt ist)
+    if (!ego) controls_.DrawTarget3D(elapsed_);   // Mausziel (nur wenn eins gesetzt ist)
     EndMode3D();
     tiltshift::End();
 
+    // Rollenwahl nach der Anmeldung über dem Bild (ESC meldet ab)
+    if (roleChoice_) {
+        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, true);
+        if (pick >= 0) {
+            ChooseRole(pick);
+        } else if (roleFrames_ > 1 && BackPressed()) {
+            g_audio.Play(Sfx::UiBack);
+            net_.Disconnect();
+            wantsMenu_ = true;
+        }
+        return;
+    }
+
     // Randpfeile des HUD sollen nicht unter dem Panel "Beste Piloten" landen
+    // (zu Fuß gibt es weder Minikarte noch dieses Panel)
     const Rectangle tp = TopPilotsRect();
     DrawShipNames(w);
-    SetHudRightReserve(static_cast<float>(GetScreenWidth()) - tp.x + 8 * Scale(), tp.y + tp.height + 8 * Scale());
+    if (!ego) SetHudRightReserve(static_cast<float>(GetScreenWidth()) - tp.x + 8 * Scale(), tp.y + tp.height + 8 * Scale());
     SetHudLeftReserve(ChatBox::Height() + 8 * Scale());   // Tastenhilfe über dem Chatfenster
     DrawHud(w, cam_, false);
     SetHudRightReserve(0.0f, 0.0f);   // Standard für den Einzelspieler wiederherstellen
     SetHudLeftReserve(0.0f);
-    DrawTopPilots(w);
+    if (!ego) {
+        DrawTeamMarkers();
+        DrawTopPilots(w);
+    }
 
     // Chat unten links (vor dem Stationsfenster, das darüber liegen darf)
     std::string chatText;
@@ -1213,7 +1346,8 @@ void MultiplayerScreen::DrawPlaying() {
     if (w.Me().dockedAt >= 0 && goalAnimT_ < 0.0f && undockSentT_ < 0.0f && !paused_) {
         // Beim Tippen im Chat (und im Frame, in dem Enter/ESC ihn geöffnet
         // oder geschlossen hat) ist das Fenster nur Anzeige.
-        DockRequest req = DrawDockPanel(w, dockFrames_ > 1 && !opt_.autopilot && !chat_.Busy());
+        DockRequest req = DrawDockPanel(w, dockFrames_ > 1 && !opt_.autopilot && !chat_.Busy(), true);
+        if (req.toTeam) ChooseRole(1);   // an der Handelsstation: ins Command Center
         if (req.repair) net_.SendDockAction(net::DockActionType::Repair);
         if (req.buy >= 0) net_.SendDockAction(net::DockActionType::BuyUpgrade, req.buy);
         // BuyShip: Schiffstyp, Bit 7 = in Zahlung geben (siehe DockActionMsg)
@@ -1227,7 +1361,7 @@ void MultiplayerScreen::DrawPlaying() {
             undockSentT_ = 0.0f;   // Fenster ausblenden, bis der Server das Abdocken bestätigt
         }
     }
-    DrawNoShip(w);
+    if (w.Me().role == PlayerRole::Pilot) DrawNoShip(w);
     if (goalAnimT_ >= 0.0f) DrawGoalAnimation();
     // Pause: entweder das Pausenmenü oder – nach "Optionen" – die Optionen.
     // Schließen sie sich (Zurück/ESC), geht es zurück ins Pausenmenü;
@@ -1240,6 +1374,46 @@ void MultiplayerScreen::DrawPlaying() {
             optionsOpen_ = false;
             pauseFrames_ = 0;
         }
+    }
+}
+
+// Command Center des SG-Teams: eigene Kulisse und Bedienung
+// (CommandCenterScreen::DrawOnline). Jede Wahl geht als TeamAction an den
+// Server; ob es geklappt hat, zeigt der nächste Stand der Teams.
+void MultiplayerScreen::DrawCommand() {
+    tiltshift::SetEgoView(false);
+    rlSetClipPlanes(0.5, 2500.0);
+    const OnlineCommand c = command_.DrawOnline(net_.Teams(), net_.MyPlayerId(), net_.TakeTeamResult());
+    switch (c.kind) {
+        case OnlineCommand::Kind::None: break;
+        case OnlineCommand::Kind::Create: net_.SendTeamAction(net::TeamActionType::Create); break;
+        case OnlineCommand::Kind::Join: net_.SendTeamAction(net::TeamActionType::Join, c.param); break;
+        case OnlineCommand::Kind::Leave: net_.SendTeamAction(net::TeamActionType::Leave); break;
+        case OnlineCommand::Kind::Ready: net_.SendTeamAction(net::TeamActionType::Ready, c.param); break;
+        case OnlineCommand::Kind::Dial: net_.SendTeamAction(net::TeamActionType::Dial); break;
+        case OnlineCommand::Kind::Pilot: ChooseRole(0); break;
+        case OnlineCommand::Kind::Menu:
+            net_.Disconnect();   // Leave: der Server speichert sofort
+            wantsMenu_ = true;
+            break;
+    }
+}
+
+// Figuren der SG-Teams auf der Minikarte (Hud.cpp: Minimap, gleiche
+// Umrechnung): Raute in Schildfarbe, aus der Spielerliste des Servers, damit
+// Piloten alle Teams sehen, auch weit weg.
+void MultiplayerScreen::DrawTeamMarkers() {
+    const float s = Scale();
+    const float size = 230 * s;
+    const Rectangle r{GetScreenWidth() - size - 16 * s, 16 * s, size, size};
+    for (const net::PlayerEntry& p : net_.Players()) {
+        if (!p.onFoot || p.id == net_.MyPlayerId()) continue;
+        const Vector2 m{r.x + (p.x + cfg::WORLD_HALF) / (2 * cfg::WORLD_HALF) * r.width,
+                        r.y + (p.z + cfg::WORLD_HALF) / (2 * cfg::WORLD_HALF) * r.height};
+        if (!CheckCollisionPointRec(m, r)) continue;
+        const float k = 3.5f * s;
+        DrawTriangle({m.x, m.y - k}, {m.x - k, m.y}, {m.x + k, m.y}, SHIELD);
+        DrawTriangle({m.x - k, m.y}, {m.x, m.y + k}, {m.x + k, m.y}, SHIELD);
     }
 }
 
@@ -1283,6 +1457,29 @@ void MultiplayerScreen::DrawShipNames(const World& w) {
         DrawRectangleRec({p.x - tw * 0.5f - 6 * s, p.y - ts - 8 * s, tw + 12 * s, ts + 6 * s}, Color{10, 12, 20, 150});
         TextCentered(name, p.x, p.y - ts - 5 * s, ts, sh.crashing ? BAD : GOOD);
         if (sh.chatting) DrawChatEmote({p.x, p.y - ts - 12 * s}, elapsed_);   // tippt gerade im Chat
+    }
+
+    // Namen über den Figuren anderer Spieler (SG-Teams), das eigene Team in
+    // Schildfarbe. Zu Fuß nur, was vor der Kamera und höchstens 60 m weg ist.
+    const Trooper* foot = OwnTrooper();
+    const Vector3 look = Vector3Subtract(cam_.target, cam_.position);
+    for (const Trooper& t : w.troopers) {
+        if (t.playerId < 0 || (foot && t.id == foot->id)) continue;
+        const Vector3 head = Vector3Add(t.pos, {0.0f, cfg::TROOPER_HEIGHT + 0.25f, 0.0f});
+        if (foot && (Vector3DotProduct(Vector3Subtract(head, cam_.position), look) <= 0.0f || Dist2D(t.pos, foot->pos) > 60.0f)) continue;
+        if (!foot && Dist2D(t.pos, cam_.target) > w.drawRange) continue;
+        std::string name;
+        for (const auto& p : net_.Players())
+            if (p.id == t.playerId) name = p.name;
+        if (name.empty()) continue;
+        const Vector2 p = GetWorldToScreen(head, cam_);
+        if (p.x < -60 || p.x > W + 60 || p.y < -30 || p.y > H + 30) continue;
+        if (!foot && (CheckCollisionPointRec(p, statusPanel) || CheckCollisionPointRec(p, rightColumn))) continue;
+        const float ts = 16 * s;
+        const float tw = Width(name, ts);
+        DrawRectangleRec({p.x - tw * 0.5f - 5 * s, p.y - ts - 6 * s, tw + 10 * s, ts + 4 * s}, Color{10, 12, 20, 150});
+        const bool mate = t.team != 0 && t.team == w.Me().sgTeam;
+        TextCentered(name, p.x, p.y - ts - 4 * s, ts, t.down ? BAD : mate ? SHIELD : TEXT);
     }
 }
 
@@ -1430,7 +1627,12 @@ void MultiplayerScreen::DrawPause() {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
-    std::vector<std::string> items = {"Weiterspielen", "Optionen", "Abmelden & zum Hauptmenü"};
+    // Zu Fuß zusätzlich "Einsatz abbrechen" (zurück ins Command Center, ohne Wertung)
+    const bool foot = OwnTrooper() != nullptr;
+    std::vector<std::string> items = {"Weiterspielen", "Optionen"};
+    if (foot) items.push_back("Einsatz abbrechen");
+    items.push_back("Abmelden & zum Hauptmenü");
+    const int abortItem = foot ? 2 : -1, logoutItem = foot ? 3 : 2;
     const float bh = 54 * s, gap = 12 * s, listTop = 126 * s;   // Knöpfe (listTop relativ zur Oberkante)
     // n Knöpfe belegen n * (bh + gap) - gap; darunter 18 px Abstand, Hinweiszeile (16 px) und 16 px Abstand
     const float noteTop = listTop + static_cast<float>(items.size()) * (bh + gap) - gap + 18 * s;
@@ -1441,7 +1643,7 @@ void MultiplayerScreen::DrawPause() {
     Panel(r);
     TextCentered("PAUSE", W * 0.5f, r.y + 26 * s, 50 * s, ACCENT);
     TextCentered("Das Spiel läuft auf dem Server weiter!", W * 0.5f, r.y + 86 * s, 20 * s, MUTED);
-    int c = ButtonList(items, {true, true, true}, pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
+    int c = ButtonList(items, std::vector<bool>(items.size(), true), pauseSel_, W * 0.5f, r.y + listTop, 440 * s, bh, gap, 24 * s);
     // ESC im selben Frame, in dem die Pause geöffnet wurde, darf sie nicht gleich schließen.
     // Controller: B oder die Menü-Taste (BackPressed) schließen sie wie ESC.
     if (pauseFrames_ > 1 && (BackPressed() || IsKeyPressed(KEY_P))) c = 0;
@@ -1454,15 +1656,21 @@ void MultiplayerScreen::DrawPause() {
         optionsOpen_ = true;
         options_.Open();
         return;
-    } else if (c == 2) {
+    } else if (c == abortItem) {
+        net_.SendTeamAction(net::TeamActionType::Abort);
+        paused_ = false;
+        g_audio.Play(Sfx::PauseClose);
+    } else if (c == logoutItem) {
         net_.Disconnect();   // Leave: der Server speichert den Fortschritt sofort
         wantsMenu_ = true;
     }
-    // Die Pause gibt es nur im freien Flug, also gilt hier immer: Das Schiff
-    // bleibt nach dem Abmelden noch 10 s im All (GameServer::LogoutPlayer).
-    TextCentered("Abmelden im All: Dein Schiff bleibt noch 10 s schutzlos stehen.", W * 0.5f, r.y + noteTop, 16 * s,
-                 MUTED);
-    DrawControls(r.x + 70 * s, r.y + helpTop, helpSize);
+    // Die Pause gibt es nur im freien Flug bzw. zu Fuß, also gilt hier immer:
+    // Schiff bzw. Figur bleiben nach dem Abmelden noch 10 s stehen
+    // (GameServer::LogoutPlayer).
+    TextCentered(foot ? "Abmelden im Einsatz: Deine Figur bleibt noch 10 s schutzlos stehen."
+                      : "Abmelden im All: Dein Schiff bleibt noch 10 s schutzlos stehen.",
+                 W * 0.5f, r.y + noteTop, 16 * s, MUTED);
+    DrawControls(r.x + 70 * s, r.y + helpTop, helpSize, foot);
 }
 
 // --- (e) Zuschauen ---------------------------------------------------------------------------

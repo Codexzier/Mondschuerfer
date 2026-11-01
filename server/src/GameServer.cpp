@@ -127,6 +127,7 @@ constexpr uint64_t UNDOCK_INTERACT_GUARD = 10;                  // ~0,33 s nach 
 constexpr size_t MAX_SNAP_SHIPS = 80;
 constexpr size_t MAX_SNAP_BULLETS = 128;
 constexpr size_t MAX_SNAP_WRECKS = 48;
+constexpr size_t MAX_SNAP_TROOPERS = 64;
 constexpr size_t MAX_SPECTATOR_LIST = 512;
 constexpr size_t MAX_EVENTS_PER_MSG = 1024;       // Client lehnt > 4096 ab (Protocol.cpp)
 
@@ -400,6 +401,7 @@ void GameServer::InitWorld() {
     world_.NewServerWorld(seed, settings_);
     world_.totalDelivered = accounts_.TotalDelivered();
     world_.lastStage = world_.StationStage();
+    baseDecos_ = world_.decos;
     savedTotalDelivered_ = world_.totalDelivered;
     if (!haveSeed) {
         accounts_.SetWorldSeed(seed);
@@ -411,6 +413,7 @@ void GameServer::InitWorld() {
     // So dauert die Prüfung gleich lang und verrät nicht, ob es den Namen gibt.
     crypto::RandomBytes(dummyKey_.data(), dummyKey_.size());
     UpdateMapData();
+    ApplyMapToWorld();
 }
 
 // Die Hauptschleife. Kein "Busy-Waiting": enet_host_service schläft im
@@ -515,6 +518,7 @@ void GameServer::Step() {
     for (auto& up : clients_)
         if (up->isBot) BotThink(*up);
     ApplyInputs();
+    UpdateTeams();
 
     const int stageBefore = world_.lastStage;
     world_.Update(net::TICK_DT);
@@ -531,6 +535,7 @@ void GameServer::Step() {
     SendEvents();
     SendSnapshots();
     SendDepositUpdates();
+    SendTeams();
 
     if (tick_ % PLAYERS_EVERY == 0) SendToAllInGame(net::Encode(MakePlayers()));
     if (highscoresChanged_) {
@@ -573,15 +578,19 @@ void GameServer::ApplyInputs() {
         c.queueMinInWindow = std::min(c.queueMinInWindow, static_cast<int>(c.inputs.size()));
         if (++c.queueWindowSteps >= INPUT_QUEUE_WINDOW) {
             if (c.queueMinInWindow > INPUT_QUEUE_TARGET && c.inputs.size() >= 2) {
-                const bool fire = c.inputs.front().fire;
+                const net::InputRecord dropped = c.inputs.front();
                 c.inputs.pop_front();
-                if (fire) c.inputs.front().fire = true;
+                if (dropped.fire) c.inputs.front().fire = true;
+                if (dropped.jump) c.inputs.front().jump = true;      // zu Fuß: Sprung und Nachladen
+                if (dropped.reload) c.inputs.front().reload = true;  // ebenso weitergeben
             }
             c.queueMinInWindow = 1 << 30;
             c.queueWindowSteps = 0;
         }
         ShipInput in;
+        bool fresh = false;   // in diesem Schritt eine neue Eingabe
         if (!c.inputs.empty()) {
+            fresh = true;
             const net::InputRecord rec = c.inputs.front();
             c.inputs.pop_front();
             // Tastendrücke als Zähler: Der Unterschied zum zuletzt angewendeten
@@ -612,6 +621,27 @@ void GameServer::ApplyInputs() {
         if (tick_ < c.noInteractUntilTick) in.interact = false;
         ps->input = in;
         if (Ship* s = world_.PlayerShip(*ps)) s->chatting = c.chatting;
+        // SG-Team im Einsatz: Eingaben der Figur. Sprung und Nachladen nur aus
+        // einer neuen Eingabe (wie die Tastendrücke oben). Kommt noch keine
+        // Eingabe zu Fuß (gerade erst durch das Tor), behält die Figur ihren Blick.
+        if (const Trooper* t = ps->role == PlayerRole::Trooper ? world_.FindTrooper(ps->trooperId) : nullptr) {
+            TrooperInput ti;
+            ti.yaw = t->yaw;
+            ti.pitch = t->pitch;
+            if (c.held.foot) {
+                ti.forward = c.held.forward;
+                ti.strafe = c.held.strafe;
+                ti.yaw = c.held.yaw;
+                ti.pitch = c.held.pitch;
+                ti.fire = c.held.fire;
+                ti.sprint = c.held.sprint;
+                ti.sample = c.held.sample;
+                ti.jump = fresh && c.held.jump;
+                ti.reload = fresh && c.held.reload;
+            }
+            ps->trooperInput = ti;
+            ps->input = ShipInput{};
+        }
     }
 }
 
@@ -639,6 +669,8 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
             if (!ps) continue;
             const Ship* s = world_.PlayerShip(*ps);
             if (s) c.lastPos = s->pos;   // ohne Schiff (Respawn): letzte bekannte Position
+            // SG-Team im Einsatz: hören und sehen, wo die Figur steht
+            if (const Trooper* t = ps->role == PlayerRole::Trooper ? world_.FindTrooper(ps->trooperId) : nullptr) c.lastPos = t->pos;
             players.push_back({&c, ps, c.lastPos, s ? s->id : -1});
         }
     }
@@ -1125,6 +1157,12 @@ void GameServer::OnReceive(Client& c, const uint8_t* data, size_t len) {
             else HandleChatTyping(c, m);
             break;
         }
+        case net::MsgType::TeamAction: {
+            net::TeamActionMsg m;
+            if (!net::Decode(r, m)) BadPacket(c, "TeamAction");
+            else HandleTeamAction(c, m);
+            break;
+        }
         case net::MsgType::Leave:
             HandleLeave(c);
             break;
@@ -1412,6 +1450,190 @@ void GameServer::HandleChatTyping(Client& c, const net::ChatTypingMsg& m) {
     if (c.role == Role::Player) c.chatting = m.typing;
 }
 
+// ===========================================================================
+// SG-Teams (Rollenwahl, Command Center, Anwahl)
+// ===========================================================================
+// Rolle wechseln: direkt nach der Anmeldung frei; danach zum SG-Team nur
+// angedockt an einer Handelsstation, zurück zum Piloten nur aus dem Command
+// Center (World::SetRole versteckt bzw. zeigt das Schiff). Teams: gründen,
+// beitreten (höchstens cfg::SG_TEAM_MAX, nicht während Anwahl oder Einsatz),
+// verlassen, bereit melden; der Gründer wählt an, wenn alle anderen bereit
+// sind (allein: sofort, ein Team wird dann angelegt).
+void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
+    if (c.role != Role::Player) return;
+    PlayerState* ps = world_.FindPlayer(c.playerId);
+    if (!ps) return;
+    const Color bad{255, 170, 120, 255};
+    const bool inCommand = ps->role == PlayerRole::Trooper && ps->trooperId < 0;
+    SgTeam* team = TeamOf(ps->id);
+    switch (m.action) {
+        case net::TeamActionType::Role: {
+            const PlayerRole want = m.param == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
+            if (c.roleChosen) {
+                if (want == ps->role) break;
+                const bool atTrade = ps->dockedAt >= 0 && ps->dockedAt < static_cast<int>(world_.stations.size()) &&
+                                     world_.stations[static_cast<size_t>(ps->dockedAt)].type == StationType::Trade;
+                if (want == PlayerRole::Trooper && !atTrade) {
+                    world_.Notify(*ps, "Zum SG-Team geht es nur angedockt an einer Handelsstation.", bad);
+                    break;
+                }
+                if (want == PlayerRole::Pilot && !inCommand) {
+                    world_.Notify(*ps, "Zurück ins Schiff geht es nur aus dem Command Center.", bad);
+                    break;
+                }
+            }
+            c.roleChosen = true;
+            if (want == PlayerRole::Pilot) LeaveTeam(ps->id);
+            world_.SetRole(*ps, want);
+            // Nach der Anmeldung war das Schiff bis zur Wahl versteckt (LoginPlayer)
+            if (Ship* s = world_.PlayerShip(*ps)) s->hidden = want == PlayerRole::Trooper;
+            ps->lastRole = want;
+            teamsChanged_ = true;
+            break;
+        }
+        case net::TeamActionType::Create:
+            if (!inCommand || team) break;
+            {
+                SgTeam t;
+                t.number = 1;
+                while (FindTeam(t.number)) ++t.number;
+                t.members.push_back(ps->id);
+                ps->sgTeam = t.number;
+                teams_.push_back(t);
+            }
+            teamsChanged_ = true;
+            break;
+        case net::TeamActionType::Join: {
+            if (!inCommand || team) break;
+            SgTeam* t = FindTeam(m.param);
+            if (!t || TeamBusy(*t) || static_cast<int>(t->members.size()) >= cfg::SG_TEAM_MAX) {
+                world_.Notify(*ps, "Diesem Team kannst du gerade nicht beitreten.", bad);
+                break;
+            }
+            t->members.push_back(ps->id);
+            ps->sgTeam = t->number;
+            teamsChanged_ = true;
+            break;
+        }
+        case net::TeamActionType::Leave:
+            if (inCommand && team && !TeamBusy(*team)) LeaveTeam(ps->id);
+            break;
+        case net::TeamActionType::Ready:
+            if (!inCommand || !team || TeamBusy(*team)) break;
+            team->ready.erase(std::remove(team->ready.begin(), team->ready.end(), ps->id), team->ready.end());
+            if (m.param == 1) team->ready.push_back(ps->id);
+            teamsChanged_ = true;
+            break;
+        case net::TeamActionType::Dial: {
+            if (!inCommand) break;
+            if (!team) {
+                SgTeam t;
+                t.number = 1;
+                while (FindTeam(t.number)) ++t.number;
+                t.members.push_back(ps->id);
+                ps->sgTeam = t.number;
+                teams_.push_back(t);
+                team = &teams_.back();
+            }
+            if (team->members.front() != ps->id || TeamBusy(*team)) break;
+            for (size_t i = 1; i < team->members.size(); ++i)
+                if (std::find(team->ready.begin(), team->ready.end(), team->members[i]) == team->ready.end()) {
+                    world_.Notify(*ps, "Noch nicht alle im Team sind bereit.", bad);
+                    return;
+                }
+            world_.BuildStargates();
+            const bool free = std::any_of(world_.stargates.begin(), world_.stargates.end(), [](const Stargate& g) {
+                return g.state == GateState::Idle || g.state == GateState::Closing;
+            });
+            if (!free) {
+                world_.Notify(*ps, world_.stargates.empty() ? "Auf der Mondkarte steht kein Stargate." : "Gerade ist kein Stargate frei.", bad);
+                break;
+            }
+            team->dialT = 0.0f;
+            teamsChanged_ = true;
+            break;
+        }
+        case net::TeamActionType::Abort:
+            if (ps->role == PlayerRole::Trooper && ps->trooperId >= 0) {
+                world_.EndSgMission(*ps, false);
+                teamsChanged_ = true;
+            }
+            break;
+    }
+}
+
+// Ist die Anwahl fertig (so lange wie im Einzelspieler: GATE_DIAL und kurz
+// zum Tor gehen), kommt der Gründer durch ein zufälliges freies Stargate, die
+// anderen folgen ihm nacheinander (World::UpdateStargates).
+void GameServer::UpdateTeams() {
+    for (SgTeam& t : teams_) {
+        if (t.dialT < 0.0f) continue;
+        t.dialT += net::TICK_DT;
+        if (t.dialT < cfg::GATE_DIAL + 0.4f) continue;
+        t.dialT = -1.0f;
+        t.ready.clear();
+        teamsChanged_ = true;
+        PlayerState* lead = world_.FindPlayer(t.members.front());
+        if (!lead) continue;
+        lead->sgFollowers.assign(t.members.begin() + 1, t.members.end());
+        if (!world_.StartSgMission(*lead, 0)) {
+            lead->sgFollowers.clear();
+            for (int id : t.members)
+                if (PlayerState* o = world_.FindPlayer(id)) world_.Notify(*o, "Gerade ist kein Stargate frei.", Color{255, 170, 120, 255});
+        }
+    }
+}
+
+void GameServer::SendTeams() {
+    const bool periodic = tick_ % net::TICK_RATE == 0;
+    for (auto& up : clients_) {
+        Client& c = *up;
+        if (c.closing || c.role != Role::Player || c.isBot) continue;
+        PlayerState* ps = world_.FindPlayer(c.playerId);
+        if (!ps || ps->role != PlayerRole::Trooper) continue;
+        if (!periodic && !teamsChanged_ && ps->sgEnded == 0) continue;
+        Send(c, net::Encode(MakeTeams(*ps)), true);
+        ps->sgEnded = 0;   // das Ergebnis ist unterwegs (zuverlässig)
+    }
+    teamsChanged_ = false;
+}
+
+GameServer::SgTeam* GameServer::TeamOf(int playerId) {
+    for (SgTeam& t : teams_)
+        if (std::find(t.members.begin(), t.members.end(), playerId) != t.members.end()) return &t;
+    return nullptr;
+}
+
+GameServer::SgTeam* GameServer::FindTeam(int number) {
+    for (SgTeam& t : teams_)
+        if (t.number == number) return &t;
+    return nullptr;
+}
+
+bool GameServer::TeamBusy(const SgTeam& t) const {
+    if (t.dialT >= 0.0f) return true;
+    for (int id : t.members)
+        if (const PlayerState* o = world_.FindPlayer(id); o && o->trooperId >= 0) return true;
+    return false;
+}
+
+// Verlässt der Gründer das Team, wird der Nächste Gründer (eine laufende
+// Anwahl bricht ab); ein leeres Team gibt es nicht mehr.
+void GameServer::LeaveTeam(int playerId) {
+    for (size_t i = 0; i < teams_.size(); ++i) {
+        SgTeam& t = teams_[i];
+        const auto it = std::find(t.members.begin(), t.members.end(), playerId);
+        if (it == t.members.end()) continue;
+        if (it == t.members.begin()) t.dialT = -1.0f;
+        t.members.erase(it);
+        t.ready.erase(std::remove(t.ready.begin(), t.ready.end(), playerId), t.ready.end());
+        if (t.members.empty()) teams_.erase(teams_.begin() + static_cast<long>(i));
+        teamsChanged_ = true;
+        break;
+    }
+    if (PlayerState* ps = world_.FindPlayer(playerId)) ps->sgTeam = 0;
+}
+
 void GameServer::HandleLeave(Client& c) {
     if (c.role == Role::Player) LogoutPlayer(c, "selbst abgemeldet", true);
     else if (c.role == Role::Spectator) Log(Fmt("Zuschauer #%u (%s) hat sich abgemeldet", c.connId, c.ipText.c_str()));
@@ -1449,6 +1671,11 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
     c.lastDeaths = ps.deaths;
     if (const Ship* s = world_.PlayerShip(ps)) c.lastPos = s->pos;
     c.depositsSent = false;
+    // Rollenwahl (TeamAction Role): bis dahin wartet das neue Schiff versteckt.
+    // Ein übernommenes Schiff (bzw. die Figur) läuft gleich weiter, Bots fliegen.
+    c.roleChosen = resumed || c.isBot;
+    if (!c.roleChosen)
+        if (Ship* s = world_.PlayerShip(ps)) s->hidden = true;
 
     const bool returning = account && (account->progress.balance != cfg::START_BALANCE || account->progress.round > 1 ||
                                        account->progress.upgrades[0] + account->progress.upgrades[1] +
@@ -1507,19 +1734,29 @@ void GameServer::LogoutPlayer(Client& c, const char* reason, bool saveNow, bool 
         crashed = CrashOnLogout(*ps);
         StoreProgress(c);
         const Ship* s = world_.PlayerShip(*ps);
-        if (allowGrace && c.account && s && !crashed && ps->dockedAt < 0) {
+        // SG-Team: im Einsatz bleibt die Figur stehen (wie das Schiff), im
+        // Command Center (Schiff versteckt) geht es sofort
+        const Trooper* t = ps->role == PlayerRole::Trooper ? world_.FindTrooper(ps->trooperId) : nullptr;
+        const bool waits = t ? !t->down : ps->role == PlayerRole::Pilot && ps->dockedAt < 0 && s && !s->hidden;
+        if (allowGrace && c.account && s && !crashed && waits) {
             ps->input = ShipInput{};   // keine Steuerung mehr: Schiff treibt aus
             world_.PlayerShip(*ps)->chatting = false;
-            departing_.push_back({c.playerId, c.account, c.name, Now() + LOGOUT_GRACE, ps->deaths});
+            if (t) {
+                ps->trooperInput = TrooperInput{};
+                ps->trooperInput.yaw = t->yaw;
+                ps->trooperInput.pitch = t->pitch;
+            }
+            departing_.push_back({c.playerId, c.account, c.name, Now() + LOGOUT_GRACE, ps->deaths, t != nullptr});
             lingers = true;
         } else {
             world_.RemovePlayer(c.playerId);
+            LeaveTeam(c.playerId);
         }
     }
     if (saveNow) accounts_.SaveAccounts();
     Log(c.name + " abgemeldet (" + reason + ", Sitzung " + FormatDuration(Now() - c.sessionStart) + ")" +
         (crashed ? " – während des Absturzes: als Absturz gewertet" : "") +
-        (lingers ? " – Schiff bleibt noch 10 s im All" : ""));
+        (lingers ? " – Schiff bzw. Figur bleibt noch 10 s" : ""));
     c.role = Role::Lobby;
     c.playerId = -1;
     c.account = nullptr;
@@ -1538,7 +1775,9 @@ void GameServer::UpdateDeparting(bool finishAll) {
         const Departing& d = departing_[i];
         const PlayerState* ps = world_.FindPlayer(d.playerId);
         const Ship* s = ps ? world_.PlayerShip(*ps) : nullptr;
-        const bool done = finishAll || now >= d.until || !ps || !s || s->crashing || ps->deaths != d.deaths;
+        const Trooper* t = ps ? world_.FindTrooper(ps->trooperId) : nullptr;
+        const bool footGone = d.onFoot && (!t || t->down);   // Figur gefallen oder Einsatz vorbei
+        const bool done = finishAll || now >= d.until || !ps || !s || s->crashing || ps->deaths != d.deaths || footGone;
         if (!done) {
             ++i;
             continue;
@@ -1555,6 +1794,7 @@ void GameServer::FinishDeparting(const Departing& d) {
     const bool lost = ps->deaths != d.deaths;
     d.account->progress = CaptureProgress(*ps);
     world_.RemovePlayer(d.playerId);
+    LeaveTeam(d.playerId);
     accounts_.SaveAccounts();
     Log(lost ? d.name + ": Schiff nach dem Abmelden abgeschossen – Fortschritt zurückgesetzt"
              : d.name + ": Schiff hat die Welt verlassen");
@@ -1599,6 +1839,8 @@ void GameServer::SendWelcome(Client& c) {
     m.totalDelivered = world_.totalDelivered;
     m.serverTime = ClientTime(c);
     m.tick = static_cast<uint32_t>(tick_);
+    if (const PlayerState* ps = c.role == Role::Player ? world_.FindPlayer(c.playerId) : nullptr)
+        m.lastRole = static_cast<uint8_t>(ps->lastRole);
     Send(c, net::Encode(m), true);
     Send(c, mapData_, true);   // Kulisse: aktive Karte (gleicher Kanal, kommt also nach dem Welcome an)
 }
@@ -1644,7 +1886,10 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
     const bool spectator = c.role == Role::Spectator;
     const PlayerState* ps = spectator ? nullptr : world_.FindPlayer(c.playerId);
     const Ship* own = ps ? world_.PlayerShip(*ps) : nullptr;
-    const Vector3 center = own ? own->pos : c.lastPos;
+    // SG-Team im Einsatz: Sichtweite um die Figur (das Schiff wartet versteckt)
+    const Trooper* foot = ps && ps->role == PlayerRole::Trooper ? world_.FindTrooper(ps->trooperId) : nullptr;
+    const Vector3 shipPos = own ? own->pos : c.lastPos;
+    const Vector3 center = foot ? foot->pos : shipPos;
 
     // --- eigener Zustand (genau, für die Vorhersage im Client) ---
     if (ps) {
@@ -1652,9 +1897,9 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         net::SnapMe& e = m.me;
         e.shipId = own ? own->id : -1;
         e.ackSeq = c.ackSeq;
-        e.x = center.x;
-        e.y = center.y;
-        e.z = center.z;
+        e.x = shipPos.x;
+        e.y = shipPos.y;
+        e.z = shipPos.z;
         if (own) {
             e.vx = own->vel.x;
             e.vz = own->vel.z;
@@ -1716,6 +1961,36 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         }
         e.cue = static_cast<int8_t>(ps->cueT > 0.0f ? ps->cue : -1);
         e.cueT = ps->cueT;
+        e.role = static_cast<uint8_t>(ps->role);
+        e.sgTeam = static_cast<uint8_t>(std::clamp(ps->sgTeam, 0, 255));
+        if (foot) {
+            e.hasTrooper = true;
+            net::SnapMeTrooper& t = e.trooper;
+            t.id = foot->id;
+            t.x = foot->pos.x;
+            t.y = foot->pos.y;
+            t.z = foot->pos.z;
+            t.vx = foot->vel.x;
+            t.vy = foot->vel.y;
+            t.vz = foot->vel.z;
+            t.yaw = foot->yaw;
+            t.onGround = foot->onGround;
+            t.down = foot->down;
+            t.hp = foot->hp;
+            t.maxHp = foot->maxHp;
+            t.hitFlash = foot->hitFlash;
+            t.mag = static_cast<uint8_t>(std::clamp(foot->mag, 0, 255));
+            t.ammo = ClampU16(foot->ammo);
+            t.reloadT = foot->reloadT;
+            t.fireCd = foot->fireCd;
+            t.samples = static_cast<uint8_t>(std::clamp(world_.TeamSamples(*ps), 0, 255));
+            t.sampleId = foot->sampleId;
+            t.sampleT = foot->sampleT;
+            t.downT = foot->downT;
+            t.age = foot->age;
+            t.sgTime = ps->sgTime;
+            t.sgPirates = ClampU16(ps->sgPirates);
+        }
     }
 
     // --- andere Schiffe ---
@@ -1774,8 +2049,12 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
             sb.z = b.pos.z;
             sb.vx = b.vel.x;
             sb.vz = b.vel.z;
-            // Farbe/Art des Geschosses im Client: 3 Turm, 0 Spieler, 1 Pirat, 2 Händler
-            if (b.ownerId == -1) sb.type = 3;
+            // Farbe/Art des Geschosses im Client: 4/5 Bodengeschoss (SG-Team,
+            // Bodenpirat), 3 Turm, 0 Spieler, 1 Pirat, 2 Händler
+            if (b.ground) {
+                sb.type = b.faction == Faction::Pirate ? 5 : 4;
+                sb.vy = b.vel.y;
+            } else if (b.ownerId == -1) sb.type = 3;
             else if (b.faction == Faction::Player) sb.type = 0;
             else if (b.faction == Faction::Pirate) sb.type = 1;
             else sb.type = 2;
@@ -1805,18 +2084,67 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         sw.age = w.age;
         m.wrecks.push_back(sw);
     }
+
+    // --- Figuren zu Fuß (nur Spieler): im Umkreis AOI_TROOPERS, die des
+    // eigenen Teams immer (Minikarte, "steht noch jemand?") ---
+    if (!spectator) {
+        cand.clear();
+        for (size_t i = 0; i < world_.troopers.size(); ++i) {
+            const Trooper& t = world_.troopers[i];
+            if (foot && t.id == foot->id) continue;
+            const bool mate = ps && t.playerId >= 0 && t.team != 0 && t.team == ps->sgTeam;
+            const float d = Dist2D(t.pos, center);
+            if (mate || d <= net::AOI_TROOPERS) cand.push_back({mate ? 0.0f : d, i});
+        }
+        KeepNearest(cand, MAX_SNAP_TROOPERS);
+        m.troopers.reserve(cand.size());
+        for (const Candidate& k : cand) {
+            const Trooper& t = world_.troopers[k.index];
+            net::SnapTrooper st;
+            st.id = static_cast<uint32_t>(t.id);
+            st.playerId = static_cast<int16_t>(std::clamp(t.playerId, -1, 32767));
+            st.team = static_cast<uint8_t>(std::clamp(t.team, 0, 255));
+            st.skin = static_cast<uint8_t>(std::clamp(t.skin, 0, 255));
+            st.x = t.pos.x;
+            st.y = t.pos.y;
+            st.z = t.pos.z;
+            st.yaw = t.yaw;
+            st.pitch = t.pitch;
+            st.hitFlash = t.hitFlash;
+            st.onGround = t.onGround;
+            st.down = t.down;
+            st.zombie = t.zombie;
+            st.shooting = t.targetId >= 0 || t.fireCd > 0.0f;
+            st.downT = t.downT;
+            m.troopers.push_back(st);
+        }
+        // Stargates, die gerade benutzt werden (alle, es sind nur wenige)
+        for (size_t i = 0; i < world_.stargates.size() && i < 255; ++i) {
+            const Stargate& g = world_.stargates[i];
+            if (g.state == GateState::Idle) continue;
+            net::SnapGate sg;
+            sg.index = static_cast<uint8_t>(i);
+            sg.state = static_cast<uint8_t>(g.state);
+            sg.toCommand = g.toCommand;
+            sg.t = g.t;
+            sg.playerId = static_cast<int16_t>(std::clamp(g.playerId, -1, 32767));
+            sg.team = static_cast<uint8_t>(std::clamp(g.team, 0, 255));
+            m.gates.push_back(sg);
+        }
+    }
     return m;
 }
 
 // Spieler: nur selbst entdeckte Lagerstätten (jeder Spieler muss selbst
-// scannen). Zuschauer: alle.
+// scannen), dazu alle gelben und beprobten (die sieht man ohne Scanner).
+// Zuschauer: alle.
 net::DepositsMsg GameServer::MakeDeposits(const Client& c) const {
     net::DepositsMsg m;
     const PlayerState* ps = c.role == Role::Player ? world_.FindPlayer(c.playerId) : nullptr;
     if (!ps && c.role != Role::Spectator) return m;
     for (const Deposit& d : world_.deposits) {
         if (d.amount <= 0) continue;
-        if (ps && !world_.RevealedFor(d, *ps)) continue;
+        if (ps && d.sample == Sample::Green && !world_.RevealedFor(d, *ps)) continue;
         net::NetDeposit nd;
         nd.id = static_cast<uint32_t>(d.id);
         nd.x = d.pos.x;
@@ -1826,6 +2154,7 @@ net::DepositsMsg GameServer::MakeDeposits(const Client& c) const {
         nd.variant = net::DepositVariant(models_, d.model);
         nd.amount = ClampU16(d.amount);
         nd.initial = ClampU16(d.initial);
+        nd.sample = static_cast<uint8_t>(d.sample);
         m.deposits.push_back(nd);
     }
     return m;
@@ -1853,6 +2182,13 @@ net::PlayersMsg GameServer::MakePlayers() const {
         e.docked = ps.dockedAt >= 0;
         e.kills = ClampU16(ps.kills);
         e.goals = ClampU16(ps.goals);
+        e.role = static_cast<uint8_t>(ps.role);
+        e.team = static_cast<uint8_t>(std::clamp(ps.sgTeam, 0, 255));
+        if (const Trooper* t = ps.role == PlayerRole::Trooper ? world_.FindTrooper(ps.trooperId) : nullptr) {
+            e.onFoot = true;
+            e.x = t->pos.x;
+            e.z = t->pos.z;
+        }
         m.players.push_back(e);
     }
     SortByProgress(m.players);
@@ -1868,6 +2204,41 @@ net::HighscoresMsg GameServer::MakeHighscores() const {
         e.round = ClampU16(h.round);
         e.when = h.when;
         m.entries.push_back(e);
+    }
+    return m;
+}
+
+// Teamliste für das Command Center, dazu der letzte eigene Einsatz
+net::TeamsMsg GameServer::MakeTeams(const PlayerState& ps) const {
+    net::TeamsMsg m;
+    m.moonGate = !world_.stargates.empty();
+    for (const SgTeam& t : teams_) {
+        net::TeamEntry e;
+        e.number = static_cast<uint8_t>(std::clamp(t.number, 0, 255));
+        e.state = t.dialT >= 0.0f ? 1 : TeamBusy(t) ? 2 : 0;
+        e.dialT = std::max(0.0f, t.dialT);
+        for (int id : t.members) {
+            const PlayerState* o = world_.FindPlayer(id);
+            if (!o) continue;
+            net::TeamMember mb;
+            mb.playerId = id;
+            mb.name = o->name;
+            mb.ready = std::find(t.ready.begin(), t.ready.end(), id) != t.ready.end();
+            mb.out = o->trooperId >= 0;
+            e.members.push_back(mb);
+        }
+        m.teams.push_back(e);
+    }
+    if (!ps.sgLog.empty()) {
+        const SgRecord& r = ps.sgLog.back();
+        m.hasResult = true;
+        m.fresh = ps.sgEnded != 0;
+        m.success = r.success;
+        m.number = ClampU16(r.number);
+        m.samples = ClampU16(r.samples);
+        m.pirates = ClampU16(r.pirates);
+        m.points = r.points;
+        m.seconds = r.seconds;
     }
     return m;
 }
@@ -2006,6 +2377,7 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     ps.kills = std::max(0, p.kills);
     ps.deaths = std::max(0, p.deaths);
     ps.goals = std::max(0, p.goals);
+    ps.lastRole = p.role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;   // Vorauswahl der Rollenwahl
     world_.ApplyUpgrades(ps, true);   // Geschwindigkeit, Schild, Waffe, Lager aus den Stufen
     if (Ship* s = world_.PlayerShip(ps)) {
         s->cargo = std::clamp(p.cargo, 0, s->cargoMax);
@@ -2055,6 +2427,7 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     p.kills = ps.kills;
     p.deaths = ps.deaths;
     p.goals = ps.goals;
+    p.role = static_cast<int>(ps.role);
     return p;
 }
 
@@ -2150,6 +2523,7 @@ void GameServer::ApplyMapCommands() {
                 accounts_.SaveServerData();
                 UpdateMapData();
                 SendToAllInGame(mapData_);
+                ApplyMapToWorld();
                 break;
             }
             case MapCommand::Kind::Allow:
@@ -2176,6 +2550,20 @@ void GameServer::UpdateMapData() {
         m.map.author.clear();
     }
     mapData_ = net::Encode(m);
+}
+
+void GameServer::ApplyMapToWorld() {
+    for (PlayerState& ps : world_.players)
+        if (ps.trooperId >= 0) {
+            world_.EndSgMission(ps, false, false);
+            world_.Notify(ps, "Die Mondkarte wurde gewechselt: Einsatz beendet.", Color{255, 200, 120, 255});
+        }
+    world_.troopers.clear();
+    world_.decos = baseDecos_;
+    if (const ServerMap* sm = accounts_.FindMap(accounts_.ActiveMap())) world_.ApplyMap(sm->map);
+    world_.stargates.clear();
+    world_.BuildStargates();
+    teamsChanged_ = true;
 }
 
 void GameServer::MapNotice(const std::string& text, bool error) {
@@ -2415,6 +2803,7 @@ void GameServer::RebuildWorld() {
     struct Keep {
         Client* c;
         PlayerProgress progress;
+        int team;   // SG-Team bleibt (Einsätze enden mit der alten Welt)
     };
     std::vector<Keep> keep;
     for (auto& up : clients_) {
@@ -2425,7 +2814,7 @@ void GameServer::RebuildWorld() {
         // wie beim Abmelden: ein laufender Absturz wird nicht "weggezaubert"
         CrashOnLogout(*ps);
         StoreProgress(c);
-        keep.push_back({&c, CaptureProgress(*ps)});
+        keep.push_back({&c, CaptureProgress(*ps), ps->sgTeam});
     }
 
     const long long delivered = world_.totalDelivered;
@@ -2434,6 +2823,12 @@ void GameServer::RebuildWorld() {
     world_.NewServerWorld(seed, settings_);
     world_.totalDelivered = delivered;   // Ausbaustufe bleibt erhalten
     world_.lastStage = stage;
+    baseDecos_ = world_.decos;
+    ApplyMapToWorld();
+    for (SgTeam& t : teams_) {
+        t.dialT = -1.0f;
+        t.ready.clear();
+    }
     accounts_.SetWorldSeed(seed);
     accounts_.SetTotalDelivered(delivered);
     accounts_.SaveServerData();
@@ -2443,6 +2838,8 @@ void GameServer::RebuildWorld() {
         Client& c = *k.c;
         PlayerState& ps = world_.AddPlayer(c.playerId, c.name);   // gleiche ID wie vorher
         RestoreProgress(ps, k.progress);   // gespeicherte Position gilt nicht (anderer Seed)
+        if (k.progress.role == 1) world_.SetRole(ps, PlayerRole::Trooper);   // SG-Team: zurück ins Command Center
+        ps.sgTeam = k.team;
         c.inputs.clear();
         c.queueMinInWindow = 1 << 30;
         c.queueWindowSteps = 0;
