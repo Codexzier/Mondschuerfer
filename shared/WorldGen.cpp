@@ -217,6 +217,64 @@ void World::ApplyMap(const GameMap& m) {
     SpawnRovers();
 }
 
+// ===========================================================================
+// Einsatzkarte als eigene Welt (FPS-Modus)
+//
+// Benutzt von src/main.cpp (Einsatz aus dem Command Center, die Mondwelt
+// wartet solange beiseite) und src/MapEditor.cpp (Vorschau beim Bauen).
+// Die Teile werden Deko wie auf der Mondkarte und damit über
+// BuildTrooperBlocks zu Hindernissen der Figuren. Die Markierungen:
+//   - Stargate:          Tor gate_complex (World::BuildStargates legt das
+//                        Stargate samt Treppe daraus an),
+//   - Kristallplatz:     gelbe, schon sichtbare Kristalle. Die Probe färbt
+//                        sie grün, abgebaut wird hier nichts (keine Schiffe),
+//   - Gegner-Startplatz: hier erscheinen die Gruppen der Bodenpiraten
+//                        (SpawnPirateGroup).
+// ===========================================================================
+void World::NewInstance(const GameMap& m, unsigned int newSeed) {
+    *this = World{};
+    seed = newSeed;
+    rng.seed(seed);
+    instance = true;
+    fieldHalf = MapHalf(m);
+    mapGround = m.ground;
+    mapSky = m.sky;
+    ResolveModels();
+
+    players.push_back(PlayerState{});
+    PlayerState& ps = players[0];
+    Ship p = MakeShip(ShipKind::Player, {0.0f, cfg::SHIP_ALTITUDE, 0.0f});
+    p.hidden = true;
+    p.playerId = ps.id;
+    ships.push_back(p);
+    ps.shipId = p.id;
+    ps.role = PlayerRole::Trooper;
+
+    const int gate = ModelId("gate_complex");
+    for (const MapPiece& q : m.pieces) {
+        if (q.model == MARKER_GATE) {
+            decos.push_back({gate, {q.x, 0.0f, q.z}, q.yaw, q.scale, 0.0f});
+        } else if (q.model == MARKER_CRYSTAL) {
+            Deposit d;
+            d.id = nextId++;
+            d.pos = {q.x, 0.0f, q.z};
+            d.yaw = q.yaw;
+            d.amount = d.initial = 1;   // nur zum Anschauen und für die Probe
+            d.model = mdl.crystalSmall;
+            d.scale = mapgrid::CRYSTAL_SCALE;
+            d.sample = Sample::Yellow;
+            d.revealed = true;
+            d.revealT = 1.0f;
+            deposits.push_back(d);
+        } else if (q.model == MARKER_ENEMY) {
+            enemySpots.push_back({q.x, 0.0f, q.z});
+        } else {
+            decos.push_back({ModelId(q.model), {q.x, MapPieceY(q), q.z}, q.yaw, q.scale, 0.0f});
+        }
+    }
+    BuildStargates();
+}
+
 // ---------------------------------------------------------------------------
 // Stationen
 //

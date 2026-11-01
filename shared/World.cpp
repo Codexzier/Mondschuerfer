@@ -595,8 +595,9 @@ void World::Update(float dt) {
     // Neue Lagerstätten (im Mehrspieler schneller, je mehr Spieler da sind).
     // Abstand: cfg::DEPOSIT_RESPAWN (25 s) mal Zufall 0,6..1,2; auf dem
     // Server geteilt durch die halbe Spielerzahl (64 Spieler: im Mittel
-    // alle 0,7 s, bis der Sollwert erreicht ist).
-    if (static_cast<int>(deposits.size()) < DepositTarget()) {
+    // alle 0,7 s, bis der Sollwert erreicht ist). In einer Einsatzkarte
+    // (instance) gibt es keinen Nachschub, weder Kristalle noch Schiffe.
+    if (!instance && static_cast<int>(deposits.size()) < DepositTarget()) {
         depositSpawnT -= dt;
         if (depositSpawnT <= 0.0f) {
             SpawnDeposit(false);
@@ -621,19 +622,19 @@ void World::Update(float dt) {
     int wantPirates = isServer ? settings.enemyShips
                                : std::min<int>(cfg::PIRATES_MAX, cfg::PIRATES_BASE + static_cast<int>(totalDelivered / 12000));
     pirateSpawnT -= dt;
-    if (pirates < wantPirates && pirateSpawnT <= 0.0f) {
+    if (!instance && pirates < wantPirates && pirateSpawnT <= 0.0f) {
         SpawnPirate();
         pirateSpawnT = Rand(9.0f, 18.0f);   // nicht alle auf einmal: ein Pirat alle 9–18 s
         // Viele Piraten (Schwer): schneller auffüllen (alle 2,7–5,4 s)
         if (isServer && wantPirates > 8) pirateSpawnT *= 0.3f;
     }
     minerSpawnT -= dt;
-    if (miners < cfg::MINERS_COUNT && minerSpawnT <= 0.0f) {
+    if (!instance && miners < cfg::MINERS_COUNT && minerSpawnT <= 0.0f) {
         SpawnMiner(true);
         minerSpawnT = Rand(25.0f, 40.0f);
     }
 
-    UpdateMissions(dt);
+    if (!instance) UpdateMissions(dt);
 
     // Tote Schiffe entfernen. Einzelspieler: das Spielerschiff bleibt immer an Index 0.
     // Erst hier am Ende, damit während des Schritts kein Schiff aus der Liste

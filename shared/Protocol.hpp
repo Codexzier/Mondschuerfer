@@ -65,7 +65,8 @@ namespace net {
 // Version 7: Karten aus dem Karteneditor (MapUpload, MapUploadResult, MapData).
 // Version 8: Chat (Chat, ChatTyping, ChatLine; SnapShip::chatting).
 // Version 9: Sperren über die Verwaltungsseite (ErrorCode Banned, Kicked, RegistrationClosed).
-constexpr uint16_t PROTOCOL_VERSION = 9;
+// Version 10: Einsatzkarten (Karte mit Kartenart, Thema, Größe, Boden, Himmel; Höhe je Teil).
+constexpr uint16_t PROTOCOL_VERSION = 10;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)

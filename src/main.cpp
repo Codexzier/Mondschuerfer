@@ -311,8 +311,10 @@ public:
                             (screen_ == Screen::Options && optionsReturn_ == Screen::Paused);
         if (inGame && world_.outcome == Outcome::None && world_.PlayerAlive()) {
             // Ein laufender SG-Einsatz wird verworfen (der Spielstand kennt nur
-            // die Rolle und die beendeten Einsätze)
+            // die Rolle und die beendeten Einsätze). Aus einer Einsatzkarte
+            // erst zurück in die Mondwelt, gespeichert wird nur sie.
             world_.EndSgMission(world_.Me(), false, false);
+            LeaveInstance();
             SaveGame(world_);
         }
         g_clientConfig.SaveIfChanged();
@@ -424,15 +426,52 @@ private:
     // Ins Command Center (Rollenwahl SG-Team, nach einem Einsatz, Knopf an
     // der Handelsstation). Die Rolle ist dann schon SG-Team (World::SetRole).
     void OpenCommand() {
+        LeaveInstance();
         screen_ = Screen::Command;
         command_.Open(world_);
         controls_.Reset();
     }
 
+    // Einsatzkarte verlassen (Einsatz zu Ende oder abgebrochen, Speichern,
+    // Beenden): Scoreboard, Ergebnis (sgEnded) und Spielzeit gehen in die
+    // wartende Mondwelt, die wieder world_ wird. Ohne Einsatzkarte nichts.
+    void LeaveInstance() {
+        if (!stash_) return;
+        const PlayerState& in = world_.Me();
+        PlayerState& me = stash_->Me();
+        me.sgLog = in.sgLog;
+        me.sgEnded = in.sgEnded;
+        me.sgMates = in.sgMates;
+        me.playTime += in.playTime;
+        world_ = std::move(*stash_);
+        stash_.reset();
+    }
+
     // Was im Command Center gewählt wurde (CommandCenterScreen::Draw)
     void HandleCommand(CommandAction a) {
         PlayerState& me = world_.Me();
-        if (a == CommandAction::Mission) {
+        if (a == CommandAction::Mission && !command_.TargetStem().empty()) {
+            // Durch das Stargate in eine Einsatzkarte: eine eigene Welt nur für
+            // das Team (World::NewInstance). Die Mondwelt wartet in stash_,
+            // bis der Einsatz zu Ende ist (LeaveInstance).
+            GameMap map;
+            auto inst = std::make_unique<World>();
+            if (LoadMapFile(command_.TargetStem(), map) && map.kind == MapKind::Mission) {
+                inst->NewInstance(map, static_cast<unsigned int>(std::time(nullptr)));
+                PlayerState& ip = inst->Me();
+                ip.name = me.name;
+                ip.sgMates = me.sgMates;
+                ip.sgLog = me.sgLog;
+            }
+            if (inst->instance && inst->StartSgMission(inst->Me(), me.sgMates)) {
+                stash_ = std::make_unique<World>(std::move(world_));
+                world_ = std::move(*inst);
+                screen_ = Screen::Playing;
+                if (const Trooper* t = world_.FindTrooper(world_.Me().trooperId)) camTarget_ = t->pos;
+            } else {
+                g_audio.Play(Sfx::Denied);
+            }
+        } else if (a == CommandAction::Mission) {
             // Durch das Stargate: Ankunft an einem Tor der Mondkarte
             if (world_.StartSgMission(me, me.sgMates)) {
                 screen_ = Screen::Playing;
@@ -513,6 +552,7 @@ private:
     void BackToMenu() {
         g_audio.Play(Sfx::UiBack);
         editor_.reset();
+        stash_.reset();   // eine Einsatzkarte samt wartender Mondwelt verwerfen (gespeichert hat der Aufrufer)
         pickMap_ = false;
         if (mp_) {
             mp_.reset();                               // trennt die Verbindung
@@ -636,6 +676,7 @@ private:
                 world_.Me().trooperInput = t ? trooperControls_.Read(t->yaw, t->pitch, dt) : TrooperInput{};
                 world_.Update(dt, ShipInput{});
                 if (world_.Me().trooperId < 0) {
+                    LeaveInstance();   // aus einer Einsatzkarte zurück in die Mondwelt
                     if (world_.outcome == Outcome::None) SaveGame(world_);
                     OpenCommand();
                 }
@@ -858,13 +899,15 @@ private:
             return;
         }
         BeginDrawing();
-        ClearBackground(Color{14, 17, 26, 255});
+        // Hintergrund: Weltraum bzw. der Himmel einer Einsatzkarte
+        const Color bg = world_.ClearColor();
+        ClearBackground(bg);
         // Ego-Ansicht zu Fuß: ohne Tilt-Shift und Retro-Pixel, nahe Clip-Ebene
         // 2 cm (die Waffe steht dicht vor der Kamera); sonst die Werte aus main().
         const bool ego = OnFoot() && !MenuBackground();
         tiltshift::SetEgoView(ego);
         rlSetClipPlanes(ego ? 0.02 : 0.5, ego ? 1000.0 : 2500.0);
-        tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
+        tiltshift::Begin(bg);   // Kameraeffekt (TiltShift.hpp)
         BeginMode3D(cam_);
         world_.Draw(cam_);
         // Mausziel: pulsierender Ring am Boden (nur im Einzelspiel, auch in der
@@ -931,8 +974,8 @@ private:
         if (choice >= 0 && choice <= 5) g_audio.Play(Sfx::UiConfirm);
         switch (choice) {
             case 0:
-                // Gibt es eigene Karten, erst die Karte wählen (DrawMapPicker)
-                mapList_.Refresh();
+                // Gibt es eigene Mondkarten, erst die Karte wählen (DrawMapPicker)
+                mapList_.Refresh(true);
                 if (mapList_.Maps().empty()) { NewGame(); OpenRoles(); }
                 else pickMap_ = true;
                 break;
@@ -1126,6 +1169,7 @@ private:
         } else if (c == 1) {
             g_audio.Play(Sfx::UiConfirm);
             world_.EndSgMission(world_.Me(), false);
+            LeaveInstance();
             if (world_.outcome == Outcome::None) SaveGame(world_);
             OpenCommand();
             return;
@@ -1133,7 +1177,7 @@ private:
             g_audio.Play(Sfx::UiConfirm);
             OpenOptions(Screen::Paused);
             return;
-        } else if (c == 3) { world_.EndSgMission(world_.Me(), false, false); SaveGame(world_); BackToMenu(); return; }
+        } else if (c == 3) { world_.EndSgMission(world_.Me(), false, false); LeaveInstance(); SaveGame(world_); BackToMenu(); return; }
         else if (c == 4) BackToMenu();
         DrawControls(r.x + 70 * s, r.y + helpTop, helpSize, OnFoot());
     }
@@ -1304,6 +1348,7 @@ private:
     // ========================================================================
     TestOptions opt_;
     World world_;                             // Einzelspiel, Simulation oder Menü-Hintergrund
+    std::unique_ptr<World> stash_;            // im Einsatz auf einer Einsatzkarte: die wartende Mondwelt (world_ ist die Einsatzkarte)
     std::unique_ptr<MultiplayerScreen> mp_;   // nur im Mehrspieler vorhanden
     std::unique_ptr<MapEditorScreen> editor_; // nur im Karteneditor vorhanden
     MapListView mapList_;                     // Kartenauswahl bei "Neues Spiel"
@@ -1372,11 +1417,19 @@ static void DumpModelBounds() {
     printf("// Automatisch erzeugt: Abmessungen (BoundingBox) aller Modelle des Kenney Space Kit.\n");
     printf("// Erzeugen mit:  Mondschuerfer --dump-model-bounds > shared/ModelBounds.inc\n");
     printf("// Format: {Dateiname ohne .glb, {min x, y, z}, {max x, y, z}} im Kit-Raster (Ursprung korrigiert).\n");
-    for (const auto& n : names) {
+    auto line = [&](const std::string& n) {
         const BoundingBox b = g_assets.Bounds(g_assets.Id(n));
         printf("    {\"%s\", {%s, %s, %s}, {%s, %s, %s}},\n", n.c_str(), num(b.min.x).c_str(), num(b.min.y).c_str(),
                num(b.min.z).c_str(), num(b.max.x).c_str(), num(b.max.y).c_str(), num(b.max.z).c_str());
-    }
+    };
+    for (const auto& n : names) line(n);
+    // Kit-Modelle aus den Unterordnern, soweit sie Segmente der Einsatzkarten sind
+    std::vector<std::string> kit;
+    for (const MapSegment& seg : MapSegments())
+        if (std::string(seg.model).find('/') != std::string::npos) kit.push_back(seg.model);
+    std::sort(kit.begin(), kit.end());
+    printf("// Fantasy Town Kit und Graveyard Kit: die Segmente der Einsatzkarten (MapSegments in shared/GameMap.cpp).\n");
+    for (const auto& n : kit) line(n);
 }
 
 int main(int argc, char** argv) {

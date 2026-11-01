@@ -10,6 +10,8 @@
 //     ApplyMap setzt nach jeder Änderung die Teile der Karte ein. So sieht
 //     die Karte im Editor genau so aus wie später im Spiel, und der
 //     Monorail-Zug fährt mit derselben Zeichenfunktion (Render.cpp).
+//     Einsatzkarten baut World::NewInstance nach jeder Änderung als eigene
+//     Welt auf (Boden, Himmel, Tor mit Treppe, Kristalle), wie im Einsatz.
 //
 // Raster und Bezugspunkt (PlacementAt):
 //   Jedes Segment belegt fw x fd Rasterfelder (aus seinen Abmessungen in
@@ -92,12 +94,35 @@ float TextBlock(const std::string& text, float x, float y, float size, float max
 }
 
 // Rechteck am Boden (Belegung eines Segments), knapp über dem Raster
-void GroundRect(float cx, float cz, float w, float d, Color c) {
-    const float y = 0.1f, x0 = cx - w * 0.5f, x1 = cx + w * 0.5f, z0 = cz - d * 0.5f, z1 = cz + d * 0.5f;
+// (y: Höhe, Einsatzkarte: in der gewählten Ebene)
+void GroundRect(float cx, float cz, float w, float d, Color c, float y = 0.1f) {
+    const float x0 = cx - w * 0.5f, x1 = cx + w * 0.5f, z0 = cz - d * 0.5f, z1 = cz + d * 0.5f;
     DrawLine3D({x0, y, z0}, {x1, y, z0}, c);
     DrawLine3D({x1, y, z0}, {x1, y, z1}, c);
     DrawLine3D({x1, y, z1}, {x0, y, z1}, c);
     DrawLine3D({x0, y, z1}, {x0, y, z0}, c);
+}
+
+// Gegner-Startplatz: ein Bodenpirat (Haut 4, wie in SpawnPirateGroup) mit
+// rotem Ring
+void EnemyFigure(Vector3 pos, float yaw, Color tint) {
+    g_assets.DrawCharacter(4, "idle", 0.0f, true, TRS(pos, yaw + PI, cfg::TROOPER_HEIGHT / 3.77f), tint);
+    DrawCircle3D({pos.x, 0.08f, pos.z}, 0.9f, {1, 0, 0}, 90.0f, Color{255, 90, 80, 220});
+}
+
+// Ein Teil zeichnen (Vorschau unter dem Zeiger). Markierungen haben kein
+// eigenes Modell: Tor, Kristalle bzw. ein Bodenpirat stehen dafür.
+void DrawPiece(const MapPiece& q, Color tint) {
+    if (q.model == MARKER_GATE) g_assets.Draw(ModelId("gate_complex"), {q.x, 0.0f, q.z}, q.yaw, q.scale, tint);
+    else if (q.model == MARKER_CRYSTAL) g_assets.Draw(ModelId("rock_crystals"), {q.x, 0.0f, q.z}, q.yaw, mapgrid::CRYSTAL_SCALE, tint);
+    else if (q.model == MARKER_ENEMY) EnemyFigure({q.x, 0.0f, q.z}, q.yaw, tint);
+    else g_assets.Draw(ModelId(q.model), {q.x, MapPieceY(q), q.z}, q.yaw, q.scale, tint);
+}
+
+// Nächster Wert eines enums mit Count am Ende (im Kreis)
+template <typename E>
+E NextValue(E v) {
+    return static_cast<E>((static_cast<int>(v) + 1) % static_cast<int>(E::Count));
 }
 
 } // namespace
@@ -105,8 +130,11 @@ void GroundRect(float cx, float cz, float w, float d, Color c) {
 // ===========================================================================
 // MapListView
 // ===========================================================================
-void MapListView::Refresh() {
+void MapListView::Refresh(bool moonOnly) {
     maps_ = ListMaps();
+    if (moonOnly)
+        maps_.erase(std::remove_if(maps_.begin(), maps_.end(), [](const MapFileInfo& m) { return m.kind != MapKind::Moon; }),
+                    maps_.end());
     row_ = -1;
     scroll_ = 0.0f;
     fresh_ = true;
@@ -146,7 +174,12 @@ bool MapListView::Draw(Rectangle r, float s, const char* firstEntry) {
         const bool hover = CheckCollisionPointRec(m, rr);
         if (row == row_) DrawRectangleRec(rr, Color{90, 62, 28, 255});
         else if (hover) DrawRectangleRec(rr, PANEL_LIGHT);
-        const std::string label = (hasFirst_ && row == 0) ? std::string(firstEntry) : maps_[static_cast<size_t>(row - (hasFirst_ ? 1 : 0))].name;
+        std::string label = firstEntry ? std::string(firstEntry) : std::string();
+        if (!(hasFirst_ && row == 0)) {
+            const MapFileInfo& info = maps_[static_cast<size_t>(row - (hasFirst_ ? 1 : 0))];
+            label = info.name;
+            if (info.kind == MapKind::Mission) label += Fmt("  (Einsatzkarte %s)", MapThemeName(info.theme));
+        }
         Text(label, rr.x + 12 * s, rr.y + (rr.height - 22 * s) * 0.5f, 22 * s, row == row_ ? ACCENT : TEXT);
         if (hover && PointerPressed()) {
             // Zweiter Klick auf dieselbe Zeile innerhalb von 0,4 s = Doppelklick
@@ -213,6 +246,8 @@ void MapEditorScreen::Update(float dt) {
             if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) camTarget_.x -= v;
             if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) camTarget_.x += v;
             if (IsKeyPressed(KEY_R)) rot_ = (rot_ + 1) % 4;
+            if (Mission() && IsKeyPressed(KEY_E)) level_ = std::min(mapgrid::MAX_LEVEL, level_ + 1);
+            if (Mission() && IsKeyPressed(KEY_Q)) level_ = std::max(0, level_ - 1);
         }
         // Mittlere Maustaste ziehen: die Karte folgt dem Zeiger (ungefähr;
         // senkrecht im Bild gehört wegen der schrägen Sicht mehr Boden dazu)
@@ -224,10 +259,12 @@ void MapEditorScreen::Update(float dt) {
         }
         // Mausrad: zoomen (nicht über dem Werkzeugfenster)
         const float wheel = GetMouseWheelMove();
+        // (Einsatzkarte: näher heran, das Raster ist feiner)
         if (wheel != 0.0f && !PointerOverPanel(PointerPos()))
-            camHeight_ = Clamp(camHeight_ * (1.0f - wheel * 0.12f), 18.0f, 260.0f);
-        camTarget_.x = Clamp(camTarget_.x, -cfg::WORLD_HALF, cfg::WORLD_HALF);
-        camTarget_.z = Clamp(camTarget_.z, -cfg::WORLD_HALF, cfg::WORLD_HALF);
+            camHeight_ = Clamp(camHeight_ * (1.0f - wheel * 0.12f), Mission() ? 5.0f : 18.0f, Mission() ? 140.0f : 260.0f);
+        const float half = MapHalf(map_);
+        camTarget_.x = Clamp(camTarget_.x, -half, half);
+        camTarget_.z = Clamp(camTarget_.z, -half, half);
     }
     // Schräg von oben, wie im Spiel, aber weiter weg und steiler
     cam_.up = {0, 1, 0};
@@ -239,7 +276,11 @@ void MapEditorScreen::Update(float dt) {
 }
 
 void MapEditorScreen::Draw() {
-    groundOk_ = controls::RayToGround(GetScreenToWorldRay(PointerPos(), cam_), &ground_);
+    // Punkt unter dem Zeiger in der Höhe der gewählten Ebene (Strahl um die
+    // Höhe nach unten verschoben, dann wie auf dem Boden)
+    Ray ray = GetScreenToWorldRay(PointerPos(), cam_);
+    if (mode_ == Mode::Edit) ray.position.y -= Lift();
+    groundOk_ = controls::RayToGround(ray, &ground_);
 
     if (mode_ == Mode::Edit && !uploadOpen_) {
         // Setzen und Löschen vor dem Zeichnen, damit das Bild gleich den
@@ -290,16 +331,28 @@ void MapEditorScreen::OpenMap(const GameMap& m, const std::string& stem) {
     dirty_ = false;
     segment_ = -1;
     rot_ = 0;
+    level_ = 0;
     painting_ = erasing_ = false;
     backArmed_ = 0.0f;
     camTarget_ = {0, 0, 0};
-    camHeight_ = 80.0f;
+    camHeight_ = Mission() ? 45.0f : 80.0f;
     mode_ = Mode::Edit;
+    // erster Reiter dieser Kartenart
+    group_ = 0;
+    while (group_ < static_cast<int>(SegmentGroup::Count) && !GroupForKind(static_cast<SegmentGroup>(group_), map_.kind)) ++group_;
+    // Mondkarte nach einer Einsatzkarte: wieder die Kulisse mit den Stationen
+    if (!Mission() && world_.instance) BuildBackdrop(world_, static_cast<unsigned int>(std::time(nullptr)));
     Rebuild();
 }
 
 void MapEditorScreen::Rebuild() {
-    world_.ApplyMap(map_);
+    if (Mission()) {
+        const float t = world_.time;   // Animationen laufen weiter
+        world_.NewInstance(map_, 1);
+        world_.time = t;
+    } else {
+        world_.ApplyMap(map_);
+    }
     trackPieces_ = 0;
     for (const MapPiece& p : map_.pieces)
         if (IsTrack(p.model)) ++trackPieces_;
@@ -309,8 +362,8 @@ void MapEditorScreen::Rebuild() {
 
 MapEditorScreen::Placement MapEditorScreen::PlacementAt(Vector3 g) const {
     const MapSegment& seg = MapSegments()[static_cast<size_t>(segment_)];
-    const BoundingBox b = ModelBounds(ModelId(seg.model));
-    const float C = mapgrid::CELL;
+    const BoundingBox b = SegmentBounds(seg.model);
+    const float C = MapCell(map_.kind), H = MapHalf(map_);
     Placement p;
     p.scale = seg.scale;
     p.yaw = rot_ * PI * 0.5f;
@@ -326,22 +379,26 @@ MapEditorScreen::Placement MapEditorScreen::PlacementAt(Vector3 g) const {
         off = MapRotate((b.min.x + b.max.x) * 0.5f * seg.scale, (b.min.z + b.max.z) * 0.5f * seg.scale, p.yaw);
     p.x = p.cx - off.x;
     p.z = p.cz - off.y;
-    p.valid = fabsf(p.cx) + p.fw * C * 0.5f <= cfg::WORLD_HALF + 0.01f &&
-              fabsf(p.cz) + p.fd * C * 0.5f <= cfg::WORLD_HALF + 0.01f;
+    p.valid = fabsf(p.cx) + p.fw * C * 0.5f <= H + 0.01f && fabsf(p.cz) + p.fd * C * 0.5f <= H + 0.01f;
+    // Markierungen nur auf dem Boden
+    p.lift = IsMarker(seg.model) ? 0.0f : Lift();
     return p;
 }
 
 // Teil unter dem Zeiger: Abstand zur Mitte seiner Box im Verhältnis zu ihrer
 // Größe. So gewinnt ein kleiner Fels direkt unter dem Zeiger gegen den
-// großen Krater, in dem er liegt.
+// großen Krater, in dem er liegt. Einsatzkarte: nur Teile der gewählten
+// Ebene (Markierungen liegen auf dem Boden).
 int MapEditorScreen::PieceAt(Vector3 g) const {
     int best = -1;
     float bestRel = 1e9f;
+    const float minR = Mission() ? 0.45f : 1.2f;
     for (int i = 0; i < static_cast<int>(map_.pieces.size()); ++i) {
         const MapPiece& q = map_.pieces[static_cast<size_t>(i)];
-        const BoundingBox b = ModelBounds(ModelId(q.model));
+        if (Mission() && fabsf(q.lift - Lift()) > 0.01f) continue;
+        const BoundingBox b = SegmentBounds(q.model);
         const Vector2 c = MapRotate((b.min.x + b.max.x) * 0.5f * q.scale, (b.min.z + b.max.z) * 0.5f * q.scale, q.yaw);
-        const float r = std::max(1.2f, std::max(b.max.x - b.min.x, b.max.z - b.min.z) * 0.5f * q.scale);
+        const float r = std::max(minR, std::max(b.max.x - b.min.x, b.max.z - b.min.z) * 0.5f * q.scale);
         const float d = Vector2Distance({g.x, g.z}, {q.x + c.x, q.z + c.y});
         if (d <= r && d / r < bestRel) {
             bestRel = d / r;
@@ -353,10 +410,15 @@ int MapEditorScreen::PieceAt(Vector3 g) const {
 
 void MapEditorScreen::Place(const Placement& p) {
     const MapSegment& seg = MapSegments()[static_cast<size_t>(segment_)];
-    // Ein Teil mit demselben Bezugspunkt wird ersetzt – sonst stapeln sich
-    // beim Malen Teile übereinander (und Schienen bekämen Abzweigungen).
+    // Ein Teil mit demselben Bezugspunkt (und derselben Ebene) wird ersetzt –
+    // sonst stapeln sich beim Malen Teile übereinander (und Schienen bekämen
+    // Abzweigungen). Das Stargate gibt es nur einmal: Es zieht um.
+    const bool gate = seg.model == std::string(MARKER_GATE);
     map_.pieces.erase(std::remove_if(map_.pieces.begin(), map_.pieces.end(),
-                                     [&](const MapPiece& q) { return fabsf(q.x - p.x) < 0.01f && fabsf(q.z - p.z) < 0.01f; }),
+                                     [&](const MapPiece& q) {
+                                         return (gate && q.model == MARKER_GATE) ||
+                                                (fabsf(q.x - p.x) < 0.01f && fabsf(q.z - p.z) < 0.01f && fabsf(q.lift - p.lift) < 0.01f);
+                                     }),
                       map_.pieces.end());
     if (static_cast<int>(map_.pieces.size()) >= mapgrid::MAX_PIECES) {
         Message(Fmt("Eine Karte hat höchstens %d Teile.", mapgrid::MAX_PIECES), BAD);
@@ -364,7 +426,7 @@ void MapEditorScreen::Place(const Placement& p) {
         painting_ = false;
         return;
     }
-    map_.pieces.push_back({seg.model, p.x, p.z, p.yaw, p.scale});
+    map_.pieces.push_back({seg.model, p.x, p.z, p.yaw, p.scale, p.lift});
     dirty_ = true;
     Rebuild();
     g_audio.Play(Sfx::UiMove, 0.3f);
@@ -407,6 +469,12 @@ void MapEditorScreen::Save() {
         g_audio.Play(Sfx::Denied);
         return;
     }
+    std::string error;
+    if (Mission() && !CheckMission(error)) {
+        Message(error, BAD);
+        g_audio.Play(Sfx::Denied);
+        return;
+    }
     nameField_.text = name;
     map_.name = name;
     const std::string stem = MapFileStem(name);
@@ -439,8 +507,22 @@ void MapEditorScreen::Back() {
     }
     backArmed_ = 0.0f;
     mode_ = Mode::List;
+    if (world_.instance) BuildBackdrop(world_, static_cast<unsigned int>(std::time(nullptr)));   // Liste: über dem Mond
     list_.Refresh();
     g_audio.Play(Sfx::UiBack);
+}
+
+// Genau ein Stargate (Ankunft und Rückkehr) und genug Kristallplätze für die
+// Proben eines Einsatzes (cfg::SAMPLE_GOAL).
+bool MapEditorScreen::CheckMission(std::string& error) const {
+    int gates = 0, crystals = 0;
+    for (const MapPiece& q : map_.pieces) {
+        if (q.model == MARKER_GATE) ++gates;
+        else if (q.model == MARKER_CRYSTAL) ++crystals;
+    }
+    if (gates != 1) error = "Eine Einsatzkarte braucht genau ein Stargate (Reiter \"Markierungen\").";
+    else if (crystals < cfg::SAMPLE_GOAL) error = Fmt("Eine Einsatzkarte braucht mindestens %d Kristallplätze (jetzt %d).", cfg::SAMPLE_GOAL, crystals);
+    return error.empty();
 }
 
 void MapEditorScreen::Message(const std::string& text, Color c) {
@@ -546,13 +628,16 @@ void MapEditorScreen::FinishUpload(const std::string& text, bool ok) {
 void MapEditorScreen::DrawScene() {
     world_.Draw(cam_);
     if (mode_ != Mode::Edit) return;
+    const bool mission = Mission();
+    for (const MapPiece& q : map_.pieces)
+        if (q.model == MARKER_ENEMY) EnemyFigure({q.x, 0.0f, q.z}, q.yaw, WHITE);
 
     // Raster: feine Linien nur, wenn die Kamera nah genug ist; jede zehnte
-    // Linie (alle 30 m) immer. Nur um den Blickpunkt herum, nicht über die
-    // ganze Karte.
-    const float C = mapgrid::CELL, H = cfg::WORLD_HALF, y = 0.06f;
+    // Linie (alle 30 m, Einsatzkarte alle 10 m) immer. Nur um den Blickpunkt
+    // herum, nicht über die ganze Karte. Einsatzkarte: in der Höhe der Ebene.
+    const float C = MapCell(map_.kind), H = MapHalf(map_), y = 0.06f + Lift();
     const float reach = std::min(2.0f * H, camHeight_ * 1.6f + 20.0f);
-    const bool fine = camHeight_ < 140.0f;
+    const bool fine = camHeight_ < (mission ? 60.0f : 140.0f);
     const float x0 = std::max(-H, floorf((camTarget_.x - reach) / C) * C), x1 = std::min(H, camTarget_.x + reach);
     const float z0 = std::max(-H, floorf((camTarget_.z - reach) / C) * C), z1 = std::min(H, camTarget_.z + reach);
     for (float x = x0; x <= x1; x += C) {
@@ -570,11 +655,8 @@ void MapEditorScreen::DrawScene() {
     // und das Modell selbst, leicht grün eingefärbt
     if (segment_ >= 0) {
         const Placement p = PlacementAt(ground_);
-        GroundRect(p.cx, p.cz, p.fw * C, p.fd * C, p.valid ? Color{120, 255, 150, 220} : Color{255, 90, 80, 220});
-        if (p.valid) {
-            const MapPiece q{MapSegments()[static_cast<size_t>(segment_)].model, p.x, p.z, p.yaw, p.scale};
-            g_assets.Draw(ModelId(q.model), {q.x, MapPieceY(q), q.z}, q.yaw, q.scale, Color{150, 255, 170, 255});
-        }
+        GroundRect(p.cx, p.cz, p.fw * C, p.fd * C, p.valid ? Color{120, 255, 150, 220} : Color{255, 90, 80, 220}, 0.1f + p.lift);
+        if (p.valid) DrawPiece({MapSegments()[static_cast<size_t>(segment_)].model, p.x, p.z, p.yaw, p.scale, p.lift}, Color{150, 255, 170, 255});
     }
     // Ohne gewähltes Segment (oder beim Radieren): das Teil markieren, das
     // ein Rechtsklick löschen würde
@@ -582,10 +664,10 @@ void MapEditorScreen::DrawScene() {
         const int i = PieceAt(ground_);
         if (i >= 0) {
             const MapPiece& q = map_.pieces[static_cast<size_t>(i)];
-            const BoundingBox b = ModelBounds(ModelId(q.model));
+            const BoundingBox b = SegmentBounds(q.model);
             const Vector2 c = MapRotate((b.min.x + b.max.x) * 0.5f * q.scale, (b.min.z + b.max.z) * 0.5f * q.scale, q.yaw);
-            const float r = std::max(1.2f, std::max(b.max.x - b.min.x, b.max.z - b.min.z) * 0.5f * q.scale);
-            DrawCircle3D({q.x + c.x, 0.12f, q.z + c.y}, r, {1, 0, 0}, 90.0f, BAD);
+            const float r = std::max(mission ? 0.45f : 1.2f, std::max(b.max.x - b.min.x, b.max.z - b.min.z) * 0.5f * q.scale);
+            DrawCircle3D({q.x + c.x, 0.12f + q.lift, q.z + c.y}, r, {1, 0, 0}, 90.0f, BAD);
         }
     }
 }
@@ -593,7 +675,7 @@ void MapEditorScreen::DrawScene() {
 void MapEditorScreen::DrawList() {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
-    const float pw = 620 * s, ph = 560 * s;
+    const float pw = 780 * s, ph = 560 * s;
     const Rectangle panel{(W - pw) * 0.5f, (H - ph) * 0.5f, pw, ph};
     Panel(panel);
     const float x = panel.x + 28 * s, y = panel.y + 22 * s;
@@ -603,10 +685,11 @@ void MapEditorScreen::DrawList() {
     const Rectangle lr{x, y + 86 * s, pw - 56 * s, by - 18 * s - (y + 86 * s)};
     const bool open = list_.Draw(lr, s);
 
-    const float gap = 14 * s, bw = (pw - 56 * s - 2 * gap) / 3.0f;
-    const bool load = Button({x, by, bw, bh}, "Karte laden", 24 * s, false, list_.HasSelection());
-    const bool fresh = Button({x + bw + gap, by, bw, bh}, "Neu", 24 * s, false);
-    const bool back = Button({x + 2 * (bw + gap), by, bw, bh}, "Zurück", 24 * s, false);
+    const float gap = 14 * s, bw = (pw - 56 * s - 3 * gap) / 4.0f;
+    const bool load = Button({x, by, bw, bh}, "Karte laden", 20 * s, false, list_.HasSelection());
+    const bool fresh = Button({x + bw + gap, by, bw, bh}, "Neue Mondkarte", 20 * s, false);
+    const bool freshMission = Button({x + 2 * (bw + gap), by, bw, bh}, "Neue Einsatzkarte", 20 * s, false);
+    const bool back = Button({x + 3 * (bw + gap), by, bw, bh}, "Zurück", 20 * s, false);
 
     if ((open || load) && list_.HasSelection()) {
         const MapFileInfo info = list_.Maps()[static_cast<size_t>(list_.SelectedMap())];
@@ -618,11 +701,13 @@ void MapEditorScreen::DrawList() {
             g_audio.Play(Sfx::Denied);
             list_.Refresh();
         }
-    } else if (fresh) {
+    } else if (fresh || freshMission) {
         // Leere Karte mit einem freien Namen ("Neue Karte", "Neue Karte 2" ...)
         GameMap m;
-        m.name = "Neue Karte";
-        for (int n = 2; MapFileExists(MapFileStem(m.name)); ++n) m.name = Fmt("Neue Karte %d", n);
+        m.kind = freshMission ? MapKind::Mission : MapKind::Moon;
+        const char* base = freshMission ? "Neue Einsatzkarte" : "Neue Karte";
+        m.name = base;
+        for (int n = 2; MapFileExists(MapFileStem(m.name)); ++n) m.name = Fmt("%s %d", base, n);
         g_audio.Play(Sfx::UiConfirm);
         OpenMap(m, "");
     } else if (back || BackPressed()) {
@@ -634,22 +719,59 @@ void MapEditorScreen::DrawToolPanel(Rectangle r, float s) {
     Panel(r);
     const float x = r.x + 14 * s, w = r.width - 28 * s;
     float y = r.y + 14 * s;
-    if (Button({x, y, w, 46 * s}, "Zufall generieren", 22 * s, false)) RandomFill();
-    y += 52 * s;
-    Text("Krater, Felsen und Fundstücke", x, y, 16 * s, MUTED);
-    y += 30 * s;
+    const bool mission = Mission();
+    if (!mission) {
+        if (Button({x, y, w, 46 * s}, "Zufall generieren", 22 * s, false)) RandomFill();
+        y += 52 * s;
+        Text("Krater, Felsen und Fundstücke", x, y, 16 * s, MUTED);
+        y += 30 * s;
+    } else {
+        // Einsatzkarte: Thema, Größe, Boden und Himmel, ein Klick wählt den
+        // nächsten Wert. Wird das Feld kleiner, fallen Teile außerhalb weg.
+        const float g = 6 * s, bw = (w - g) * 0.5f, bh = 34 * s;
+        const std::string labels[4] = {std::string("Thema: ") + MapThemeName(map_.theme), Fmt("Größe: %d m", map_.size),
+                                       std::string("Boden: ") + MapGroundName(map_.ground),
+                                       std::string("Himmel: ") + MapSkyName(map_.sky)};
+        for (int i = 0; i < 4; ++i) {
+            if (!Button({x + (i % 2) * (bw + g), y + (i / 2) * (bh + g), bw, bh}, labels[i], 16 * s, false)) continue;
+            if (i == 0) map_.theme = NextValue(map_.theme);
+            else if (i == 2) map_.ground = NextValue(map_.ground);
+            else if (i == 3) map_.sky = NextValue(map_.sky);
+            else {
+                int k = 0;
+                while (k < 4 && mapgrid::MISSION_SIZES[k] != map_.size) ++k;
+                map_.size = mapgrid::MISSION_SIZES[(k + 1) % 4];
+                const float half = MapHalf(map_);
+                const size_t before = map_.pieces.size();
+                map_.pieces.erase(std::remove_if(map_.pieces.begin(), map_.pieces.end(),
+                                                 [&](const MapPiece& q) { return fabsf(q.x) > half || fabsf(q.z) > half; }),
+                                  map_.pieces.end());
+                const int gone = static_cast<int>(before - map_.pieces.size());
+                if (gone > 0) Message(Fmt("%d Teile außerhalb des kleineren Felds entfernt.", gone), ACCENT);
+            }
+            dirty_ = true;
+            Rebuild();
+            g_audio.Play(Sfx::UiMove);
+        }
+        y += 2 * (bh + g) + 10 * s;
+    }
 
-    // Reiter der Gruppen (zwei Reihen à drei)
+    // Reiter der Gruppen dieser Kartenart (Mondkarte: zwei Reihen à drei,
+    // Einsatzkarte: vier Reihen à zwei, ihre Namen sind länger)
     const int groups = static_cast<int>(SegmentGroup::Count);
-    const float tg = 6 * s, tw = (w - 2 * tg) / 3.0f, th = 34 * s;
+    const int cols = mission ? 2 : 3;
+    const float tg = 6 * s, tw = (w - (cols - 1) * tg) / cols, th = 34 * s;
+    int tab = 0;
     for (int g = 0; g < groups; ++g) {
-        const Rectangle tr{x + (g % 3) * (tw + tg), y + (g / 3) * (th + tg), tw, th};
+        if (!GroupForKind(static_cast<SegmentGroup>(g), map_.kind)) continue;
+        const Rectangle tr{x + (tab % cols) * (tw + tg), y + (tab / cols) * (th + tg), tw, th};
+        ++tab;
         if (Button(tr, SegmentGroupName(static_cast<SegmentGroup>(g)), 17 * s, g == group_) && g != group_) {
             group_ = g;
             g_audio.Play(Sfx::UiMove);
         }
     }
-    y += 2 * (th + tg) + 8 * s;
+    y += ((tab + cols - 1) / cols) * (th + tg) + 8 * s;
 
     // Segmente des offenen Reiters; noch einmal anklicken hebt die Auswahl auf
     const auto& segs = MapSegments();
@@ -663,7 +785,8 @@ void MapEditorScreen::DrawToolPanel(Rectangle r, float s) {
     }
 
     const float by = r.y + r.height - 14 * s;
-    Text(Fmt("Drehung: %d°   [R]", rot_ * 90), x, by - 22 * s, 18 * s, TEXT);
+    if (mission) Text(Fmt("Drehung: %d° [R]   Ebene: %d [Q/E]", rot_ * 90, level_), x, by - 22 * s, 18 * s, TEXT);
+    else Text(Fmt("Drehung: %d°   [R]", rot_ * 90), x, by - 22 * s, 18 * s, TEXT);
     if (segment_ < 0) Text("Segment wählen, dann auf die Karte klicken", x, by - 48 * s, 15 * s, MUTED);
 }
 
@@ -756,10 +879,27 @@ void MapEditorScreen::DrawEdit() {
         if (open > 0) mono += Fmt("  ·  %d Schiene%s ohne Kreis", open, open == 1 ? "" : "n");
     }
     const float ty = H - m - 24 * s;
-    Text(Fmt("Teile: %d  ·  ", static_cast<int>(map_.pieces.size())) + mono, bx, ty - 28 * s, 20 * s, loops > 0 ? GOOD : TEXT);
-    Text("Linksklick setzen (halten: malen)  ·  Rechtsklick löschen  ·  R drehen  ·  WASD/Pfeile/Mitteltaste verschieben  ·  "
-         "Mausrad zoomen  ·  Strg+S speichern",
-         bx, ty, 16 * s, MUTED);
+    if (Mission()) {
+        // Einsatzkarte: die Markierungen (zum Speichern: 1 Stargate, genug Kristallplätze)
+        int gates = 0, crystals = 0, enemies = 0;
+        for (const MapPiece& q : map_.pieces) {
+            if (q.model == MARKER_GATE) ++gates;
+            else if (q.model == MARKER_CRYSTAL) ++crystals;
+            else if (q.model == MARKER_ENEMY) ++enemies;
+        }
+        std::string error;
+        Text(Fmt("Teile: %d  ·  Stargate: %d  ·  Kristallplätze: %d (mind. %d)  ·  Gegner-Startplätze: %d",
+                 static_cast<int>(map_.pieces.size()), gates, crystals, cfg::SAMPLE_GOAL, enemies),
+             bx, ty - 28 * s, 20 * s, CheckMission(error) ? GOOD : TEXT);
+        Text("Linksklick setzen (halten: malen)  ·  Rechtsklick löschen  ·  R drehen  ·  Q/E Ebene  ·  "
+             "WASD/Pfeile/Mitteltaste verschieben  ·  Mausrad zoomen  ·  Strg+S speichern",
+             bx, ty, 16 * s, MUTED);
+    } else {
+        Text(Fmt("Teile: %d  ·  ", static_cast<int>(map_.pieces.size())) + mono, bx, ty - 28 * s, 20 * s, loops > 0 ? GOOD : TEXT);
+        Text("Linksklick setzen (halten: malen)  ·  Rechtsklick löschen  ·  R drehen  ·  WASD/Pfeile/Mitteltaste verschieben  ·  "
+             "Mausrad zoomen  ·  Strg+S speichern",
+             bx, ty, 16 * s, MUTED);
+    }
 
     if (uploadOpen_) DrawUpload(s);
 

@@ -272,6 +272,19 @@ void SetFog(Vector3 center, float amount, float time) {
     }
 }
 
+// Gleiche Uniforms wie SetFog. Zeit -1: Der Shader lässt den Schleier in der
+// Nähe weg, die Schwaden ziehen nicht (FogAmount, Effects.hpp).
+void SetHaze(Vector3 center, Color color, float near, float far, float k) {
+    fogOn_ = k > 0.0f;
+    fogCenter_ = center;
+    fogParams_ = fogOn_ ? Vector4{near, far, std::clamp(k, 0.0f, 1.0f), -1.0f} : Vector4{0.0f, 0.0f, 0.0f, 0.0f};
+    g_assets.SetFog(center, Vector3{color.r / 255.0f, color.g / 255.0f, color.b / 255.0f}, fogParams_);
+    if (fogOn_ && LoadEffectOnce()) {
+        SetShaderValue(effect_, locFogCenter_, &fogCenter_, SHADER_UNIFORM_VEC3);
+        SetShaderValue(effect_, locFogParams_, &fogParams_, SHADER_UNIFORM_VEC4);
+    }
+}
+
 // Wie FogAmount im Shader, nur ohne die Schwaden.
 float Visibility(Vector3 p) {
     if (!fogOn_) return 1.0f;

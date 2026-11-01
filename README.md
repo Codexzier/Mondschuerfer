@@ -157,10 +157,15 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 **Zu Fuß als SG-Team** (FPS-Modus, bisher nur im Einzelspieler): Nach *Neues Spiel* und
 *Fortsetzen* wählst du die Rolle: **Pilot** (mit dem Schiff wie bisher) oder **SG-Team**. Als
 SG-Team beginnst du im **Command Center**. Dort stellst du mit *Kameraden* 0 bis 3 Kameraden ein,
-rechts steht das Scoreboard deiner Einsätze (beste zuerst). *Tor anwählen* öffnet nach 3 Sekunden
-das Wurmloch, und das Team kommt auf der Mondkarte an einem der Stargates heraus, die Kameraden
-kurz nacheinander. *Als Pilot spielen* führt zurück ins Schiff; umgekehrt bringt dich an der
-Handelsstation der Knopf *Als SG-Team spielen* ins Command Center.
+rechts steht das Scoreboard deiner Einsätze (beste zuerst). *Ziel* wählt, wohin das Tor führt:
+*Mondkarte (gemeinsam)* oder eine **Einsatzkarte** aus dem Karteneditor (Ordner `karten`).
+*Tor anwählen* öffnet nach 3 Sekunden das Wurmloch, und das Team kommt auf der Mondkarte an einem
+der Stargates heraus bzw. am Stargate der Einsatzkarte, die Kameraden kurz nacheinander. Eine
+Einsatzkarte ist eine eigene Welt nur für dein Team: ihr Gelände, Himmel und Licht, keine Schiffe,
+die gelben Kristalle an den Kristallplätzen (nach der Probe grün, abgebaut wird dort nichts) und
+die Bodenpiraten an den Gegner-Startplätzen. Auftrag und Punkte sind dieselben. *Als Pilot
+spielen* führt zurück ins Schiff; umgekehrt bringt dich an der Handelsstation der Knopf *Als
+SG-Team spielen* ins Command Center.
 
 Etwa 40 % der Kristalle sind **gelb** und ohne Scanner zu sehen: Schiffe bauen sie
 nicht ab, erst muss zu Fuß eine Probe genommen werden (3 Sekunden halten). Danach ist der Kristall
@@ -207,8 +212,8 @@ abbrechen* zählt als gescheitert, *Speichern & zum Hauptmenü* verwirft einen l
 
 **Startmenü:** Neues Spiel · Fortsetzen · Mehrspieler · Karteneditor · Simulation (spielt selbst) · Optionen · Beenden
 
-Gibt es eigene Karten, fragt *Neues Spiel* zuerst nach der Karte: *Standardkarte (Zufall)* wie
-bisher oder eine Karte aus dem Karteneditor. Der Spielstand merkt sich die Karte. Danach (und nach
+Gibt es eigene Mondkarten, fragt *Neues Spiel* zuerst nach der Karte: *Standardkarte (Zufall)* wie
+bisher oder eine Mondkarte aus dem Karteneditor (Einsatzkarten wählt das SG-Team im Command Center). Der Spielstand merkt sich die Karte. Danach (und nach
 *Fortsetzen*) kommt die Rollenwahl: Pilot oder SG-Team (siehe „Zu Fuß als SG-Team“).
 
 Auf der Karte ist Leben (nur Kulisse, ohne Einfluss aufs Spiel, auch im Mehrspieler): Rover fahren
@@ -265,8 +270,8 @@ glimmen.
   `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach Sieg oder Absturz wird er gelöscht.
 - **Simulation:** Ein Autopilot spielt selbst: scannen, abbauen, verkaufen, kämpfen, aufrüsten.
   Eine beliebige Taste führt zurück ins Menü.
-- **Karteneditor:** Zuerst kommt die Liste der gespeicherten Karten mit *Karte laden* und *Neu*
-  (leere Karte). Eine Karte ist nur Kulisse ohne Kollision: Gelände, Krater, Felsen, Straßen,
+- **Karteneditor:** Zuerst kommt die Liste der gespeicherten Karten mit *Karte laden*, *Neue
+  Mondkarte* und *Neue Einsatzkarte* (leere Karte). Eine Mondkarte ist nur Kulisse ohne Kollision: Gelände, Krater, Felsen, Straßen,
   Monorail, Gebäude und Fundstücke. Stationen stehen an ihren festen Plätzen (der Editor zeigt
   alle möglichen Bauplätze), Kristalle und Piraten erscheinen wie bisher zufällig.
   Links im Werkzeugfenster wählst du ein Segment, *Zufall generieren* füllt die Karte mit Kratern,
@@ -277,13 +282,22 @@ glimmen.
   Gespeichert wird im Ordner `karten` neben der ausführbaren Datei.
   *An Server senden* schickt die Karte an einen Mehrspieler-Server (Anmeldung mit Spielername und
   Passwort). Das geht nur, wenn der Betreiber es dem Spieler auf der Verwaltungsseite erlaubt hat;
-  dort wählt er auch, welche Karte alle Spieler sehen.
+  dort wählt er auch, welche Mondkarte alle Spieler sehen.
+
+  Eine **Einsatzkarte** ist ein eigenes Spielfeld für das SG-Team mit Teilen aus dem Fantasy Town
+  Kit und dem Graveyard Kit (Mauern, Dächer und Treppen, Dorf, Wege, Natur, Friedhof,
+  Friedhofsmauer). Oben im Werkzeugfenster stellst du Thema (Dorf, Wald, Friedhof), Größe (60 bis
+  160 m), Boden und Himmel (Tag, Abend, Nacht) ein. Mauern, Treppen und Deko sind für die Figuren
+  Hindernisse. Mit Q/E wählst du die Ebene, so stehen Dächer auf den Mauern. Unter
+  *Markierungen* setzt du das Stargate (genau eins), Kristallplätze und Gegner-Startplätze;
+  gespeichert wird erst mit einem Stargate und mindestens 5 Kristallplätzen.
 
   | Eingabe | Wirkung |
   |---|---|
-  | Linksklick (halten) | Segment setzen (malen), es rastet im 3-m-Raster ein |
+  | Linksklick (halten) | Segment setzen (malen), es rastet im 3-m-Raster ein (Einsatzkarte: 1 m) |
   | Rechtsklick (halten) | Teil unter dem Zeiger löschen (radieren) |
   | R | Segment um 90° drehen |
+  | Q / E | Ebene tiefer / höher (nur Einsatzkarte) |
   | WASD / Pfeiltasten / mittlere Maustaste ziehen | Ansicht verschieben |
   | Mausrad | zoomen |
   | Strg+S | speichern |

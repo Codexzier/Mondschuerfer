@@ -258,9 +258,9 @@ bool LoadGame(World& w) {
     w.NewGame(seed, false);
     // Eigene Karte wieder einsetzen. Wurde die Datei inzwischen gelöscht,
     // geht es mit der Zufallskarte weiter (die Kulisse hat keinen Einfluss
-    // aufs Spiel).
+    // aufs Spiel). Ebenso, wenn sie jetzt eine Einsatzkarte ist.
     GameMap map;
-    if (!mapFile.empty() && LoadMapFile(mapFile, map)) {
+    if (!mapFile.empty() && LoadMapFile(mapFile, map) && map.kind == MapKind::Moon) {
         w.ApplyMap(map);
         w.mapFile = mapFile;
     }

@@ -1314,7 +1314,12 @@ void GameServer::HandleMapUpload(Client& c, const net::MapUploadMsg& m) {
         Log(Fmt("%s hat die Karte \"%s\" hochgeladen (%d Teile, Datei %s)", acc->name.c_str(), map.name.c_str(),
                 static_cast<int>(map.pieces.size()), file.c_str()));
         if (file == accounts_.ActiveMap()) {
-            // Neue Fassung der gerade aktiven Karte: sofort an alle
+            // Neue Fassung der gerade aktiven Karte: sofort an alle. Ist sie
+            // jetzt eine Einsatzkarte, gilt wieder die Standardkarte.
+            if (map.kind == MapKind::Mission) {
+                accounts_.SetActiveMap(std::string());
+                accounts_.SaveServerData();
+            }
             UpdateMapData();
             SendToAllInGame(mapData_);
         }
@@ -2126,6 +2131,11 @@ void GameServer::ApplyMapCommands() {
                 }
                 const std::string name = sm ? sm->map.name : std::string("Standardkarte");
                 const bool wasActive = cmd.arg == accounts_.ActiveMap();
+                // Einsatzkarten sind keine Mondkarten (ihre Freigabe für die SG-Teams kommt später)
+                if (cmd.kind == MapCommand::Kind::Activate && sm && sm->map.kind == MapKind::Mission) {
+                    MapNotice("\"" + name + "\" ist eine Einsatzkarte und kann nicht die Mondkarte sein.", true);
+                    break;
+                }
                 if (cmd.kind == MapCommand::Kind::Delete) {
                     if (!sm) break;   // die Standardkarte lässt sich nicht löschen
                     accounts_.RemoveMap(cmd.arg);

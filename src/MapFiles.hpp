@@ -22,6 +22,10 @@
 struct MapFileInfo {
     std::string stem;   // Dateiname ohne Ordner und Endung
     std::string name;   // Name aus der Datei (zum Anzeigen)
+    MapKind kind = MapKind::Moon;
+    MapTheme theme = MapTheme::Village;   // nur Einsatzkarten (Command Center)
+    int size = 0;
+    MapSky sky = MapSky::Day;
 };
 
 std::string MapDir();                                   // <Ordner der .exe>/karten/

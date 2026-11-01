@@ -34,7 +34,7 @@ std::vector<MapFileInfo> ListMaps() {
         std::string stem = GetFileNameWithoutExt(files.paths[i]);
         GameMap m;
         if (!LoadMapFile(stem, m)) continue;
-        list.push_back({stem, m.name.empty() ? stem : m.name});
+        list.push_back({stem, m.name.empty() ? stem : m.name, m.kind, m.theme, m.size, m.sky});
     }
     UnloadDirectoryFiles(files);
     std::sort(list.begin(), list.end(), [](const MapFileInfo& a, const MapFileInfo& b) { return a.name < b.name; });

@@ -138,9 +138,12 @@ public:
     //               Reichweite in Metern, color = Farbe mal Helligkeit.
     //   SetFog:     Sandsturm, params wie fogParams in Effects.hpp
     //               (z = 0: kein Nebel), color = Staubfarbe 0..1.
+    //   SetLight:   Farbe des Lichts auf allen Modellen (1, 1, 1 = wie
+    //               bisher; Einsatzkarten: Abend- und Nachtlicht).
     void SetShadow(const Matrix& lightVP, int slot, float strength, float texel);
     void SetFlashes(const Vector4* pos, const Vector3* color, int count);
     void SetFog(Vector3 center, Vector3 color, Vector4 params);
+    void SetLight(Vector3 tint);
 
     // Gefundener Assets-Ordner mit "/" am Ende, z. B. "assets/" oder der
     // Ordner neben der ausführbaren Datei.
@@ -189,6 +192,7 @@ private:
     int locShadowMap_ = -1, locLightVP_ = -1, locShadowParams_ = -1;   // Schatten
     int locFlashPos_ = -1, locFlashColor_ = -1;                         // Explosionsblitze
     int locFogColor_ = -1, locFogCenter_ = -1, locFogParams_ = -1;      // Sandsturm
+    int locLightTint_ = -1;                                             // Lichtfarbe
     Vector3 sun_{0.0f, -1.0f, 0.0f};   // Richtung des Sonnenlichts (Init)
     bool ready_ = false;               // Init() war erfolgreich; vorher zeichnet Draw() nichts
 };

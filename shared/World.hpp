@@ -628,6 +628,13 @@ public:
     // Rover der Karte fahren. Nach NewGame/BuildMirror aufrufen; zieht keine
     // Zufallszahlen aus rng (WorldGen.cpp).
     void ApplyMap(const GameMap& m);
+    // Einsatzkarte als eigene Welt (FPS-Modus, Einzelspieler; WorldGen.cpp):
+    // ersetzt die komplette Welt wie NewGame. Nur ein Spieler (Rolle SG-Team,
+    // sein Schiff versteckt an ships[0], damit Me()/Player() gelten), keine
+    // Stationen, keine Schiffe, kein Nachschub. Deko aus den Teilen der Karte,
+    // das Stargate, gelbe Kristalle und die Gegner-Startplätze aus den
+    // Markierungen. Danach StartSgMission wie auf der Mondkarte.
+    void NewInstance(const GameMap& m, unsigned int seed);
     // Ein Zeitschritt der Spielregeln (Einzelspieler: einmal pro Bild mit dem
     // dt des Bildes; Server: fest 1/30 s). Danach liegen in sounds, fx, goals
     // und PlayerState::outbox neue Ereignisse, die der Aufrufer abarbeitet
@@ -779,12 +786,20 @@ public:
     // Camera3D ist eine raylib-Struktur (Kameraposition, Blickziel, Oben-Richtung,
     // Blickwinkel). Aufruf zwischen BeginMode3D(cam) und EndMode3D().
     void Draw(const Camera3D& cam) const;
+    // Hintergrundfarbe des Bildes: Weltraum bzw. der Himmel der Einsatzkarte
+    Color ClearColor() const;
 
     // --- Daten -------------------------------------------------------------
     unsigned int seed = 1;
     bool simulation = false;   // Einzelspieler-Autopilot (keine Meldungen)
     bool isServer = false;     // Mehrspieler-Regeln, keine Partikel (Server)
     bool isMirror = false;     // Mehrspieler-Client: Welt wird vom Server gefüllt
+    // Einsatzkarte (NewInstance): eigene Welt nur für das SG-Team
+    bool instance = false;
+    float fieldHalf = cfg::WORLD_HALF;     // halbe Kantenlänge des Spielfelds (Einsatzkarte: GameMap::size / 2)
+    MapGround mapGround = MapGround::Grass;   // Boden und Himmel der Einsatzkarte (Render.cpp)
+    MapSky mapSky = MapSky::Day;
+    std::vector<Vector3> enemySpots;       // Gegner-Startplätze der Einsatzkarte (SpawnPirateGroup)
     GameSettings settings;     // Einzelspieler: Standardwerte; Server/Client: vom Server
     // Zufallsgenerator (Mersenne-Twister). Gleicher Seed -> gleiche Zahlenfolge.
     // Darauf beruht, dass Client und Server dieselbe Mondoberfläche erzeugen,

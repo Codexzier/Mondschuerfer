@@ -594,6 +594,9 @@ bool Accounts::Load(std::string& error) {
     if (!activeMap_.empty() && !FindMap(activeMap_)) {
         std::cerr << "Warnung: aktive Karte \"" << activeMap_ << "\" fehlt, verwende die Standardkarte\n";
         activeMap_.clear();
+    } else if (const ServerMap* sm = activeMap_.empty() ? nullptr : FindMap(activeMap_); sm && sm->map.kind == MapKind::Mission) {
+        std::cerr << "Warnung: aktive Karte \"" << activeMap_ << "\" ist eine Einsatzkarte, verwende die Standardkarte\n";
+        activeMap_.clear();
     }
 
     // --- logs/: Lastprotokoll --------------------------------------------------------------
