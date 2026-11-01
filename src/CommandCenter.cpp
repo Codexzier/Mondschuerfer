@@ -16,6 +16,8 @@
 //     (Assets::SetFlashes), eins davon blau am Tor, so hell wie es leuchtet.
 // Anwahl: Das Team dreht sich zum Tor, das Tor leuchtet auf und öffnet sich
 // (dieselbe Zeitfolge wie in der Welt, GateLookAt), dann geht das Team los.
+// Ist eine Einsatzkarte das Ziel, zeigt das rechte Feld unter dem
+// Scoreboard ihre Vorschau: die Grundrisse der Teile von oben (DrawMapPreview).
 // ---------------------------------------------------------------------------
 #include "CommandCenter.hpp"
 #include "Assets.hpp"
@@ -47,6 +49,44 @@ Stargate HomeGate() {
     g.yaw = 0.0f;
     g.scale = kGateScale;
     return g;
+}
+
+// Vorschaubild einer Einsatzkarte im Rechteck r: Boden in seiner Farbe, darauf
+// die Grundrisse der Teile (SegmentBounds, gedreht wie in der Welt) – erst
+// Wege, dann alles andere ohne Dächer, zuletzt die Markierungen: Stargate
+// blau, Kristallplätze gelb, Gegner-Startplätze rot.
+void DrawMapPreview(const GameMap& m, Rectangle r) {
+    static const Color grounds[] = {{92, 128, 68, 255}, {118, 94, 68, 255}, {118, 118, 122, 255}, {192, 174, 128, 255}};
+    DrawRectangleRec(r, grounds[std::clamp(static_cast<int>(m.ground), 0, 3)]);
+    const float half = MapHalf(m), k = r.width / (2.0f * half);
+    auto has = [](const std::string& s, const char* part) { return s.find(part) != std::string::npos; };
+    for (int pass = 0; pass < 3; ++pass) {
+        for (const MapPiece& q : m.pieces) {
+            const bool flat = has(q.model, "road") || has(q.model, "planks");
+            const bool marker = IsMarker(q.model);
+            if ((pass == 0) != flat || (pass == 2) != marker || has(q.model, "roof") || has(q.model, "chimney")) continue;
+            const Vector2 p{r.x + (q.x + half) * k, r.y + (q.z + half) * k};
+            if (q.model == MARKER_CRYSTAL || q.model == MARKER_ENEMY) {
+                const bool crystal = q.model == MARKER_CRYSTAL;
+                DrawCircleV(p, std::max(3.0f, (crystal ? 1.4f : 1.1f) * k),
+                            crystal ? Color{255, 220, 40, 255} : Color{230, 50, 40, 255});
+                continue;
+            }
+            Color c{176, 120, 170, 255};
+            if (q.model == MARKER_GATE) c = Color{60, 140, 255, 255};
+            else if (flat) c = Color{150, 150, 150, 255};
+            else if (has(q.model, "wall") || has(q.model, "pillar")) c = Color{92, 64, 44, 255};
+            else if (has(q.model, "fence") || has(q.model, "hedge")) c = Color{140, 104, 50, 255};
+            else if (has(q.model, "tree") || has(q.model, "pine")) c = Color{34, 92, 44, 255};
+            else if (has(q.model, "grave") || has(q.model, "cross") || has(q.model, "crypt")) c = Color{130, 130, 142, 255};
+            else if (has(q.model, "rock") || has(q.model, "trunk")) c = Color{108, 108, 108, 255};
+            const BoundingBox b = SegmentBounds(q.model);
+            const Vector2 off = MapRotate((b.min.x + b.max.x) * 0.5f * q.scale, (b.min.z + b.max.z) * 0.5f * q.scale, q.yaw);
+            const float w = std::max(1.0f, (b.max.x - b.min.x) * q.scale * k), h = std::max(1.0f, (b.max.z - b.min.z) * q.scale * k);
+            // MapRotate dreht in der Draufsicht (z nach unten) gegen den Uhrzeigersinn
+            DrawRectanglePro({p.x + off.x * k, p.y + off.y * k, w, h}, {w * 0.5f, h * 0.5f}, -q.yaw * RAD2DEG, c);
+        }
+    }
 }
 
 // Aussehen des Tors zur Anwahlzeit t (-1 = Ruhe)
@@ -231,7 +271,7 @@ CommandAction CommandCenterScreen::Draw(World& w) {
         TextFormat("Sammle %d Proben an gelben Kristallen.", cfg::SAMPLE_GOAL),
         "Dann wählt ein Stargate in der Nähe an:",
         "die Treppe hinauf und hindurch.",
-        "Vorsicht vor Bodenpiraten!",
+        mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!",
     };
     for (const std::string& line : brief) {
         Text(line, x, y, 18 * s, TEXT);
@@ -317,6 +357,18 @@ CommandAction CommandCenterScreen::Draw(World& w) {
     }
     Text(TextFormat("Einsätze: %d  ·  Bestwert: %s", static_cast<int>(me.sgLog.size()), ui::Num(best).c_str()), x,
          rp.y + rp.height - 34 * s, 16 * s, MUTED);
+    // Vorschau der gewählten Einsatzkarte (einmal gelesen, solange das Ziel bleibt)
+    if (TargetStem() != previewStem_) {
+        previewStem_ = TargetStem();
+        preview_ = GameMap{};
+        if (!previewStem_.empty() && !LoadMapFile(previewStem_, preview_)) preview_.pieces.clear();
+    }
+    if (!previewStem_.empty()) {
+        const float ps = std::min(280 * s, rp.width - 40 * s);
+        const Rectangle pr{rp.x + (rp.width - ps) * 0.5f, rp.y + rp.height - 46 * s - ps, ps, ps};
+        Text(TextFormat("VORSCHAU: %s", preview_.name.c_str()), pr.x, pr.y - 24 * s, 16 * s, MUTED);
+        DrawMapPreview(preview_, pr);
+    }
 
     // --- Mitte: Ergebnis des letzten Einsatzes, Anwahl ------------------------
     const float midW = std::min(500 * s, W - 2 * (24 * s + 460 * s) - 24 * s);

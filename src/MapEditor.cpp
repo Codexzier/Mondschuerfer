@@ -367,15 +367,28 @@ MapEditorScreen::Placement MapEditorScreen::PlacementAt(Vector3 g) const {
     Placement p;
     p.scale = seg.scale;
     p.yaw = rot_ * PI * 0.5f;
-    // Belegte Felder; 0,05 Spielraum, damit z. B. genau 1,0 Felder nicht zu 2 werden
-    p.fw = std::max(1, static_cast<int>(ceilf((b.max.x - b.min.x) * seg.scale / C - 0.05f)));
-    p.fd = std::max(1, static_cast<int>(ceilf((b.max.z - b.min.z) * seg.scale / C - 0.05f)));
+    // Einsatzkarte: Die Teile der beiden Kits haben ihren Ursprung in der
+    // Feldmitte, Mauern, Zäune und Hecken stehen an einer Feldkante. Deshalb
+    // rastet dort der Ursprung ein (nicht die Mitte der Box), belegt sind die
+    // Felder rund um den Ursprung; Überstände wie die Traufe eines Dachs
+    // zählen nicht mit. Markierungen wie bisher.
+    const bool origin = Mission() && !IsMarker(seg.model);
+    if (origin) {
+        const float hx = std::max(fabsf(b.min.x), fabsf(b.max.x)) * seg.scale;
+        const float hz = std::max(fabsf(b.min.z), fabsf(b.max.z)) * seg.scale;
+        p.fw = std::max(1, static_cast<int>(ceilf(2.0f * hx / C - 0.2f)));
+        p.fd = std::max(1, static_cast<int>(ceilf(2.0f * hz / C - 0.2f)));
+    } else {
+        // Belegte Felder; 0,05 Spielraum, damit z. B. genau 1,0 Felder nicht zu 2 werden
+        p.fw = std::max(1, static_cast<int>(ceilf((b.max.x - b.min.x) * seg.scale / C - 0.05f)));
+        p.fd = std::max(1, static_cast<int>(ceilf((b.max.z - b.min.z) * seg.scale / C - 0.05f)));
+    }
     if (rot_ % 2 == 1) std::swap(p.fw, p.fd);
     // Bereich am Raster ausrichten: linke Kante = gerundet (Zeiger - halbe Breite)
     p.cx = (roundf(g.x / C - p.fw * 0.5f) + p.fw * 0.5f) * C;
     p.cz = (roundf(g.z / C - p.fd * 0.5f) + p.fd * 0.5f) * C;
     Vector2 off{0, 0};
-    if (!IsTrack(seg.model))
+    if (!IsTrack(seg.model) && !origin)
         off = MapRotate((b.min.x + b.max.x) * 0.5f * seg.scale, (b.min.z + b.max.z) * 0.5f * seg.scale, p.yaw);
     p.x = p.cx - off.x;
     p.z = p.cz - off.y;
@@ -413,11 +426,15 @@ void MapEditorScreen::Place(const Placement& p) {
     // Ein Teil mit demselben Bezugspunkt (und derselben Ebene) wird ersetzt –
     // sonst stapeln sich beim Malen Teile übereinander (und Schienen bekämen
     // Abzweigungen). Das Stargate gibt es nur einmal: Es zieht um.
+    // Einsatzkarte: nur bei gleicher Drehung, denn in einem Feld stehen oft
+    // mehrere Mauern an verschiedenen Kanten (alle mit demselben Ursprung).
     const bool gate = seg.model == std::string(MARKER_GATE);
+    const bool mission = Mission();
     map_.pieces.erase(std::remove_if(map_.pieces.begin(), map_.pieces.end(),
                                      [&](const MapPiece& q) {
                                          return (gate && q.model == MARKER_GATE) ||
-                                                (fabsf(q.x - p.x) < 0.01f && fabsf(q.z - p.z) < 0.01f && fabsf(q.lift - p.lift) < 0.01f);
+                                                (fabsf(q.x - p.x) < 0.01f && fabsf(q.z - p.z) < 0.01f && fabsf(q.lift - p.lift) < 0.01f &&
+                                                 (!mission || fabsf(AngleDiff(q.yaw, p.yaw)) < 0.01f));
                                      }),
                       map_.pieces.end());
     if (static_cast<int>(map_.pieces.size()) >= mapgrid::MAX_PIECES) {
@@ -757,7 +774,7 @@ void MapEditorScreen::DrawToolPanel(Rectangle r, float s) {
     }
 
     // Reiter der Gruppen dieser Kartenart (Mondkarte: zwei Reihen à drei,
-    // Einsatzkarte: vier Reihen à zwei, ihre Namen sind länger)
+    // Einsatzkarte: fünf Reihen à zwei, ihre Namen sind länger)
     const int groups = static_cast<int>(SegmentGroup::Count);
     const int cols = mission ? 2 : 3;
     const float tg = 6 * s, tw = (w - (cols - 1) * tg) / cols, th = 34 * s;

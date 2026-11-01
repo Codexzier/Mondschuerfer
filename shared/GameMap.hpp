@@ -114,7 +114,7 @@ float MapCell(MapKind k);
 // Reiter). Die ersten sechs gehören zur Mondkarte, die übrigen zur Einsatzkarte.
 enum class SegmentGroup {
     Terrain, Rocks, Roads, Monorail, Buildings, Misc,
-    Walls, Roofs, Village, Paths, Nature, Graves, GraveWalls, Markers,
+    Walls, Roofs, Village, Paths, Nature, Graves, GraveWalls, Markers, Farm, Crypts,
     Count
 };
 const char* SegmentGroupName(SegmentGroup g);

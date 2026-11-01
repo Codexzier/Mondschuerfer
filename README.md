@@ -158,12 +158,18 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 *Fortsetzen* wählst du die Rolle: **Pilot** (mit dem Schiff wie bisher) oder **SG-Team**. Als
 SG-Team beginnst du im **Command Center**. Dort stellst du mit *Kameraden* 0 bis 3 Kameraden ein,
 rechts steht das Scoreboard deiner Einsätze (beste zuerst). *Ziel* wählt, wohin das Tor führt:
-*Mondkarte (gemeinsam)* oder eine **Einsatzkarte** aus dem Karteneditor (Ordner `karten`).
+*Mondkarte (gemeinsam)* oder eine **Einsatzkarte**; rechts unter dem Scoreboard zeigt eine
+Vorschau ihren Grundriss. Mitgeliefert sind vier Einsatzkarten: *Marktflecken* (Dorf mit Marktplatz
+und Stadtmauer, Tag), *Dunkelwald* (Wald mit Lichtungen und Wassermühle, Abend), *Gruftberg*
+(Friedhof mit Krypta, Nacht) und *Mühlental* (Höfe, Felder, Mühlen und Waldrand, Tag). Dazu kommen
+eigene Einsatzkarten aus dem Karteneditor (Ordner `karten`).
 *Tor anwählen* öffnet nach 3 Sekunden das Wurmloch, und das Team kommt auf der Mondkarte an einem
 der Stargates heraus bzw. am Stargate der Einsatzkarte, die Kameraden kurz nacheinander. Eine
 Einsatzkarte ist eine eigene Welt nur für dein Team: ihr Gelände, Himmel und Licht, keine Schiffe,
 die gelben Kristalle an den Kristallplätzen (nach der Probe grün, abgebaut wird dort nichts) und
-die Bodenpiraten an den Gegner-Startplätzen. Auftrag und Punkte sind dieselben. *Als Pilot
+die Bodenpiraten an den Gegner-Startplätzen. Auf Karten mit dem Thema Friedhof sind die Gegner
+**Zombies**: Gruppen von drei bis fünf, langsamer als du, mit mehr Schild; sie schießen nicht,
+sondern schlagen aus der Nähe zu. Auftrag und Punkte sind dieselben. *Als Pilot
 spielen* führt zurück ins Schiff; umgekehrt bringt dich an der Handelsstation der Knopf *Als
 SG-Team spielen* ins Command Center.
 
@@ -286,9 +292,13 @@ glimmen.
 
   Eine **Einsatzkarte** ist ein eigenes Spielfeld für das SG-Team mit Teilen aus dem Fantasy Town
   Kit und dem Graveyard Kit (Mauern, Dächer und Treppen, Dorf, Wege, Natur, Friedhof,
-  Friedhofsmauer). Oben im Werkzeugfenster stellst du Thema (Dorf, Wald, Friedhof), Größe (60 bis
-  160 m), Boden und Himmel (Tag, Abend, Nacht) ein. Mauern, Treppen und Deko sind für die Figuren
-  Hindernisse. Mit Q/E wählst du die Ebene, so stehen Dächer auf den Mauern. Unter
+  Friedhofsmauer, Hof & Mühle, Gruft & Licht). Oben im Werkzeugfenster stellst du Thema (Dorf,
+  Wald, Friedhof; Friedhof bringt Zombies), Größe (60 bis 160 m), Boden und Himmel (Tag, Abend,
+  Nacht) ein. Mauern, Treppen und Deko sind für die Figuren Hindernisse. Mauern, Zäune und Hecken
+  stehen an einer Kante ihres Felds (mit R die Kante wählen), mehrere Mauern in einem Feld bleiben
+  stehen. Mit Q/E wählst du die Ebene, so stehen Dächer auf den Mauern. Die vier mitgelieferten
+  Einsatzkarten lassen sich ebenso öffnen; gespeichert wird dann eine eigene Kopie im Ordner
+  `karten`, die die mitgelieferte ersetzt. Unter
   *Markierungen* setzt du das Stargate (genau eins), Kristallplätze und Gegner-Startplätze;
   gespeichert wird erst mit einem Stargate und mindestens 5 Kristallplätzen.
 

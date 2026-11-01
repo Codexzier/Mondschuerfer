@@ -331,7 +331,8 @@ struct Trooper {
     TrooperKind kind = TrooperKind::Mate;
     TrooperAiState ai = TrooperAiState::Follow;
     TrooperInput input;           // Eingabe, die die KI für diesen Schritt berechnet hat
-    int skin = 0;                 // Haut (Render.cpp): 0..3 militär (SG-Team), 4 Cyborg (Bodenpirat)
+    int skin = 0;                 // Haut (Render.cpp): 0..3 militär (SG-Team), 4 Cyborg (Bodenpirat), 7..9 Zombie
+    bool zombie = false;          // Pirat als Zombie (World::zombies): schießt nicht, schlägt aus der Nähe zu
     int leaderId = -1;            // Kamerad: Figur, der er folgt
     int slot = 0;                 // Kamerad: Platz in der Formation hinter ihr
     int group = -1;               // Pirat: Gruppe (Zählung World::nextPirateGroup)
@@ -800,6 +801,7 @@ public:
     MapGround mapGround = MapGround::Grass;   // Boden und Himmel der Einsatzkarte (Render.cpp)
     MapSky mapSky = MapSky::Day;
     std::vector<Vector3> enemySpots;       // Gegner-Startplätze der Einsatzkarte (SpawnPirateGroup)
+    bool zombies = false;                  // Einsatzkarte mit Thema Friedhof: Zombies statt Bodenpiraten
     GameSettings settings;     // Einzelspieler: Standardwerte; Server/Client: vom Server
     // Zufallsgenerator (Mersenne-Twister). Gleicher Seed -> gleiche Zahlenfolge.
     // Darauf beruht, dass Client und Server dieselbe Mondoberfläche erzeugen,

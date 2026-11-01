@@ -472,8 +472,14 @@ void World::UpdateConvoy(Ship& s, float dt) {
 //            GROUND_PIRATE_RETREAT des Schilds läuft er 6 s vom Gegner weg;
 //            danach greift er wieder an oder flieht erneut, bis sich der
 //            Schild aufgeladen hat.
-// Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis TROOPER_SIGHT mit freier
-// Sichtlinie (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
+//   Zombie:  ein Pirat mit Trooper::zombie (Einsatzkarte mit dem Thema
+//            Friedhof). Streift wie ein Pirat, im Angriff läuft er langsam
+//            geradewegs auf sein Ziel zu (ZOMBIE_CHASE) und schlägt aus der
+//            Nähe zu (ZOMBIE_REACH, alle ZOMBIE_HIT_INTERVAL Sekunden). Er
+//            schießt nicht und flieht nie.
+// Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis TROOPER_SIGHT (Kameraden:
+// MATE_SIGHT_CELLS Rasterfelder der Karte) mit freier Sichtlinie
+// (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
 // Visier (DamageTrooper) und behält ihn bis zur anderthalbfachen Sichtweite.
 // Zielen: Die Blickrichtung dreht mit begrenztem Tempo zum Ziel (das wirkt
 // wie eine Reaktionszeit); geschossen wird erst, wenn sie fast passt und die
@@ -491,10 +497,12 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
     t.thinkT -= dt;
     if (t.thinkT <= 0.0f) {
         t.thinkT = Rand(0.3f, 0.5f);
+        const float sight = pirate ? cfg::TROOPER_SIGHT
+                                   : cfg::MATE_SIGHT_CELLS * (instance ? mapgrid::MISSION_CELL : mapgrid::CELL);
         const Trooper* cur = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
-        if (cur && (cur->down || Dist2D(cur->pos, t.pos) > cfg::TROOPER_SIGHT * 1.5f)) cur = nullptr;
+        if (cur && (cur->down || Dist2D(cur->pos, t.pos) > sight * 1.5f)) cur = nullptr;
         int best = -1;
-        float bestD = cfg::TROOPER_SIGHT;
+        float bestD = sight;
         for (const Trooper& o : troopers) {
             if (o.down || o.faction == t.faction) continue;
             const float d = Dist2D(o.pos, t.pos);
@@ -519,7 +527,7 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
         if (t.ai == TrooperAiState::Retreat) {
             t.waitT -= dt;
             if (t.waitT <= 0.0f) t.ai = TrooperAiState::Patrol;
-        } else if (target && t.hp < t.maxHp * cfg::GROUND_PIRATE_RETREAT) {
+        } else if (target && !t.zombie && t.hp < t.maxHp * cfg::GROUND_PIRATE_RETREAT) {
             t.ai = TrooperAiState::Retreat;
             t.waitT = 6.0f;
         } else if (target) {
@@ -571,6 +579,23 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
         move = away;
         faceYaw = YawTowards(t.pos, Vector3Add(t.pos, away));
         in.sprint = true;
+    } else if (target && t.zombie) {
+        const float d = Dist2D(target->pos, t.pos);
+        if (d > cfg::ZOMBIE_REACH * 0.8f) move = Vector3Scale(toward(target->pos), cfg::ZOMBIE_CHASE);
+        faceYaw = YawTowards(t.pos, target->pos);
+        // Schlag: wie ein Treffer durch ein Geschoss des Zombies (DamageTrooper)
+        if (d < cfg::ZOMBIE_REACH && t.fireCd <= 0.0f && fabsf(target->pos.y - t.pos.y) < 0.4f) {
+            if (Trooper* victim = FindTrooper(t.targetId)) {
+                Bullet hit;
+                hit.damage = cfg::ZOMBIE_DAMAGE;
+                hit.faction = t.faction;
+                hit.ownerPlayer = -1;
+                hit.ownerTrooper = t.id;
+                hit.ground = true;
+                DamageTrooper(*victim, hit);
+            }
+            t.fireCd = cfg::ZOMBIE_HIT_INTERVAL;
+        }
     } else if (target) {
         const Vector3 dir = toward(target->pos);
         const float d = Dist2D(target->pos, t.pos);
@@ -586,7 +611,7 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
     // Im Kampf zum Ziel schauen (auf die Brust) und schießen, wenn die
     // Blickrichtung fast passt
     float aimYaw = faceYaw, aimPitch = 0.0f;
-    const bool fighting = target && t.ai == TrooperAiState::Attack;
+    const bool fighting = target && t.ai == TrooperAiState::Attack && !t.zombie;   // Zombies schießen nicht
     if (fighting) {
         const Vector3 eye = TrooperEye(t);
         const Vector3 chest{target->pos.x, target->pos.y + cfg::TROOPER_HEIGHT * 0.6f, target->pos.z};

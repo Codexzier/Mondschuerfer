@@ -357,6 +357,7 @@ constexpr float MATE_DAMAGE = 12.0f;
 constexpr float MATE_FIRE_INTERVAL = 0.35f;
 constexpr float MATE_SPREAD = 0.035f;         // Streuung der Schüsse (Bogenmaß)
 constexpr float MATE_RESPAWN = 20.0f;         // gefallene Kameraden kommen nach so vielen Sekunden beim Spieler wieder
+constexpr int MATE_SIGHT_CELLS = 6;           // so viele Rasterfelder weit nehmen Kameraden Gegner ins Visier (Mondkarte mapgrid::CELL, Einsatzkarte mapgrid::MISSION_CELL)
 constexpr int GROUND_PIRATE_GROUPS = 3;       // Gruppen gleichzeitig auf der Karte (später Server-Einstellung je Team)
 constexpr int GROUND_PIRATE_MIN = 2;          // Figuren je Gruppe ...
 constexpr int GROUND_PIRATE_MAX = 4;          // ... bis
@@ -367,7 +368,17 @@ constexpr float GROUND_PIRATE_SPREAD = 0.05f;
 constexpr float GROUND_PIRATE_SPAWN_DIST = 60.0f;   // neue Gruppen mindestens so weit vom Team entfernt
 constexpr float GROUND_PIRATE_RESPAWN = 40.0f;      // ist eine Gruppe ganz ausgeschaltet, kommt danach eine neue
 constexpr float GROUND_PIRATE_RETREAT = 0.35f;      // unter diesem Anteil des Schilds ziehen sie sich zurück
-constexpr float TROOPER_SIGHT = 30.0f;        // so weit sehen KI-Figuren ihre Gegner
+// Zombies: die Gegner auf Einsatzkarten mit dem Thema Friedhof (statt der
+// Bodenpiraten, gleiche Gruppen und Startplätze). Langsamer als eine gehende
+// Figur, mehr Schild, schlagen aus der Nähe zu statt zu schießen.
+constexpr int ZOMBIE_MIN = 3;                 // Figuren je Gruppe ...
+constexpr int ZOMBIE_MAX = 5;                 // ... bis
+constexpr float ZOMBIE_HP = 80.0f;
+constexpr float ZOMBIE_DAMAGE = 15.0f;        // je Schlag
+constexpr float ZOMBIE_HIT_INTERVAL = 1.2f;   // Sekunden zwischen zwei Schlägen
+constexpr float ZOMBIE_REACH = 0.55f;         // so nah (m, waagerecht) muss der Zombie an seinem Ziel sein
+constexpr float ZOMBIE_CHASE = 0.7f;          // Tempo im Angriff als Anteil von TROOPER_WALK
+constexpr float TROOPER_SIGHT = 30.0f;        // so weit sehen Bodenpiraten und Zombies ihre Gegner (Kameraden: MATE_SIGHT_CELLS)
 // Gelbe Kristalle (FPS-Modus): Erst nimmt ein Trupp zu Fuß eine Probe, dann
 // sind sie wieder grün und abbaubar. Bisher nur im Einzelspieler (nicht in
 // der Simulation und nicht im Mehrspieler).
