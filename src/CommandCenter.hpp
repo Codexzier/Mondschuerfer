@@ -16,11 +16,13 @@
 //   in die eigene Welt der Einsatzkarte (World::StartSgMission,
 //   World::NewInstance, ausgeführt von main.cpp).
 //
-// Mehrspieler (DrawOnline): dieselbe Kulisse, aber ohne Einsatzkarten und
-//   NPC-Kameraden. Links das eigene Team (gründen, beitreten, bereit melden,
-//   verlassen; der Gründer wählt das Tor an), rechts alle SG-Teams des
-//   Servers. Was gewählt wird, schickt MultiplayerScreen als TeamAction an
-//   den Server; Anwahl und Ergebnis kommen von dort (net::TeamsMsg).
+// Mehrspieler (DrawOnline): dieselbe Kulisse, aber ohne NPC-Kameraden.
+//   Links das eigene Team (gründen, beitreten, bereit melden, verlassen;
+//   der Gründer wählt das Ziel und das Tor an), rechts alle SG-Teams des
+//   Servers und die Vorschau der gewählten Einsatzkarte. Ziele sind die
+//   Mondkarte und die auf dem Server freigegebenen Einsatzkarten
+//   (net::MissionMapsMsg). Was gewählt wird, schickt MultiplayerScreen als
+//   TeamAction an den Server; Anwahl und Ergebnis kommen von dort (net::TeamsMsg).
 //
 // Wer benutzt die Datei?
 //   src/main.cpp (Bildschirm Screen::Command), src/Multiplayer.cpp (Command
@@ -45,9 +47,9 @@ enum class CommandAction { None, Mission, Pilot, SaveAndMenu };
 // Mehrspieler: was im Command Center gewählt wurde (MultiplayerScreen
 // schickt es als TeamAction an den Server bzw. meldet ab).
 struct OnlineCommand {
-    enum class Kind { None, Create, Join, Leave, Ready, Dial, Pilot, Menu };
+    enum class Kind { None, Create, Join, Leave, Ready, Dial, Target, Pilot, Menu };
     Kind kind = Kind::None;
-    int param = 0;   // Join: SG-Nummer, Ready: 1 = bereit, 0 = nicht mehr
+    int param = 0;   // Join: SG-Nummer, Ready: 1 = bereit, 0 = nicht mehr, Target: 0 = Mondkarte, k = maps[k - 1]
 };
 
 class CommandCenterScreen {
@@ -69,10 +71,11 @@ public:
     std::string TargetStem() const { return target_ > 0 ? targets_[static_cast<size_t>(target_ - 1)].stem : std::string(); }
 
     // Mehrspieler: beim Betreten zurücksetzen, dann jedes Frame Update und
-    // DrawOnline. teams = Stand vom Server, myId = eigene Spieler-ID,
-    // fresh = gerade ist ein eigener Einsatz zu Ende gegangen (Ergebnis zeigen).
+    // DrawOnline. teams = Stand vom Server, maps = freigegebene Einsatzkarten
+    // (Ziele), myId = eigene Spieler-ID, fresh = gerade ist ein eigener
+    // Einsatz zu Ende gegangen (Ergebnis zeigen).
     void OpenOnline();
-    OnlineCommand DrawOnline(const net::TeamsMsg& teams, int myId, bool fresh);
+    OnlineCommand DrawOnline(const net::TeamsMsg& teams, const std::vector<GameMap>& maps, int myId, bool fresh);
 
 private:
     void DrawScene(int figures);   // figures = so viele Figuren vor dem Tor (1..4)

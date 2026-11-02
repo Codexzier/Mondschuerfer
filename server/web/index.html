@@ -319,6 +319,12 @@
                 </div>
 
                 <div class="field">
+                    <label for="f-maxInstances">Einsatzkarten gleichzeitig</label>
+                    <input id="f-maxInstances" name="maxInstances" type="number" min="1" max="16" step="1" inputmode="numeric">
+                    <div class="field-help"><span id="f-maxInstances-help">1 bis 16</span> <span class="default-hint" id="d-maxInstances"></span></div>
+                </div>
+
+                <div class="field">
                     <label class="check" for="f-allowRegistration">
                         <input id="f-allowRegistration" name="allowRegistration" type="checkbox">
                         <span>Neue Konten erlauben</span>
@@ -430,7 +436,8 @@
             <p class="muted small ships-help">
                 Spieler mit Berechtigung schicken Karten aus dem Karteneditor des Spiels („An Server senden“). Die aktive
                 Karte sehen alle Spieler sofort. Sie ist nur Kulisse: Stationen, Kristalle und Piraten bleiben, wie sie sind.
-                Jeder geschlossene Monorail-Kreis bekommt einen Zug.
+                Jeder geschlossene Monorail-Kreis bekommt einen Zug. Einsatzkarten sind keine Mondkarte: Freigegebene stehen
+                den SG-Teams im Command Center als Ziel zur Wahl, jedes Team bekommt dort eine eigene Welt.
             </p>
             <div class="table-wrap">
                 <table class="data-table maps-table">

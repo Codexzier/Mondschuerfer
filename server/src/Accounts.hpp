@@ -119,6 +119,7 @@ struct ServerMap {
     std::string file;       // Dateiname ohne Endung: <besitzer in Kleinbuchstaben>-<MapFileStem(Name)>
     GameMap map;            // map.author = Konto, das sie hochgeladen hat
     int loops = 0;          // geschlossene Monorail-Kreise (für die Webseite)
+    bool released = false;  // Einsatzkarte: für die SG-Teams freigegeben (Verwaltungsseite, steht in server.txt)
 };
 
 // Ein Eintrag der Bestenliste: ein Spieler hat das Ziel (cfg::GOAL_POINTS)
@@ -221,6 +222,9 @@ public:
     // server.txt; SetActiveMap speichert NICHT automatisch (SaveServerData).
     const std::string& ActiveMap() const { return activeMap_; }
     void SetActiveMap(const std::string& file) { activeMap_ = file; }
+    // Einsatzkarte für die SG-Teams freigeben bzw. sperren (Liste in server.txt,
+    // speichert NICHT automatisch). false, wenn es die Karte nicht gibt.
+    bool SetMapReleased(const std::string& file, bool released);
     std::vector<std::string> MapUploaders() const;   // Konten mit Account::mapUpload, nach Name sortiert
 
     // --- Sperren ---------------------------------------------------------------------

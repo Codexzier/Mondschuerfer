@@ -134,8 +134,13 @@ sofort, auch für Schiffe, die Spieler schon besitzen. Ohne `ships.txt` gelten d
 Im Bereich **„Karten“** stellt man ein, welche Spieler Karten aus dem Karteneditor hochladen dürfen
 (Spielername eintragen und „Erlauben“, „Entziehen“ nimmt es zurück; Standard: niemand). Hochgeladene
 Karten erscheinen in der Liste darüber und lassen sich dort **aktivieren** oder **löschen**. Die aktive
-Karte sehen alle Spieler sofort, ohne Neuaufbau der Welt; sie ist nur Kulisse. Höchstens 20 Karten, 5
-je Spieler; gespeichert in `/data/karten/`, die aktive Karte in `server.txt`.
+Karte sehen alle Spieler sofort, ohne Neuaufbau der Welt; sie ist nur Kulisse. **Einsatzkarten** (für
+die SG-Teams) werden statt dessen **freigegeben** oder **gesperrt**: Freigegebene stehen im Command
+Center als Ziel zur Wahl, und jedes Team bekommt dort eine eigene Welt (höchstens `MAX_INSTANCES`
+Teams gleichzeitig, auf der Webseite „Einsatzkarten gleichzeitig“). Die vier mitgelieferten
+Einsatzkarten schickt man dafür mit *An Server senden* aus dem Karteneditor. Höchstens 20 Karten, 5
+je Spieler; gespeichert in `/data/karten/`, die aktive Karte und die freigegebenen Einsatzkarten in
+`server.txt`.
 
 ### Umgebungsvariablen
 
@@ -151,6 +156,7 @@ je Spieler; gespeichert in `/data/karten/`, die aktive Karte in `server.txt`.
 | `MOON_COLOR` | `grey` | `grey`/`grau`, `orange`, `blue`/`blau` |
 | `MAX_PLAYERS` | `16` | gleichzeitig angemeldete Spieler, 1–64 (plus bis zu 16 Zuschauer) |
 | `MISSIONS` | `3` | Mini-Missionen gleichzeitig auf der Karte, 0–10 (`0` = keine Missionen) |
+| `MAX_INSTANCES` | `4` | SG-Teams gleichzeitig auf einer Einsatzkarte, 1–16 (je Team rechnet der Server eine eigene Welt) |
 | `MAX_CONNECTIONS_PER_IP` | `8` | max. Verbindungen je öffentlicher IP-Adresse, `0` = unbegrenzt; Heimnetz-Adressen sind ausgenommen |
 | `WEB_PUBLISH_ADDRESS` | leer (= `127.0.0.1`) | Verwaltungsseite im Heimnetz freigeben, z. B. `0.0.0.0` (unverschlüsselt, siehe [Sicherheit](#die-verwaltungsseite)) |
 | `DOMAIN` | leer | nur für das Profil `online` (HTTPS mit Caddy), z. B. `mond.example.org` |

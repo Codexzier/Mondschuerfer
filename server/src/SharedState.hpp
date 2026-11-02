@@ -59,13 +59,15 @@ struct MapStatus {
     std::string author;
     int pieces = 0;
     int loops = 0;                  // geschlossene Monorail-Kreise
+    bool mission = false;           // Einsatzkarte (SG-Teams) statt Mondkarte
+    bool released = false;          // Einsatzkarte: für die SG-Teams freigegeben
 };
 
 // Auftrag der Webseite für den Bereich "Karten"
 struct MapCommand {
-    enum class Kind { Activate, Delete, Allow, Deny };
+    enum class Kind { Activate, Delete, Allow, Deny, Release, Withhold };
     Kind kind = Kind::Activate;
-    std::string arg;                // Activate/Delete: Datei ("" = Standardkarte), Allow/Deny: Spielername
+    std::string arg;                // Activate/Delete/Release/Withhold: Datei ("" = Standardkarte), Allow/Deny: Spielername
 };
 
 // Eine Sperre (Bereich "Sperren" der Webseite), Kopie von Ban aus Accounts.hpp

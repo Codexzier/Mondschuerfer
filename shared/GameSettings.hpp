@@ -74,6 +74,7 @@ constexpr int MAX_SHIPYARDS = 4;        // Handelsstationen + Werften passen auf
 constexpr int MAX_PLAYERS_LIMIT = 64;
 constexpr int MAX_LIVES = 100;          // Obergrenze für "Leben pro Spieler" (im Netzwerk ein Byte)
 constexpr int MAX_MISSIONS = 10;        // Obergrenze für "Mini-Missionen gleichzeitig" (0 = keine Missionen)
+constexpr int MAX_INSTANCES = 16;       // Obergrenze für "Einsatzkarten gleichzeitig" (je Einsatz rechnet der Server eine eigene Welt)
 constexpr int MAX_SPECTATORS = 16;      // Zuschauer zusätzlich zu den Spielern (fest, nicht einstellbar)
 constexpr int MAX_SERVER_NAME = 40;     // in BYTES (UTF-8): ein "ü" zählt doppelt
 // Schiffstypen (Bereich "Schiffe" der Webseite). Höchstens 8 Typen: Startschiff
@@ -129,6 +130,7 @@ struct GameSettings {
     int maxPlayers = 16;       // gleichzeitig angemeldete Spieler (ohne Zuschauer)
     int lives = cfg::START_LIVES;   // Leben pro Spieler (1..limits::MAX_LIVES)
     int missions = cfg::MISSION_SLOTS;   // Mini-Missionen gleichzeitig auf der Karte (0..limits::MAX_MISSIONS)
+    int maxInstances = 4;      // SG-Teams gleichzeitig auf einer Einsatzkarte (je eine eigene Welt, 1..limits::MAX_INSTANCES)
     std::vector<ShipType> ships = DefaultShipTypes();   // Index = Schiffstyp (PlayerState::shipType), 1..limits::MAX_SHIP_TYPES
     // Nur Server (Verwaltungsseite): Dürfen sich neue Konten anmelden? Wird
     // nicht an die Clients geschickt; der Server lehnt "Konto anlegen" dann

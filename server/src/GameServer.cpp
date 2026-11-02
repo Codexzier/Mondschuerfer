@@ -522,6 +522,7 @@ void GameServer::Step() {
 
     const int stageBefore = world_.lastStage;
     world_.Update(net::TICK_DT);
+    UpdateInstances();   // vor ++tick_: InstanceEnd trägt den Schritt, dessen Snapshots noch zur Einsatzkarte gehören
     ++tick_;
     UpdateDeparting(false);
 
@@ -624,7 +625,10 @@ void GameServer::ApplyInputs() {
         // SG-Team im Einsatz: Eingaben der Figur. Sprung und Nachladen nur aus
         // einer neuen Eingabe (wie die Tastendrücke oben). Kommt noch keine
         // Eingabe zu Fuß (gerade erst durch das Tor), behält die Figur ihren Blick.
-        if (const Trooper* t = ps->role == PlayerRole::Trooper ? world_.FindTrooper(ps->trooperId) : nullptr) {
+        // Auf einer Einsatzkarte steht die Figur in der Welt der Instanz.
+        if (Instance* inst = InstanceOf(c.playerId)) ps = inst->world->FindPlayer(c.playerId);
+        const World& fw = WorldOf(c.playerId);
+        if (const Trooper* t = ps->role == PlayerRole::Trooper ? fw.FindTrooper(ps->trooperId) : nullptr) {
             TrooperInput ti;
             ti.yaw = t->yaw;
             ti.pitch = t->pitch;
@@ -656,6 +660,7 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
         PlayerState* ps;
         Vector3 center;   // Mittelpunkt der Hör-/Sichtweite
         int shipId;       // eigenes Schiff oder -1
+        bool away;        // auf einer Einsatzkarte: Töne und Effekte kommen von dort (DistributeInstanceEvents)
     };
     std::vector<View> players;
     std::vector<Client*> spectators;
@@ -671,7 +676,7 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
             if (s) c.lastPos = s->pos;   // ohne Schiff (Respawn): letzte bekannte Position
             // SG-Team im Einsatz: hören und sehen, wo die Figur steht
             if (const Trooper* t = ps->role == PlayerRole::Trooper ? world_.FindTrooper(ps->trooperId) : nullptr) c.lastPos = t->pos;
-            players.push_back({&c, ps, c.lastPos, s ? s->id : -1});
+            players.push_back({&c, ps, c.lastPos, s ? s->id : -1, InstanceOf(c.playerId) != nullptr});
         }
     }
 
@@ -679,6 +684,7 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
     for (const SoundEvent& e : world_.sounds) {
         const net::NetEvent ev = SoundToNet(e);
         for (View& v : players) {
+            if (v.away) continue;
             bool send;
             if (e.forPlayer >= 0) {
                 send = e.forPlayer == v.ps->id;
@@ -704,7 +710,7 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
         ev.color = f.color;
         ev.count = static_cast<uint8_t>(std::clamp(f.count, 0, 255));
         for (View& v : players)
-            if (Dist2D(f.pos, v.center) <= net::AOI_EVENTS) v.c->events.push_back(ev);
+            if (!v.away && Dist2D(f.pos, v.center) <= net::AOI_EVENTS) v.c->events.push_back(ev);
         // Zuschauer sehen die ganze Karte, aber nur Explosionen (Funken sind
         // aus der Vogelperspektive zu klein und würden nur Daten kosten)
         if (ev.kind == net::EventKind::Explosion)
@@ -840,15 +846,16 @@ void GameServer::SendDepositUpdates() {
         Client& c = *up;
         if (c.closing || c.role == Role::Lobby) continue;
         const bool player = c.role == Role::Player;
-        const PlayerState* ps = player ? world_.FindPlayer(c.playerId) : nullptr;
+        const World& w = WorldOf(player ? c.playerId : -1);   // auf einer Einsatzkarte: deren Kristalle
+        const PlayerState* ps = player ? w.FindPlayer(c.playerId) : nullptr;
         if (player && !ps) continue;
         const int reveal = ps ? ps->revealRevision : 0;
-        if (c.depositsSent && c.sentDepositRevision == world_.depositRevision && c.sentRevealRevision == reveal) continue;
+        if (c.depositsSent && c.sentDepositRevision == w.depositRevision && c.sentRevealRevision == reveal) continue;
         const uint64_t minTicks = player ? DEPOSITS_MIN_TICKS_PLAYER : DEPOSITS_MIN_TICKS_SPECTATOR;
         if (c.depositsSent && tick_ - c.lastDepositsTick < minTicks) continue;   // gleich, aber noch nicht jetzt
 
         const std::vector<uint8_t> bytes = net::Encode(MakeDeposits(c));
-        c.sentDepositRevision = world_.depositRevision;
+        c.sentDepositRevision = w.depositRevision;
         c.sentRevealRevision = reveal;
         const uint64_t hash = Fnv1a(bytes);
         if (c.depositsSent && hash == c.sentDepositHash) continue;
@@ -1348,7 +1355,10 @@ void GameServer::HandleMapUpload(Client& c, const net::MapUploadMsg& m) {
         res.text = error;
     } else {
         res.ok = true;
-        res.text = "Karte \"" + map.name + "\" hochgeladen. Der Betreiber kann sie auf der Verwaltungsseite aktivieren.";
+        res.text = "Karte \"" + map.name + "\" hochgeladen. Der Betreiber kann sie auf der Verwaltungsseite " +
+                   (map.kind == MapKind::Mission ? "freigeben." : "aktivieren.");
+        // Neue Fassung einer freigegebenen Einsatzkarte: neue Vorschau im Command Center
+        if (const ServerMap* sm = accounts_.FindMap(file); sm && sm->released) ++missionMapsRev_;
         Log(Fmt("%s hat die Karte \"%s\" hochgeladen (%d Teile, Datei %s)", acc->name.c_str(), map.name.c_str(),
                 static_cast<int>(map.pieces.size()), file.c_str()));
         if (file == accounts_.ActiveMap()) {
@@ -1457,15 +1467,28 @@ void GameServer::HandleChatTyping(Client& c, const net::ChatTypingMsg& m) {
 // angedockt an einer Handelsstation, zurück zum Piloten nur aus dem Command
 // Center (World::SetRole versteckt bzw. zeigt das Schiff). Teams: gründen,
 // beitreten (höchstens cfg::SG_TEAM_MAX, nicht während Anwahl oder Einsatz),
-// verlassen, bereit melden; der Gründer wählt an, wenn alle anderen bereit
-// sind (allein: sofort, ein Team wird dann angelegt).
+// verlassen, bereit melden; der Gründer wählt das Ziel (Mondkarte oder eine
+// freigegebene Einsatzkarte) und wählt an, wenn alle anderen bereit sind
+// (allein: sofort, ein Team wird dann angelegt).
 void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
     if (c.role != Role::Player) return;
     PlayerState* ps = world_.FindPlayer(c.playerId);
     if (!ps) return;
     const Color bad{255, 170, 120, 255};
-    const bool inCommand = ps->role == PlayerRole::Trooper && ps->trooperId < 0;
+    // Auf einer Einsatzkarte ist der Spieler in world_ auch ohne Figur, aber nicht im Command Center
+    const bool inCommand = ps->role == PlayerRole::Trooper && ps->trooperId < 0 && !InstanceOf(ps->id);
     SgTeam* team = TeamOf(ps->id);
+    // Neues Team mit diesem Spieler als Gründer (SG-Nummer: die kleinste freie)
+    auto create = [&]() {
+        SgTeam t;
+        t.number = 1;
+        while (FindTeam(t.number)) ++t.number;
+        t.members.push_back(ps->id);
+        ps->sgTeam = t.number;
+        teams_.push_back(t);
+        teamsChanged_ = true;
+        return &teams_.back();
+    };
     switch (m.action) {
         case net::TeamActionType::Role: {
             const PlayerRole want = m.param == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
@@ -1493,15 +1516,7 @@ void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
         }
         case net::TeamActionType::Create:
             if (!inCommand || team) break;
-            {
-                SgTeam t;
-                t.number = 1;
-                while (FindTeam(t.number)) ++t.number;
-                t.members.push_back(ps->id);
-                ps->sgTeam = t.number;
-                teams_.push_back(t);
-            }
-            teamsChanged_ = true;
+            create();
             break;
         case net::TeamActionType::Join: {
             if (!inCommand || team) break;
@@ -1526,45 +1541,73 @@ void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
             break;
         case net::TeamActionType::Dial: {
             if (!inCommand) break;
-            if (!team) {
-                SgTeam t;
-                t.number = 1;
-                while (FindTeam(t.number)) ++t.number;
-                t.members.push_back(ps->id);
-                ps->sgTeam = t.number;
-                teams_.push_back(t);
-                team = &teams_.back();
-            }
+            if (!team) team = create();
             if (team->members.front() != ps->id || TeamBusy(*team)) break;
             for (size_t i = 1; i < team->members.size(); ++i)
                 if (std::find(team->ready.begin(), team->ready.end(), team->members[i]) == team->ready.end()) {
                     world_.Notify(*ps, "Noch nicht alle im Team sind bereit.", bad);
                     return;
                 }
-            world_.BuildStargates();
-            const bool free = std::any_of(world_.stargates.begin(), world_.stargates.end(), [](const Stargate& g) {
-                return g.state == GateState::Idle || g.state == GateState::Closing;
-            });
-            if (!free) {
-                world_.Notify(*ps, world_.stargates.empty() ? "Auf der Mondkarte steht kein Stargate." : "Gerade ist kein Stargate frei.", bad);
-                break;
+            if (!team->target.empty()) {
+                // Einsatzkarte: Platz für eine weitere Instanz? (StartInstance prüft es nach der Anwahl noch einmal)
+                const ServerMap* sm = accounts_.FindMap(team->target);
+                if (!sm || !sm->released) {
+                    ForgetTarget(team->target);
+                    world_.Notify(*ps, "Diese Einsatzkarte ist nicht mehr freigegeben.", bad);
+                    break;
+                }
+                if (static_cast<int>(instances_.size()) >= settings_.maxInstances) {
+                    world_.Notify(*ps, Fmt("Gerade sind alle Einsatzkarten belegt (höchstens %d Teams gleichzeitig).", settings_.maxInstances), bad);
+                    break;
+                }
+            } else {
+                world_.BuildStargates();
+                const bool free = std::any_of(world_.stargates.begin(), world_.stargates.end(), [](const Stargate& g) {
+                    return g.state == GateState::Idle || g.state == GateState::Closing;
+                });
+                if (!free) {
+                    world_.Notify(*ps, world_.stargates.empty() ? "Auf der Mondkarte steht kein Stargate." : "Gerade ist kein Stargate frei.", bad);
+                    break;
+                }
             }
             team->dialT = 0.0f;
             teamsChanged_ = true;
             break;
         }
         case net::TeamActionType::Abort:
-            if (ps->role == PlayerRole::Trooper && ps->trooperId >= 0) {
+            if (Instance* in = InstanceOf(ps->id)) {
+                // Einsatzkarte: die Figur steht in der Instanz; zurück kommt der Spieler mit UpdateInstances
+                if (PlayerState* ip = in->world->FindPlayer(ps->id); ip && ip->trooperId >= 0) in->world->EndSgMission(*ip, false);
+                teamsChanged_ = true;
+            } else if (ps->role == PlayerRole::Trooper && ps->trooperId >= 0) {
                 world_.EndSgMission(*ps, false);
                 teamsChanged_ = true;
             }
             break;
+        case net::TeamActionType::Target: {
+            if (!inCommand) break;
+            if (!team) team = create();
+            if (team->members.front() != ps->id || TeamBusy(*team)) break;
+            std::string want;   // "" = Mondkarte
+            if (m.param > 0) {
+                const std::vector<const ServerMap*> maps = MissionMaps();
+                if (static_cast<size_t>(m.param) > maps.size()) break;
+                want = maps[m.param - 1]->file;
+            }
+            if (want != team->target) {
+                team->target = want;
+                team->ready.clear();   // neues Ziel: alle melden sich neu bereit
+            }
+            teamsChanged_ = true;
+            break;
+        }
     }
 }
 
 // Ist die Anwahl fertig (so lange wie im Einzelspieler: GATE_DIAL und kurz
 // zum Tor gehen), kommt der Gründer durch ein zufälliges freies Stargate, die
-// anderen folgen ihm nacheinander (World::UpdateStargates).
+// anderen folgen ihm nacheinander (World::UpdateStargates). Ist eine
+// Einsatzkarte das Ziel, geschieht das in einer eigenen Welt (StartInstance).
 void GameServer::UpdateTeams() {
     for (SgTeam& t : teams_) {
         if (t.dialT < 0.0f) continue;
@@ -1573,6 +1616,10 @@ void GameServer::UpdateTeams() {
         t.dialT = -1.0f;
         t.ready.clear();
         teamsChanged_ = true;
+        if (!t.target.empty()) {
+            StartInstance(t);
+            continue;
+        }
         PlayerState* lead = world_.FindPlayer(t.members.front());
         if (!lead) continue;
         lead->sgFollowers.assign(t.members.begin() + 1, t.members.end());
@@ -1586,11 +1633,25 @@ void GameServer::UpdateTeams() {
 
 void GameServer::SendTeams() {
     const bool periodic = tick_ % net::TICK_RATE == 0;
+    std::vector<uint8_t> maps;   // freigegebene Einsatzkarten, erst bei Bedarf gebaut
     for (auto& up : clients_) {
         Client& c = *up;
         if (c.closing || c.role != Role::Player || c.isBot) continue;
         PlayerState* ps = world_.FindPlayer(c.playerId);
         if (!ps || ps->role != PlayerRole::Trooper) continue;
+        // Ziele im Command Center (mit Vorschau): vor dem ersten Teams und nach jeder Änderung
+        if (c.sentMissionMaps != missionMapsRev_) {
+            if (maps.empty()) {
+                net::MissionMapsMsg mm;
+                for (const ServerMap* sm : MissionMaps()) {
+                    mm.maps.push_back(sm->map);
+                    mm.maps.back().author.clear();
+                }
+                maps = net::Encode(mm);
+            }
+            Send(c, maps, true);
+            c.sentMissionMaps = missionMapsRev_;
+        }
         if (!periodic && !teamsChanged_ && ps->sgEnded == 0) continue;
         Send(c, net::Encode(MakeTeams(*ps)), true);
         ps->sgEnded = 0;   // das Ergebnis ist unterwegs (zuverlässig)
@@ -1613,7 +1674,7 @@ GameServer::SgTeam* GameServer::FindTeam(int number) {
 bool GameServer::TeamBusy(const SgTeam& t) const {
     if (t.dialT >= 0.0f) return true;
     for (int id : t.members)
-        if (const PlayerState* o = world_.FindPlayer(id); o && o->trooperId >= 0) return true;
+        if (const PlayerState* o = world_.FindPlayer(id); (o && o->trooperId >= 0) || InstanceOf(id)) return true;
     return false;
 }
 
@@ -1632,6 +1693,220 @@ void GameServer::LeaveTeam(int playerId) {
         break;
     }
     if (PlayerState* ps = world_.FindPlayer(playerId)) ps->sgTeam = 0;
+}
+
+// ===========================================================================
+// Einsatzkarten (Instanzen)
+// ===========================================================================
+std::vector<const ServerMap*> GameServer::MissionMaps() const {
+    std::vector<const ServerMap*> out;
+    for (const ServerMap& sm : accounts_.Maps())
+        if (sm.released && sm.map.kind == MapKind::Mission && out.size() < static_cast<size_t>(net::MAX_MISSION_MAPS))
+            out.push_back(&sm);
+    return out;
+}
+
+void GameServer::ForgetTarget(const std::string& file) {
+    for (SgTeam& t : teams_)
+        if (t.target == file) {
+            t.target.clear();
+            t.ready.clear();
+            teamsChanged_ = true;
+        }
+}
+
+// Nach der Anwahl: eigene Welt aus der Einsatzkarte (World::NewInstance, ohne
+// den Platzhalter-Spieler des Einzelspielers). Jedes Mitglied bekommt dort
+// eine Kopie (gleiche ID, Rolle SG-Team, Schiff nur als versteckter
+// Platzhalter, sein Scoreboard). Der Gründer kommt zuerst durch das Tor der
+// Karte, die anderen folgen (sgFollowers). Danach bauen die Clients ihre
+// Spiegelwelt mit der Karte auf (InstanceStart).
+bool GameServer::StartInstance(SgTeam& t) {
+    auto notifyAll = [&](const std::string& text) {
+        for (int id : t.members)
+            if (PlayerState* o = world_.FindPlayer(id)) world_.Notify(*o, text, Color{255, 170, 120, 255});
+    };
+    const ServerMap* sm = accounts_.FindMap(t.target);
+    if (!sm || !sm->released || sm->map.kind != MapKind::Mission) {
+        notifyAll("Diese Einsatzkarte ist nicht mehr freigegeben.");
+        ForgetTarget(t.target);
+        return false;
+    }
+    if (static_cast<int>(instances_.size()) >= settings_.maxInstances) {
+        notifyAll(Fmt("Gerade sind alle Einsatzkarten belegt (höchstens %d Teams gleichzeitig).", settings_.maxInstances));
+        return false;
+    }
+    Instance in;
+    in.team = t.number;
+    in.file = sm->file;
+    in.name = sm->map.name;
+    in.world = std::make_unique<World>();
+    World& w = *in.world;
+    const uint32_t seed = RandomSeed();
+    w.NewInstance(sm->map, seed);
+    w.isServer = true;
+    w.settings = settings_;
+    w.players.clear();   // Platzhalter des Einzelspielers
+    w.ships.clear();
+    for (int id : t.members) {
+        const PlayerState* mp = world_.FindPlayer(id);
+        if (!mp) continue;
+        PlayerState& ip = w.AddPlayer(id, mp->name);
+        w.SetRole(ip, PlayerRole::Trooper);   // versteckt das Schiff
+        ip.sgTeam = t.number;
+        ip.sgLog = mp->sgLog;                 // die Einsätze zählen weiter
+    }
+    if (w.players.empty()) return false;
+    PlayerState& lead = w.players.front();
+    for (size_t i = 1; i < w.players.size(); ++i) lead.sgFollowers.push_back(w.players[i].id);
+    if (!w.StartSgMission(lead, 0)) {
+        notifyAll("Auf dieser Einsatzkarte steht kein Stargate.");
+        return false;
+    }
+    instances_.push_back(std::move(in));
+
+    // Die Mitglieder bauen ihre Spiegelwelt mit der Karte auf. tick_ ist noch
+    // der Schritt, dessen Snapshots zur Mondkarte gehören (UpdateTeams läuft vor ++tick_).
+    net::InstanceStartMsg m;
+    m.tick = static_cast<uint32_t>(tick_);
+    m.seed = seed;
+    m.map = sm->map;
+    m.map.author.clear();
+    const std::vector<uint8_t> bytes = net::Encode(m);
+    for (auto& up : clients_) {
+        Client& c = *up;
+        if (c.role != Role::Player || c.closing || !w.FindPlayer(c.playerId)) continue;
+        Send(c, bytes, true);
+        SendDepositsNow(c);   // gelbe Kristalle der Einsatzkarte (gleicher Kanal: nach InstanceStart)
+    }
+    Log(Fmt("SG%d auf der Einsatzkarte \"%s\" (%d Spieler, %d von %d Einsatzkarten belegt)", t.number, sm->map.name.c_str(),
+            static_cast<int>(w.players.size()), static_cast<int>(instances_.size()), settings_.maxInstances));
+    teamsChanged_ = true;
+    return true;
+}
+
+// Wer keine Figur mehr hat und auch nicht mehr durch das Tor nachkommt, ist
+// zurück (oder gescheitert, oder hat abgebrochen).
+void GameServer::UpdateInstances() {
+    for (size_t i = 0; i < instances_.size();) {
+        Instance& in = instances_[i];
+        World& w = *in.world;
+        w.Update(net::TICK_DT);
+        DistributeInstanceEvents(in);
+        std::vector<int> done;
+        for (const PlayerState& ip : w.players) {
+            if (ip.trooperId >= 0) continue;
+            const bool coming = std::any_of(w.players.begin(), w.players.end(), [&](const PlayerState& o) {
+                return std::find(o.sgFollowers.begin(), o.sgFollowers.end(), ip.id) != o.sgFollowers.end();
+            });
+            if (!coming) done.push_back(ip.id);
+        }
+        for (int id : done) LeaveInstance(in, id, true);
+        if (!w.players.empty()) {
+            ++i;
+            continue;
+        }
+        Log(Fmt("SG%d hat die Einsatzkarte \"%s\" verlassen", in.team, in.name.c_str()));
+        instances_.erase(instances_.begin() + static_cast<long>(i));
+        teamsChanged_ = true;
+    }
+}
+
+// Wie DistributeWorldEvents, aber nur für die Spieler dieser Instanz: Töne
+// und Effekte in Hörweite der Figur, Meldungen an den eigenen Spieler.
+void GameServer::DistributeInstanceEvents(Instance& in) {
+    World& w = *in.world;
+    struct View {
+        Client* c;
+        const PlayerState* ps;
+        Vector3 center;
+    };
+    std::vector<View> views;
+    for (auto& up : clients_) {
+        Client& c = *up;
+        if (c.closing || c.role != Role::Player) continue;
+        const PlayerState* ip = w.FindPlayer(c.playerId);
+        if (!ip) continue;
+        const Trooper* t = w.FindTrooper(ip->trooperId);
+        // noch nicht durch das Tor: dort hören und sehen
+        if (t) c.lastPos = t->pos;
+        else if (!w.stargates.empty()) c.lastPos = w.stargates.front().pos;
+        views.push_back({&c, ip, c.lastPos});
+    }
+    for (const SoundEvent& e : w.sounds) {
+        const net::NetEvent ev = SoundToNet(e);
+        for (View& v : views)
+            if (e.forPlayer >= 0 ? e.forPlayer == v.ps->id : Dist2D(e.pos, v.center) <= net::AOI_EVENTS) v.c->events.push_back(ev);
+    }
+    for (const FxEvent& f : w.fx) {
+        net::NetEvent ev;
+        ev.kind = f.type == FxEvent::Type::Explosion ? net::EventKind::Explosion : net::EventKind::Sparks;
+        ev.x = f.pos.x;
+        ev.y = f.pos.y;
+        ev.z = f.pos.z;
+        ev.size = f.size;
+        ev.color = f.color;
+        ev.count = static_cast<uint8_t>(std::clamp(f.count, 0, 255));
+        for (View& v : views)
+            if (Dist2D(f.pos, v.center) <= net::AOI_EVENTS) v.c->events.push_back(ev);
+    }
+    for (View& v : views)
+        for (const Notice& n : v.ps->outbox) {
+            net::NetEvent ev;
+            ev.kind = net::EventKind::Notice;
+            ev.text = n.text;
+            ev.color = n.color;
+            v.c->events.push_back(ev);
+        }
+    for (PlayerState& ps : w.players) ps.outbox.clear();
+    w.sounds.clear();
+    w.fx.clear();
+    w.goals.clear();
+}
+
+void GameServer::LeaveInstance(Instance& in, int playerId, bool notify) {
+    World& w = *in.world;
+    const PlayerState* ip = w.FindPlayer(playerId);
+    if (!ip) return;
+    if (PlayerState* mp = world_.FindPlayer(playerId)) {
+        mp->sgLog = ip->sgLog;
+        mp->sgEnded = ip->sgEnded;   // das Command Center zeigt das Ergebnis (SendTeams)
+    }
+    w.RemovePlayer(playerId);   // eine noch stehende Figur verschwindet, das Tor geht an das Team
+    teamsChanged_ = true;
+    if (!notify) return;
+    for (auto& up : clients_) {
+        Client& c = *up;
+        if (c.role != Role::Player || c.closing || c.playerId != playerId) continue;
+        net::InstanceEndMsg m;
+        m.tick = static_cast<uint32_t>(tick_);
+        Send(c, net::Encode(m), true);
+        SendDepositsNow(c);   // wieder die Lagerstätten der Mondkarte
+    }
+}
+
+void GameServer::EndAllInstances() {
+    for (Instance& in : instances_)
+        while (!in.world->players.empty()) LeaveInstance(in, in.world->players.front().id, false);
+    if (!instances_.empty()) teamsChanged_ = true;
+    instances_.clear();
+}
+
+GameServer::Instance* GameServer::InstanceOf(int playerId) {
+    for (Instance& in : instances_)
+        if (in.world->FindPlayer(playerId)) return &in;
+    return nullptr;
+}
+
+const GameServer::Instance* GameServer::InstanceOf(int playerId) const {
+    for (const Instance& in : instances_)
+        if (in.world->FindPlayer(playerId)) return &in;
+    return nullptr;
+}
+
+const World& GameServer::WorldOf(int playerId) const {
+    const Instance* in = playerId >= 0 ? InstanceOf(playerId) : nullptr;
+    return in ? *in->world : world_;
 }
 
 void GameServer::HandleLeave(Client& c) {
@@ -1674,6 +1949,7 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
     // Rollenwahl (TeamAction Role): bis dahin wartet das neue Schiff versteckt.
     // Ein übernommenes Schiff (bzw. die Figur) läuft gleich weiter, Bots fliegen.
     c.roleChosen = resumed || c.isBot;
+    c.sentMissionMaps = -1;
     if (!c.roleChosen)
         if (Ship* s = world_.PlayerShip(ps)) s->hidden = true;
 
@@ -1730,6 +2006,10 @@ bool GameServer::CrashOnLogout(PlayerState& ps) {
 void GameServer::LogoutPlayer(Client& c, const char* reason, bool saveNow, bool allowGrace) {
     bool crashed = false;
     bool lingers = false;
+    // Einsatzkarte: Die Figur verschwindet sofort (dort ist nur das eigene
+    // Team, die Frist gilt für die gemeinsame Mondkarte); in world_ ist der
+    // Spieler dann im Command Center und geht ebenfalls sofort.
+    if (Instance* in = InstanceOf(c.playerId)) LeaveInstance(*in, c.playerId, false);
     if (PlayerState* ps = world_.FindPlayer(c.playerId)) {
         crashed = CrashOnLogout(*ps);
         StoreProgress(c);
@@ -1848,10 +2128,11 @@ void GameServer::SendWelcome(Client& c) {
 void GameServer::SendDepositsNow(Client& c) {
     const std::vector<uint8_t> bytes = net::Encode(MakeDeposits(c));
     Send(c, bytes, true);
-    const PlayerState* ps = c.role == Role::Player ? world_.FindPlayer(c.playerId) : nullptr;
+    const World& w = WorldOf(c.role == Role::Player ? c.playerId : -1);
+    const PlayerState* ps = c.role == Role::Player ? w.FindPlayer(c.playerId) : nullptr;
     c.depositsSent = true;
     c.sentDepositHash = Fnv1a(bytes);
-    c.sentDepositRevision = world_.depositRevision;
+    c.sentDepositRevision = w.depositRevision;
     c.sentRevealRevision = ps ? ps->revealRevision : 0;
     c.lastDepositsTick = tick_;
 }
@@ -1886,10 +2167,15 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
     const bool spectator = c.role == Role::Spectator;
     const PlayerState* ps = spectator ? nullptr : world_.FindPlayer(c.playerId);
     const Ship* own = ps ? world_.PlayerShip(*ps) : nullptr;
+    // Einsatzkarte: Umgebung und Figur kommen aus der Welt der Instanz (fps =
+    // die Kopie des Spielers dort), Konto und Schiff weiter aus world_
+    const World& w = WorldOf(ps ? ps->id : -1);
+    const PlayerState* fps = ps && &w != &world_ ? w.FindPlayer(ps->id) : ps;
     // SG-Team im Einsatz: Sichtweite um die Figur (das Schiff wartet versteckt)
-    const Trooper* foot = ps && ps->role == PlayerRole::Trooper ? world_.FindTrooper(ps->trooperId) : nullptr;
+    const Trooper* foot = fps && fps->role == PlayerRole::Trooper ? w.FindTrooper(fps->trooperId) : nullptr;
     const Vector3 shipPos = own ? own->pos : c.lastPos;
-    const Vector3 center = foot ? foot->pos : shipPos;
+    Vector3 center = foot ? foot->pos : shipPos;
+    if (!foot && w.instance && !w.stargates.empty()) center = w.stargates.front().pos;   // kommt gleich durch das Tor
 
     // --- eigener Zustand (genau, für die Vorhersage im Client) ---
     if (ps) {
@@ -1983,13 +2269,13 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
             t.ammo = ClampU16(foot->ammo);
             t.reloadT = foot->reloadT;
             t.fireCd = foot->fireCd;
-            t.samples = static_cast<uint8_t>(std::clamp(world_.TeamSamples(*ps), 0, 255));
+            t.samples = static_cast<uint8_t>(std::clamp(w.TeamSamples(*fps), 0, 255));
             t.sampleId = foot->sampleId;
             t.sampleT = foot->sampleT;
             t.downT = foot->downT;
             t.age = foot->age;
-            t.sgTime = ps->sgTime;
-            t.sgPirates = ClampU16(ps->sgPirates);
+            t.sgTime = fps->sgTime;
+            t.sgPirates = ClampU16(fps->sgPirates);
         }
     }
 
@@ -1997,8 +2283,8 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
     // Spieler: nur im Umkreis AOI_SHIPS (spart Daten und verrät nicht, wo
     // alle anderen sind). Zuschauer: die ganze Karte.
     std::vector<Candidate> cand;
-    for (size_t i = 0; i < world_.ships.size(); ++i) {
-        const Ship& s = world_.ships[i];
+    for (size_t i = 0; i < w.ships.size(); ++i) {
+        const Ship& s = w.ships[i];
         if (s.dead || s.hidden) continue;           // versteckt = angedockter Händler
         if (own && s.id == own->id) continue;       // eigenes Schiff steht in "me"
         const float d = Dist2D(s.pos, center);
@@ -2008,7 +2294,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
     KeepNearest(cand, spectator ? MAX_SPECTATOR_LIST : MAX_SNAP_SHIPS);
     m.ships.reserve(cand.size());
     for (const Candidate& k : cand) {
-        const Ship& s = world_.ships[k.index];
+        const Ship& s = w.ships[k.index];
         net::SnapShip ss;
         ss.id = static_cast<uint32_t>(s.id);
         ss.kind = static_cast<uint8_t>(s.kind);
@@ -2035,14 +2321,14 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
     // --- Geschosse (nur Spieler; Zuschauer sehen sie aus der Höhe kaum) ---
     if (!spectator) {
         cand.clear();
-        for (size_t i = 0; i < world_.bullets.size(); ++i) {
-            const float d = Dist2D(world_.bullets[i].pos, center);
+        for (size_t i = 0; i < w.bullets.size(); ++i) {
+            const float d = Dist2D(w.bullets[i].pos, center);
             if (d <= net::AOI_BULLETS) cand.push_back({d, i});
         }
         KeepNearest(cand, MAX_SNAP_BULLETS);
         m.bullets.reserve(cand.size());
         for (const Candidate& k : cand) {
-            const Bullet& b = world_.bullets[k.index];
+            const Bullet& b = w.bullets[k.index];
             net::SnapBullet sb;
             sb.x = b.pos.x;
             sb.y = b.pos.y;
@@ -2064,24 +2350,24 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
 
     // --- Wracks ---
     cand.clear();
-    for (size_t i = 0; i < world_.wrecks.size(); ++i) {
-        const float d = Dist2D(world_.wrecks[i].pos, center);
+    for (size_t i = 0; i < w.wrecks.size(); ++i) {
+        const float d = Dist2D(w.wrecks[i].pos, center);
         if (spectator || d <= net::AOI_SHIPS) cand.push_back({d, i});
     }
     KeepNearest(cand, spectator ? MAX_SPECTATOR_LIST : MAX_SNAP_WRECKS);
     m.wrecks.reserve(cand.size());
     for (const Candidate& k : cand) {
-        const Wreck& w = world_.wrecks[k.index];
+        const Wreck& wr = w.wrecks[k.index];
         net::SnapWreck sw;
-        sw.id = static_cast<uint32_t>(w.id);
-        sw.x = w.pos.x;
-        sw.z = w.pos.z;
-        sw.yaw = w.yaw;
-        sw.tilt = w.tilt;
-        sw.variant = net::ShipVariant(models_, w.model);
-        sw.amount = ClampU16(w.amount);
-        sw.initial = ClampU16(w.initial);
-        sw.age = w.age;
+        sw.id = static_cast<uint32_t>(wr.id);
+        sw.x = wr.pos.x;
+        sw.z = wr.pos.z;
+        sw.yaw = wr.yaw;
+        sw.tilt = wr.tilt;
+        sw.variant = net::ShipVariant(models_, wr.model);
+        sw.amount = ClampU16(wr.amount);
+        sw.initial = ClampU16(wr.initial);
+        sw.age = wr.age;
         m.wrecks.push_back(sw);
     }
 
@@ -2089,8 +2375,8 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
     // eigenen Teams immer (Minikarte, "steht noch jemand?") ---
     if (!spectator) {
         cand.clear();
-        for (size_t i = 0; i < world_.troopers.size(); ++i) {
-            const Trooper& t = world_.troopers[i];
+        for (size_t i = 0; i < w.troopers.size(); ++i) {
+            const Trooper& t = w.troopers[i];
             if (foot && t.id == foot->id) continue;
             const bool mate = ps && t.playerId >= 0 && t.team != 0 && t.team == ps->sgTeam;
             const float d = Dist2D(t.pos, center);
@@ -2099,7 +2385,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         KeepNearest(cand, MAX_SNAP_TROOPERS);
         m.troopers.reserve(cand.size());
         for (const Candidate& k : cand) {
-            const Trooper& t = world_.troopers[k.index];
+            const Trooper& t = w.troopers[k.index];
             net::SnapTrooper st;
             st.id = static_cast<uint32_t>(t.id);
             st.playerId = static_cast<int16_t>(std::clamp(t.playerId, -1, 32767));
@@ -2119,8 +2405,8 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
             m.troopers.push_back(st);
         }
         // Stargates, die gerade benutzt werden (alle, es sind nur wenige)
-        for (size_t i = 0; i < world_.stargates.size() && i < 255; ++i) {
-            const Stargate& g = world_.stargates[i];
+        for (size_t i = 0; i < w.stargates.size() && i < 255; ++i) {
+            const Stargate& g = w.stargates[i];
             if (g.state == GateState::Idle) continue;
             net::SnapGate sg;
             sg.index = static_cast<uint8_t>(i);
@@ -2142,9 +2428,11 @@ net::DepositsMsg GameServer::MakeDeposits(const Client& c) const {
     net::DepositsMsg m;
     const PlayerState* ps = c.role == Role::Player ? world_.FindPlayer(c.playerId) : nullptr;
     if (!ps && c.role != Role::Spectator) return m;
-    for (const Deposit& d : world_.deposits) {
+    // Einsatzkarte: alle Kristalle, auch die beprobten (grün nur als Rückmeldung, kein Abbau)
+    const World& w = WorldOf(ps ? ps->id : -1);
+    for (const Deposit& d : w.deposits) {
         if (d.amount <= 0) continue;
-        if (ps && d.sample == Sample::Green && !world_.RevealedFor(d, *ps)) continue;
+        if (ps && !w.instance && d.sample == Sample::Green && !w.RevealedFor(d, *ps)) continue;
         net::NetDeposit nd;
         nd.id = static_cast<uint32_t>(d.id);
         nd.x = d.pos.x;
@@ -2212,10 +2500,13 @@ net::HighscoresMsg GameServer::MakeHighscores() const {
 net::TeamsMsg GameServer::MakeTeams(const PlayerState& ps) const {
     net::TeamsMsg m;
     m.moonGate = !world_.stargates.empty();
+    const std::vector<const ServerMap*> maps = MissionMaps();
     for (const SgTeam& t : teams_) {
         net::TeamEntry e;
         e.number = static_cast<uint8_t>(std::clamp(t.number, 0, 255));
         e.state = t.dialT >= 0.0f ? 1 : TeamBusy(t) ? 2 : 0;
+        for (size_t i = 0; i < maps.size() && !t.target.empty(); ++i)
+            if (maps[i]->file == t.target) e.target = static_cast<uint8_t>(i + 1);
         e.dialT = std::max(0.0f, t.dialT);
         for (int id : t.members) {
             const PlayerState* o = world_.FindPlayer(id);
@@ -2224,7 +2515,7 @@ net::TeamsMsg GameServer::MakeTeams(const PlayerState& ps) const {
             mb.playerId = id;
             mb.name = o->name;
             mb.ready = std::find(t.ready.begin(), t.ready.end(), id) != t.ready.end();
-            mb.out = o->trooperId >= 0;
+            mb.out = o->trooperId >= 0 || InstanceOf(id);
             e.members.push_back(mb);
         }
         m.teams.push_back(e);
@@ -2454,9 +2745,9 @@ void GameServer::ApplySettings(const GameSettings& s) {
     const GameSettings old = settings_;
     settings_ = s;
     const bool rebuild = NeedsWorldRebuild(old, s);
-    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben, %d Missionen, neue Konten %s%s",
+    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben, %d Missionen, %d Einsatzkarten, neue Konten %s%s",
             s.serverName.c_str(), DifficultyName(s.difficulty), s.enemyShips, s.tradeStations, s.shipyards,
-            MoonColorName(s.moon), s.maxPlayers, s.lives, s.missions, s.allowRegistration ? "erlaubt" : "nicht erlaubt",
+            MoonColorName(s.moon), s.maxPlayers, s.lives, s.missions, s.maxInstances, s.allowRegistration ? "erlaubt" : "nicht erlaubt",
             rebuild ? " – Karte wird neu aufgebaut" : ""));
     if (rebuild) {
         RebuildWorld();
@@ -2504,15 +2795,21 @@ void GameServer::ApplyMapCommands() {
                 }
                 const std::string name = sm ? sm->map.name : std::string("Standardkarte");
                 const bool wasActive = cmd.arg == accounts_.ActiveMap();
-                // Einsatzkarten sind keine Mondkarten (ihre Freigabe für die SG-Teams kommt später)
+                // Einsatzkarten sind keine Mondkarten (sie werden für die SG-Teams freigegeben)
                 if (cmd.kind == MapCommand::Kind::Activate && sm && sm->map.kind == MapKind::Mission) {
                     MapNotice("\"" + name + "\" ist eine Einsatzkarte und kann nicht die Mondkarte sein.", true);
                     break;
                 }
                 if (cmd.kind == MapCommand::Kind::Delete) {
                     if (!sm) break;   // die Standardkarte lässt sich nicht löschen
+                    const bool mission = sm->map.kind == MapKind::Mission;
                     accounts_.RemoveMap(cmd.arg);
                     MapNotice("Karte \"" + name + "\" gelöscht." + (wasActive ? " Es gilt wieder die Standardkarte." : ""));
+                    if (mission) {   // nicht mehr im Command Center (laufende Einsätze dort gehen zu Ende)
+                        ForgetTarget(cmd.arg);
+                        ++missionMapsRev_;
+                        accounts_.SaveServerData();
+                    }
                     if (!wasActive) break;
                     accounts_.SetActiveMap(std::string());
                 } else {
@@ -2524,6 +2821,27 @@ void GameServer::ApplyMapCommands() {
                 UpdateMapData();
                 SendToAllInGame(mapData_);
                 ApplyMapToWorld();
+                break;
+            }
+            case MapCommand::Kind::Release:
+            case MapCommand::Kind::Withhold: {
+                // Einsatzkarte für die SG-Teams freigeben bzw. sperren. Laufende
+                // Einsätze dort gehen zu Ende; neu anwählen lässt sie sich nicht mehr.
+                const ServerMap* sm = accounts_.FindMap(cmd.arg);
+                if (!sm || sm->map.kind != MapKind::Mission) {
+                    MapNotice("Diese Einsatzkarte gibt es nicht mehr.", true);
+                    break;
+                }
+                const bool release = cmd.kind == MapCommand::Kind::Release;
+                const std::string name = sm->map.name;
+                if (sm->released == release) break;
+                accounts_.SetMapReleased(cmd.arg, release);
+                accounts_.SaveServerData();
+                if (!release) ForgetTarget(cmd.arg);
+                ++missionMapsRev_;
+                teamsChanged_ = true;
+                MapNotice("Einsatzkarte \"" + name + "\" ist " +
+                          (release ? "für die SG-Teams freigegeben." : "gesperrt. Laufende Einsätze dort gehen noch zu Ende."));
                 break;
             }
             case MapCommand::Kind::Allow:
@@ -2800,6 +3118,7 @@ void GameServer::RemoveSurplusPirates() {
 // Alle Spieler behalten ihren Fortschritt und starten an einer Handelsstation.
 void GameServer::RebuildWorld() {
     UpdateDeparting(true);   // Schiffe abgemeldeter Spieler gehören zur alten Welt
+    EndAllInstances();       // Einsätze auf Einsatzkarten enden ohne Wertung (das neue Welcome baut alles neu auf)
     struct Keep {
         Client* c;
         PlayerProgress progress;
@@ -2982,7 +3301,8 @@ void GameServer::PublishStatus() {
     st.defaults = config_.defaults;
     st.shipModels = ShipModelNames();   // Auswahl im Bereich "Schiffe" (der Web-Thread kennt Models.hpp nicht)
     for (const ServerMap& sm : accounts_.Maps())
-        st.maps.push_back({sm.file, sm.map.name, sm.map.author, static_cast<int>(sm.map.pieces.size()), sm.loops});
+        st.maps.push_back({sm.file, sm.map.name, sm.map.author, static_cast<int>(sm.map.pieces.size()), sm.loops,
+                           sm.map.kind == MapKind::Mission, sm.released});
     st.activeMap = accounts_.ActiveMap();
     st.mapUploaders = accounts_.MapUploaders();
     st.mapNotice = mapNotice_;
