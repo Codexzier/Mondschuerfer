@@ -757,6 +757,194 @@ void DrawGateWormhole(Vector3 pos, float yaw, float scale, const GateLook& look,
     }
 }
 
+// ---------------------------------------------------------------------------
+// Himmel zu Fuß (Ego-Ansicht)
+// ---------------------------------------------------------------------------
+// Aus dem Schiff schaut die Kamera schräg auf den Boden, den Himmel sieht man
+// nur zu Fuß. Er wird vor allem anderen gezeichnet und hängt an der Kamera
+// (er wandert mit, wirkt also unendlich weit weg):
+//   - Sternenhimmel (Mondkarte, Einsatzkarten mit Nachthimmel): kSkyStars
+//     Sterne auf der oberen Halbkugel, kleine Quadrate zur Kamera gedreht,
+//     die leicht funkeln. Dazu im Schnitt alle kCometSlot Sekunden ein Komet:
+//     ein heller Kopf, der in 2,5 bis 4 s ein Stück über den Himmel zieht,
+//     mit einem Schweif, der nach hinten dünner und blasser wird. Wann, wo
+//     und wohin, folgt allein aus der Zeit (Hash der Nummer des Zeitfensters),
+//     es wird nichts gespeichert.
+//   - Trägerschiffe (alle Karten): zwei große Schiffe (carrier/carrier-a, -b)
+//     gehen am Horizont auf, ziehen langsam über den Himmel, gehen gegenüber
+//     unter und kommen nach einer Weile wieder. Ohne Dunst und Nebel, damit
+//     sie nicht in der Himmelsfarbe verschwinden.
+namespace {
+
+constexpr int kSkyStars = 1600;
+constexpr float kStarDist = 800.0f;    // Abstand der Sterne zur Kamera (ferne Clip-Ebene zu Fuß: 1000 m)
+constexpr float kCometDist = 760.0f;   // Kometen davor
+constexpr float kCometSlot = 16.0f;    // je Zeitfenster höchstens ein Komet
+
+uint32_t SkyHash(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+float SkyRand(uint32_t& s) {
+    s = SkyHash(s + 0x9e3779b9u);
+    return static_cast<float>(s & 0xffffff) / static_cast<float>(0xffffff);
+}
+
+struct SkyStar {
+    Vector3 dir;     // Richtung (Länge 1)
+    float size;      // halbe Kantenlänge in Metern bei kStarDist
+    float phase;     // Funkeln
+    Color color;
+};
+
+const std::vector<SkyStar>& SkyStars() {
+    static std::vector<SkyStar> stars;
+    if (!stars.empty()) return stars;
+    uint32_t s = 12345u;
+    stars.reserve(kSkyStars);
+    for (int i = 0; i < kSkyStars; ++i) {
+        // gleichmäßig auf der Kugel: Höhe y gleichverteilt, Winkel gleichverteilt
+        const float y = 0.02f + 0.98f * SkyRand(s), a = 2.0f * PI * SkyRand(s);
+        const float r = sqrtf(1.0f - y * y);
+        const float big = SkyRand(s);
+        SkyStar st;
+        st.dir = {r * cosf(a), y, r * sinf(a)};
+        st.size = big > 0.97f ? 2.4f : big > 0.85f ? 1.6f : 1.0f;
+        st.phase = SkyRand(s) * 6.28f;
+        const float tint = SkyRand(s);
+        const unsigned char b = static_cast<unsigned char>(150 + 105 * SkyRand(s));
+        st.color = tint < 0.15f ? Color{static_cast<unsigned char>(b * 0.8f), static_cast<unsigned char>(b * 0.88f), b, 255}   // bläulich
+                   : tint < 0.27f ? Color{b, static_cast<unsigned char>(b * 0.9f), static_cast<unsigned char>(b * 0.7f), 255}  // gelblich
+                                  : Color{b, b, b, 255};
+        stars.push_back(st);
+    }
+    return stars;
+}
+
+// Quadrat um c, zur Kamera gedreht (right/up der Kamera), halbe Kante h
+void SkyQuad(Vector3 c, Vector3 right, Vector3 up, float h, Color col) {
+    const Vector3 r = Vector3Scale(right, h), u = Vector3Scale(up, h);
+    rlColor4ub(col.r, col.g, col.b, col.a);
+    rlVertex3f(c.x - r.x - u.x, c.y - r.y - u.y, c.z - r.z - u.z);
+    rlVertex3f(c.x + r.x - u.x, c.y + r.y - u.y, c.z + r.z - u.z);
+    rlVertex3f(c.x + r.x + u.x, c.y + r.y + u.y, c.z + r.z + u.z);
+    rlVertex3f(c.x - r.x + u.x, c.y - r.y + u.y, c.z - r.z + u.z);
+}
+
+void DrawStarSky(const Camera3D& cam, float time) {
+    const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    const Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, cam.up));
+    const Vector3 up = Vector3CrossProduct(right, fwd);
+    BeginBlendMode(BLEND_ADDITIVE);
+    rlDisableDepthMask();
+    rlBegin(RL_QUADS);
+    for (const SkyStar& st : SkyStars()) {
+        if (Vector3DotProduct(st.dir, fwd) < 0.2f) continue;   // hinter der Kamera
+        const float twinkle = 0.75f + 0.25f * sinf(time * (1.3f + st.phase * 0.3f) + st.phase * 5.0f);
+        const float horizon = std::clamp((st.dir.y - 0.02f) / 0.12f, 0.0f, 1.0f);   // zum Horizont hin blasser
+        Color c = st.color;
+        c.a = static_cast<unsigned char>(255.0f * twinkle * (0.3f + 0.7f * horizon));
+        SkyQuad(Vector3Add(cam.position, Vector3Scale(st.dir, kStarDist)), right, up, st.size, c);
+    }
+    rlEnd();
+
+    // Kometen: Zeitfenster k hat einen Kometen, der bei k * kCometSlot + Versatz
+    // beginnt (ein Fenster davor kann noch nachleuchten)
+    const int slot = static_cast<int>(floorf(time / kCometSlot));
+    for (int k = slot - 1; k <= slot; ++k) {
+        uint32_t s = SkyHash(static_cast<uint32_t>(k) * 2654435761u + 77u);
+        const float start = k * kCometSlot + SkyRand(s) * (kCometSlot - 4.0f);
+        const float dur = 2.5f + 1.5f * SkyRand(s);
+        const float u = (time - start) / dur;
+        if (u < 0.0f || u > 1.0f) continue;
+        // Bahn: ein Stück eines Großkreises, Start 30–65° hoch, schräg abwärts
+        const float az = 2.0f * PI * SkyRand(s), el = (30.0f + 35.0f * SkyRand(s)) * DEG2RAD;
+        const Vector3 d0{cosf(el) * cosf(az), sinf(el), cosf(el) * sinf(az)};
+        const Vector3 east = Vector3Normalize(Vector3CrossProduct({0.0f, 1.0f, 0.0f}, d0));
+        const Vector3 north = Vector3CrossProduct(d0, east);
+        const float tilt = (SkyRand(s) < 0.5f ? -1.0f : 1.0f) * (0.4f + 0.5f * SkyRand(s));
+        const Vector3 move = Vector3Normalize(Vector3Add(Vector3Scale(east, cosf(tilt)), Vector3Scale(north, -fabsf(sinf(tilt)))));
+        const float span = (25.0f + 15.0f * SkyRand(s)) * DEG2RAD;
+        auto at = [&](float theta) {
+            return Vector3Add(cam.position, Vector3Scale(Vector3Normalize(Vector3Add(Vector3Scale(d0, cosf(theta)), Vector3Scale(move, sinf(theta)))), kCometDist));
+        };
+        const float fade = sinf(PI * u);   // ein- und ausblenden
+        const float head = span * u, tail = 9.0f * DEG2RAD;
+        // Schweif: Band aus 14 Stücken, zum Kopf hin breiter und heller
+        const int n = 14;
+        rlBegin(RL_QUADS);
+        for (int i = 0; i < n; ++i) {
+            const float a0 = head - tail * i / n, a1 = head - tail * (i + 1) / n;
+            const Vector3 p0 = at(a0), p1 = at(a1);
+            const Vector3 side = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(p1, p0), Vector3Subtract(p0, cam.position)));
+            const float w0 = 3.2f * (1.0f - static_cast<float>(i) / n), w1 = 3.2f * (1.0f - static_cast<float>(i + 1) / n);
+            const unsigned char al0 = static_cast<unsigned char>(200 * fade * (1.0f - static_cast<float>(i) / n));
+            const unsigned char al1 = static_cast<unsigned char>(200 * fade * (1.0f - static_cast<float>(i + 1) / n));
+            rlColor4ub(170, 210, 255, al0);
+            rlVertex3f(p0.x - side.x * w0, p0.y - side.y * w0, p0.z - side.z * w0);
+            rlColor4ub(170, 210, 255, al1);
+            rlVertex3f(p1.x - side.x * w1, p1.y - side.y * w1, p1.z - side.z * w1);
+            rlVertex3f(p1.x + side.x * w1, p1.y + side.y * w1, p1.z + side.z * w1);
+            rlColor4ub(170, 210, 255, al0);
+            rlVertex3f(p0.x + side.x * w0, p0.y + side.y * w0, p0.z + side.z * w0);
+        }
+        // Kopf: heller Kern mit Schein
+        const Vector3 hp = at(head);
+        SkyQuad(hp, right, up, 9.0f, Color{120, 170, 255, static_cast<unsigned char>(90 * fade)});
+        SkyQuad(hp, right, up, 3.5f, Color{235, 245, 255, static_cast<unsigned char>(255 * fade)});
+        rlEnd();
+    }
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+    EndBlendMode();
+}
+
+// Zwei Trägerschiffe ziehen auf einem Großkreis um die Kamera über den
+// Himmel: Sie gehen an einem Punkt des Horizonts auf (Richtung az), steigen
+// bis zur Höhe peak (Winkel über dem Horizont) und gehen gegenüber wieder
+// unter; danach sind sie eine Weile unter dem Horizont (der Boden verdeckt
+// sie) und kommen von vorn. Tempo in Grad je Sekunde, phase = Startwinkel.
+// Abstand kCarrierDist (innerhalb der Sichtweite drawRange steht dort nichts
+// mehr, und der Tiefenpuffer bleibt genau), Größe als Länge in Metern bei
+// diesem Abstand. Der Bauch zeigt zur Kamera, die Nase (Modell: +z) in
+// Flugrichtung.
+struct SkyCarrier {
+    const char* model;
+    float az, peak, speed, phase, length;
+};
+constexpr SkyCarrier kCarriers[] = {
+    {"carrier/carrier-a", 0.6f, 62.0f, 1.0f, 40.0f, 42.0f},
+    {"carrier/carrier-b", 2.5f, 38.0f, 0.8f, 230.0f, 52.0f},
+};
+constexpr float kCarrierDist = 160.0f;
+
+void DrawSkyCarriers(const Camera3D& cam, float time) {
+    for (const SkyCarrier& c : kCarriers) {
+        const float theta = (fmodf(time * c.speed + c.phase, 360.0f)) * DEG2RAD;
+        const Vector3 h{cosf(c.az), 0.0f, sinf(c.az)}, q{-sinf(c.az), 0.0f, cosf(c.az)};
+        const float e = c.peak * DEG2RAD;
+        const Vector3 p{q.x * cosf(e), sinf(e), q.z * cosf(e)};
+        const Vector3 dir = Vector3Add(Vector3Scale(h, cosf(theta)), Vector3Scale(p, sinf(theta)));
+        if (dir.y < -0.12f) continue;   // ganz unter dem Horizont
+        const Vector3 fwd = Vector3Add(Vector3Scale(h, -sinf(theta)), Vector3Scale(p, cosf(theta)));
+        const Vector3 up = dir, right = Vector3CrossProduct(up, fwd);
+        const Vector3 pos = Vector3Add(cam.position, Vector3Scale(dir, kCarrierDist));
+        const float k = c.length;   // Modell ist 1 Einheit lang
+        Matrix m = MatrixIdentity();
+        m.m0 = right.x * k; m.m1 = right.y * k; m.m2 = right.z * k;
+        m.m4 = up.x * k;    m.m5 = up.y * k;    m.m6 = up.z * k;
+        m.m8 = fwd.x * k;   m.m9 = fwd.y * k;   m.m10 = fwd.z * k;
+        m.m12 = pos.x;      m.m13 = pos.y;      m.m14 = pos.z;
+        g_assets.Draw(g_assets.Id(c.model), m);
+    }
+}
+
+} // namespace
+
 // Zeichnet die ganze Welt aus Sicht von cam. Muss zwischen BeginMode3D(cam)
 // und EndMode3D() aufgerufen werden (siehe Dateikopf). Ändert die Welt nicht
 // (const); Animationen ergeben sich aus world.time und den Animationswerten,
@@ -823,6 +1011,22 @@ void World::Draw(const Camera3D& cam) const {
             for (const auto& d : decos)
                 if (fx::InShadowArea(d.pos, d.scale * 0.6f)) g_assets.Draw(d.model, d.pos, d.yaw, d.scale);
         fx::EndShadowPass();
+    }
+
+    // --- Himmel (nur zu Fuß, siehe oben) ------------------------------------------
+    // Sternenhimmel auf der Mondkarte und auf Einsatzkarten mit Nachthimmel,
+    // Trägerschiffe überall; die Trägerschiffe ohne Dunst und Nebel.
+    const Trooper* foot = me.role == PlayerRole::Trooper ? FindTrooper(me.trooperId) : nullptr;
+    if (foot) {
+        if (!instance || mapSky == MapSky::Night) DrawStarSky(cam, time);
+        fx::SetFog(focus, 0.0f, time);
+        DrawSkyCarriers(cam, time);
+        if (instance) {
+            const SkyLook& sk = SkyOf(mapSky);
+            fx::SetHaze(focus, sk.haze, sk.near, sk.far, sk.k);
+        } else {
+            fx::SetFog(focus, sand, time);
+        }
     }
 
     // --- Boden --------------------------------------------------------------
