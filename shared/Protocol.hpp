@@ -29,13 +29,15 @@
 //   3b. Spieler: Client schickt Register (neues Konto) oder LoginStart,
 //       Server antwortet LoginChallenge, Client antwortet LoginProof
 //       -> Server antwortet Welcome oder Error.
-//   4. Im Spiel: Client schickt Input (30/s), DockAction, Chat (Nachricht)
-//      und ChatTyping (Chat-Eingabe offen/zu).
+//   4. Im Spiel: Client schickt Input (30/s), DockAction, Chat (Nachricht),
+//      ChatTyping (Chat-Eingabe offen/zu) und TeamAction (Rollenwahl,
+//      SG-Teams im Command Center).
 //      Server schickt Snapshot (15/s, Zuschauer 10/s), Events (bei Bedarf),
 //      Deposits (wenn sich die sichtbaren Lagerstätten ändern),
 //      Players (1/s), Highscores (bei Änderung), Settings (wenn der
 //      Betreiber Einstellungen ohne Neuaufbau der Welt ändert, z. B. Schiffe)
-//      und ChatLine (Chat-Nachricht eines Spielers, an alle Spieler).
+//      ChatLine (Chat-Nachricht eines Spielers, an alle Spieler) und Teams
+//      (SG-Teams, an Spieler in der Rolle SG-Team).
 //      Nach jedem Welcome und beim Kartenwechsel: MapData (aktive Karte).
 //   Karte hochladen (Karteneditor): wie 3b LoginStart -> LoginChallenge, dann
 //   MapUpload statt LoginProof -> Server antwortet MapUploadResult. Das meldet
@@ -66,7 +68,9 @@ namespace net {
 // Version 8: Chat (Chat, ChatTyping, ChatLine; SnapShip::chatting).
 // Version 9: Sperren über die Verwaltungsseite (ErrorCode Banned, Kicked, RegistrationClosed).
 // Version 10: Einsatzkarten (Karte mit Kartenart, Thema, Größe, Boden, Himmel; Höhe je Teil).
-constexpr uint16_t PROTOCOL_VERSION = 10;
+// Version 11: SG-Teams (TeamAction, Teams, Eingaben zu Fuß, SnapMe/SnapTrooper/SnapGate,
+//             Bodengeschosse, gelbe Kristalle, Welcome::lastRole, Rolle in PlayerEntry).
+constexpr uint16_t PROTOCOL_VERSION = 11;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -80,6 +84,7 @@ constexpr int MAX_HANGAR = 8;                    // höchstens so viele geparkte
 constexpr int MAX_MARKERS = 16;                  // höchstens so viele Missions-Markierungen in SnapMe
 constexpr float AOI_BULLETS = 75.0f;             // Sichtweite für Geschosse
 constexpr float AOI_EVENTS = 120.0f;             // Hörweite/Sichtweite für Ereignisse
+constexpr float AOI_TROOPERS = 110.0f;           // Sichtweite für Figuren zu Fuß (das eigene Team: immer)
 
 constexpr int CHANNEL_RELIABLE = 0;
 constexpr int CHANNEL_UNRELIABLE = 1;
@@ -110,6 +115,7 @@ enum class MsgType : uint8_t {
     MapUpload = 8,
     Chat = 9,
     ChatTyping = 10,
+    TeamAction = 11,
     // Server -> Client
     ServerInfo = 100,
     Error = 101,
@@ -124,6 +130,7 @@ enum class MsgType : uint8_t {
     MapUploadResult = 110,
     MapData = 111,
     ChatLine = 112,
+    Teams = 113,
 };
 
 enum class ErrorCode : uint8_t {
@@ -243,7 +250,19 @@ struct InputRecord {
     bool fire = false;
     uint8_t scanPresses = 0;      // Zähler (läuft bei 255 über)
     uint8_t interactPresses = 0;  // Zähler
+    // Zu Fuß (Rolle SG-Team im Einsatz, foot = true): statt Schub und Drehung
+    // die Eingaben der Figur (TrooperInput). Sprung und Nachladen gelten nur
+    // für diesen einen Schritt; fire wie oben.
+    bool foot = false;
+    float forward = 0.0f, strafe = 0.0f;   // -1..1
+    float yaw = 0.0f, pitch = 0.0f;        // Blickrichtung (Bogenmaß)
+    bool jump = false, sprint = false, reload = false, sample = false;
 };
+
+// Werte auf die Stufen runden, in denen sie übertragen werden (Prozent,
+// Winkelstufen). Der Client rechnet seine Vorhersage mit genau diesen Werten,
+// damit Server und Client dasselbe Ergebnis bekommen.
+void QuantizeInput(InputRecord& in);
 
 struct InputMsg {
     std::vector<InputRecord> records;   // älteste zuerst, höchstens MAX_INPUTS_PER_MSG
@@ -280,6 +299,25 @@ struct ChatMsg {
 // das den anderen als Sprechblase am Schiff (SnapShip::chatting).
 struct ChatTypingMsg {
     bool typing = false;
+};
+
+// SG-Teams (Mehrspieler): Rolle wählen und Teams im Command Center. Der
+// Server prüft jede Aktion (GameServer::HandleTeamAction) und antwortet mit
+// der neuen Teamliste (TeamsMsg) bzw. einer Meldung.
+//   Role:   param 0 = Pilot, 1 = SG-Team. Direkt nach der Anmeldung frei,
+//           danach als Pilot nur angedockt an einer Handelsstation, als
+//           SG-Team nur im Command Center.
+//   Create: neues Team gründen (SG-Nummer vergibt der Server).
+//   Join:   param = SG-Nummer des Teams.
+//   Leave:  Team verlassen.
+//   Ready:  param 1 = bereit, 0 = nicht bereit.
+//   Dial:   Gründer: Tor anwählen (alle anderen müssen bereit sein).
+//   Abort:  laufenden Einsatz abbrechen (zurück ins Command Center).
+enum class TeamActionType : uint8_t { Role = 0, Create = 1, Join = 2, Leave = 3, Ready = 4, Dial = 5, Abort = 6 };
+
+struct TeamActionMsg {
+    TeamActionType action = TeamActionType::Role;
+    uint8_t param = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -322,6 +360,31 @@ struct WelcomeMsg {
     // serverTime: Ein float wird nach Tagen zu ungenau für die Interpolation,
     // ein Schrittzähler nie (NetClient::Impl::TickTime).
     uint32_t tick = 0;
+    // Zuletzt gewählte Rolle (PlayerRole, aus dem Konto): Vorauswahl der
+    // Rollenwahl nach der Anmeldung
+    uint8_t lastRole = 0;
+};
+
+// Eigene Figur zu Fuß – genau genug für die Vorhersage (wie SnapMe beim Schiff)
+struct SnapMeTrooper {
+    int32_t id = -1;              // Trooper::id
+    float x = 0, y = 0, z = 0;
+    float vx = 0, vy = 0, vz = 0;
+    float yaw = 0;                // Blickrichtung (bei der Ankunft vom Tor weg)
+    bool onGround = true;
+    bool down = false;
+    float hp = 0, maxHp = 0;
+    float hitFlash = 0;
+    uint8_t mag = 0;
+    uint16_t ammo = 0;
+    float reloadT = 0, fireCd = 0;
+    uint8_t samples = 0;          // Proben des ganzen Teams (World::TeamSamples): sie zählen für die Rückkehr
+    int32_t sampleId = -1;        // Lagerstätte der laufenden Probe
+    float sampleT = 0;
+    float downT = 0;
+    float age = 0;
+    float sgTime = 0;             // Dauer des Einsatzes
+    uint16_t sgPirates = 0;       // im Einsatz ausgeschaltete Bodenpiraten
 };
 
 // Eigener Zustand (nur für Spieler) – genau genug für die Vorhersage
@@ -374,6 +437,12 @@ struct SnapMe {
     std::vector<Marker> markers;  // höchstens MAX_MARKERS
     int8_t cue = -1;
     float cueT = 0;
+    // SG-Team: Rolle (PlayerRole), Team (SG-Nummer, 0 = keins) und die
+    // eigene Figur, solange ein Einsatz läuft
+    uint8_t role = 0;
+    uint8_t sgTeam = 0;
+    bool hasTrooper = false;
+    SnapMeTrooper trooper;
 };
 
 struct SnapShip {
@@ -397,7 +466,35 @@ struct SnapShip {
 struct SnapBullet {
     float x = 0, y = 0, z = 0;
     float vx = 0, vz = 0;
-    uint8_t type = 0;             // 0 Spieler, 1 Pirat, 2 Händler, 3 Geschützturm
+    float vy = 0;                 // nur Bodengeschosse (Typ 4, 5)
+    uint8_t type = 0;             // 0 Spieler, 1 Pirat, 2 Händler, 3 Geschützturm, 4 Figur SG-Team, 5 Bodenpirat
+};
+
+// Fremde Figur zu Fuß (Spieler eines SG-Teams oder Bodenpirat). Wird wie
+// fremde Schiffe zeitversetzt interpoliert.
+struct SnapTrooper {
+    uint32_t id = 0;
+    int16_t playerId = -1;        // >= 0: Figur eines Spielers
+    uint8_t team = 0;             // SG-Nummer seines Teams (0 = KI oder allein)
+    uint8_t skin = 0;             // Haut (Trooper::skin)
+    float x = 0, y = 0, z = 0;
+    float yaw = 0, pitch = 0;
+    float hitFlash = 0;
+    bool onGround = true;
+    bool down = false;
+    bool zombie = false;
+    bool shooting = false;        // im Kampf (Animation "shoot" bzw. Schlag des Zombies)
+    float downT = 0;              // nur gefallen: Sekunden seit dem Fallen
+};
+
+// Stargate, das gerade benutzt wird (ruhende werden nicht geschickt)
+struct SnapGate {
+    uint8_t index = 0;            // Index in World::stargates (gleiche Reihenfolge wie beim Server)
+    uint8_t state = 0;            // GateState
+    bool toCommand = false;
+    float t = 0;                  // Sekunden im Zustand
+    int16_t playerId = -1;
+    uint8_t team = 0;
 };
 
 struct SnapWreck {
@@ -419,6 +516,8 @@ struct SnapshotMsg {
     std::vector<SnapShip> ships;      // ohne das eigene Schiff
     std::vector<SnapBullet> bullets;
     std::vector<SnapWreck> wrecks;
+    std::vector<SnapTrooper> troopers;  // ohne die eigene Figur
+    std::vector<SnapGate> gates;
 };
 
 struct NetDeposit {
@@ -427,10 +526,12 @@ struct NetDeposit {
     float yaw = 0, scale = 1;
     uint8_t variant = 0;
     uint16_t amount = 0, initial = 0;
+    uint8_t sample = 0;           // Sample: 0 grün, 1 gelb, 2 beprobt
 };
 
-// Alle Lagerstätten, die der Empfänger sehen darf (Spieler: selbst entdeckte,
-// Zuschauer: alle). Ersetzt die vorige Liste vollständig.
+// Alle Lagerstätten, die der Empfänger sehen darf (Spieler: selbst entdeckte
+// und alle gelben bzw. beprobten, Zuschauer: alle). Ersetzt die vorige Liste
+// vollständig.
 struct DepositsMsg {
     std::vector<NetDeposit> deposits;
 };
@@ -479,6 +580,10 @@ struct PlayerEntry {
     uint16_t kills = 0;
     uint16_t goals = 0;
     uint8_t lives = 0;
+    uint8_t role = 0;             // PlayerRole
+    uint8_t team = 0;             // SG-Nummer (0 = keins)
+    bool onFoot = false;          // Figur im Einsatz: steht bei x, z (Minikarte der Piloten)
+    float x = 0, z = 0;
 };
 
 // Alle angemeldeten Spieler (für Namen über den Schiffen, Top 3 im HUD,
@@ -528,6 +633,35 @@ struct ChatLineMsg {
     std::string text;
 };
 
+// SG-Teams für das Command Center (an alle Spieler in der Rolle SG-Team, bei
+// jeder Änderung und einmal pro Sekunde). Dazu das Ergebnis des eigenen
+// letzten Einsatzes.
+struct TeamMember {
+    int32_t playerId = -1;
+    std::string name;
+    bool ready = false;
+    bool out = false;             // gerade im Einsatz (Figur auf der Mondkarte)
+};
+
+struct TeamEntry {
+    uint8_t number = 0;           // SG-Nummer
+    uint8_t state = 0;            // 0 im Command Center, 1 Anwahl läuft, 2 im Einsatz
+    float dialT = 0;              // Anwahl: Sekunden seit dem Start
+    std::vector<TeamMember> members;   // Gründer zuerst (er wählt das Tor an), höchstens cfg::SG_TEAM_MAX
+};
+
+struct TeamsMsg {
+    bool moonGate = false;        // steht auf der Mondkarte ein Stargate?
+    std::vector<TeamEntry> teams;
+    // Letzter eigener Einsatz (fresh = gerade beendet: das Command Center zeigt das Ergebnis)
+    bool hasResult = false;
+    bool fresh = false;
+    bool success = false;
+    uint16_t number = 0, samples = 0, pirates = 0;
+    int32_t points = 0;
+    float seconds = 0;
+};
+
 // ---------------------------------------------------------------------------
 // Kodieren (inkl. Typ-Byte) und Dekodieren (Typ-Byte bereits gelesen)
 // ---------------------------------------------------------------------------
@@ -539,6 +673,7 @@ std::vector<uint8_t> Encode(const DockActionMsg& m);
 std::vector<uint8_t> Encode(const MapUploadMsg& m);
 std::vector<uint8_t> Encode(const ChatMsg& m);
 std::vector<uint8_t> Encode(const ChatTypingMsg& m);
+std::vector<uint8_t> Encode(const TeamActionMsg& m);
 std::vector<uint8_t> EncodeSimple(MsgType t);   // Nachrichten ohne Inhalt (Spectate, Leave)
 std::vector<uint8_t> Encode(const ServerInfoMsg& m);
 std::vector<uint8_t> Encode(const ErrorMsg& m);
@@ -553,6 +688,7 @@ std::vector<uint8_t> Encode(const SettingsMsg& m);
 std::vector<uint8_t> Encode(const MapUploadResultMsg& m);
 std::vector<uint8_t> Encode(const MapDataMsg& m);
 std::vector<uint8_t> Encode(const ChatLineMsg& m);
+std::vector<uint8_t> Encode(const TeamsMsg& m);
 
 bool Decode(Reader& r, RegisterMsg& m);
 bool Decode(Reader& r, LoginStartMsg& m);
@@ -562,6 +698,7 @@ bool Decode(Reader& r, DockActionMsg& m);
 bool Decode(Reader& r, MapUploadMsg& m);
 bool Decode(Reader& r, ChatMsg& m);
 bool Decode(Reader& r, ChatTypingMsg& m);
+bool Decode(Reader& r, TeamActionMsg& m);
 bool Decode(Reader& r, ServerInfoMsg& m);
 bool Decode(Reader& r, ErrorMsg& m);
 bool Decode(Reader& r, LoginChallengeMsg& m);
@@ -575,6 +712,7 @@ bool Decode(Reader& r, SettingsMsg& m);
 bool Decode(Reader& r, MapUploadResultMsg& m);
 bool Decode(Reader& r, MapDataMsg& m);
 bool Decode(Reader& r, ChatLineMsg& m);
+bool Decode(Reader& r, TeamsMsg& m);
 
 // ---------------------------------------------------------------------------
 // Modellvarianten: über das Netz werden kleine Nummern statt Modell-IDs geschickt

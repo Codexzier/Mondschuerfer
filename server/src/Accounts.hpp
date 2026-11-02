@@ -92,6 +92,7 @@ struct PlayerProgress {
     int kills = 0;
     int deaths = 0;
     int goals = 0;                              // so oft das Ziel erreicht
+    int role = 0;                               // zuletzt gespielte Rolle (0 Pilot, 1 SG-Team): Vorauswahl der Rollenwahl
     // Ort des Schiffs beim Abmelden. Beim nächsten Anmelden geht es genau dort
     // weiter, statt an einer Handelsstation: Abmelden + Anmelden ist damit
     // keine Abkürzung zur Station (sonst spart man den Rückflug und die Zeit

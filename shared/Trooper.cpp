@@ -19,10 +19,12 @@
 //     src/Hud.cpp: NearestGate, SampleTarget. src/Render.cpp: Tore und
 //     Treppen (GateLookAt, GateStairTop ...).
 //
-// Bisher nur im Einzelspieler: Der Spieler wählt nach "Neues Spiel" bzw.
-// "Fortsetzen" die Rolle, als SG-Team geht es vom Command Center durch ein
-// Stargate auf die Mondkarte. Mehrspieler kommt in späteren Schritten (siehe
-// FPS-Plan).
+// Einzelspieler: Der Spieler wählt nach "Neues Spiel" bzw. "Fortsetzen" die
+// Rolle, als SG-Team geht es vom Command Center durch ein Stargate auf die
+// Mondkarte oder in eine Einsatzkarte. Mehrspieler: Der Server (GameServer)
+// bildet Teams aus bis zu vier Spielern (PlayerState::sgTeam); der Anführer
+// kommt zuerst durch das Tor, die anderen folgen (sgFollowers), Proben zählen
+// für das ganze Team (TeamSamples).
 //
 // Wie bei den Schiffen rechnet UpdateTrooperPhysics ohne Zufall, damit der
 // Mehrspieler-Client später die eigene Figur genauso vorhersagen kann wie der
@@ -94,10 +96,16 @@ constexpr float kGateCenter = 0.585f, kGateInner = 0.3f, kGateDepth = 0.25f;
 constexpr int kStairSteps = 7;
 float StairStepTop(float top, int i) { return top * (0.1f + 0.15f * static_cast<float>(i)); }
 
-// Steht noch ein Kamerad dieser Spielerfigur?
+// Steht noch jemand aus dem Team dieser Spielerfigur: ein Kamerad (KI) oder
+// im Mehrspieler die Figur eines Mitspielers?
 bool TeamStanding(const World& w, const Trooper& leader) {
-    for (const Trooper& m : w.troopers)
-        if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == leader.id && !m.down) return true;
+    const PlayerState* lp = w.FindPlayer(leader.playerId);
+    for (const Trooper& m : w.troopers) {
+        if (m.down || m.id == leader.id) continue;
+        if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == leader.id) return true;
+        const PlayerState* mp = m.playerId >= 0 ? w.FindPlayer(m.playerId) : nullptr;
+        if (lp && mp && World::SameTeam(*lp, *mp)) return true;
+    }
     return false;
 }
 } // namespace
@@ -234,29 +242,43 @@ void World::BuildStargates() {
 
 // Das Tor ist bei der Ankunft schon offen (angewählt wurde im Command
 // Center). Der Spieler steht auf der obersten Stufe und schaut vom Tor weg;
-// die Kameraden folgen im Abstand GATE_MATE_INTERVAL (UpdateStargates).
-bool World::StartSgMission(PlayerState& ps, int mates) {
+// die Kameraden und Mitspieler folgen im Abstand GATE_MATE_INTERVAL
+// (UpdateStargates).
+bool World::StartSgMission(PlayerState& ps, int mates, int gate) {
     if (ps.role != PlayerRole::Trooper || ps.trooperId >= 0) return false;
     BuildStargates();
-    // frei: ruhend oder gerade beim Schließen (das Command Center hält die
-    // Welt an, ein eben benutztes Tor schließt dort nicht zu Ende)
-    std::vector<int> free;
-    for (size_t i = 0; i < stargates.size(); ++i)
-        if (stargates[i].state == GateState::Idle || stargates[i].state == GateState::Closing)
-            free.push_back(static_cast<int>(i));
-    if (free.empty()) return false;
-    Stargate& g = stargates[static_cast<size_t>(free[static_cast<size_t>(RandInt(0, static_cast<int>(free.size()) - 1))])];
-    g.state = GateState::Open;
-    g.t = 0.0f;
-    g.toCommand = false;
-    g.playerId = ps.id;
-    g.awayT = 0.0f;
-    BuildTrooperBlocks();
+    const bool follower = gate >= 0;
+    if (follower) {
+        if (gate >= static_cast<int>(stargates.size())) return false;
+    } else {
+        // frei: ruhend oder gerade beim Schließen (das Command Center hält die
+        // Welt an, ein eben benutztes Tor schließt dort nicht zu Ende)
+        std::vector<int> free;
+        for (size_t i = 0; i < stargates.size(); ++i)
+            if (stargates[i].state == GateState::Idle || stargates[i].state == GateState::Closing)
+                free.push_back(static_cast<int>(i));
+        if (free.empty()) return false;
+        gate = free[static_cast<size_t>(RandInt(0, static_cast<int>(free.size()) - 1))];
+    }
+    Stargate& g = stargates[static_cast<size_t>(gate)];
+    if (!follower) {
+        g.state = GateState::Open;
+        g.t = 0.0f;
+        g.toCommand = false;
+        g.playerId = ps.id;
+        g.team = ps.sgTeam;
+        g.awayT = 0.0f;
+        BuildTrooperBlocks();
+    }
     const Vector3 exit = GateExit(g);
     const float yaw = YawTowards({0.0f, 0.0f, 0.0f}, GateNormal(g));
     Trooper t;
     t.id = nextTrooperId++;
     t.playerId = ps.id;
+    t.team = ps.sgTeam;
+    // Haut: der Erste des Teams 0, Mitspieler die übrigen Militär-Häute
+    for (const Trooper& o : troopers)
+        if (o.playerId >= 0 && o.team != 0 && o.team == t.team) t.skin = (t.skin + 1) % 4;
     t.pos = exit;
     t.home = exit;
     t.yaw = yaw;
@@ -272,6 +294,11 @@ bool World::StartSgMission(PlayerState& ps, int mates) {
     ps.sgPirates = 0;
     ps.sgTime = 0.0f;
     ps.sgEnded = 0;
+    ps.sgGate = gate;
+    if (follower) {
+        SoundAt(Sfx::Discover, exit, 0.8f, 0.0f, ps.id);
+        return true;
+    }
     // Bodenpiraten (KI, Ai.cpp), weit genug vom Tor
     for (int i = 0; i < cfg::GROUND_PIRATE_GROUPS; ++i) SpawnPirateGroup(t.pos);
     pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
@@ -310,21 +337,66 @@ void World::EndSgMission(PlayerState& ps, bool success, bool record) {
                                   }),
                    troopers.end());
     if (std::none_of(troopers.begin(), troopers.end(), [](const Trooper& o) { return o.playerId >= 0; })) troopers.clear();
+    // Tore dieses Spielers schließen. Mehrspieler: Ist noch ein Mitspieler
+    // draußen, gehört das Tor jetzt ihm (das Team geht nacheinander durch).
+    // Noch nicht nachgekommene Mitspieler folgen dann ihm.
     for (Stargate& g : stargates) {
         if (g.playerId != ps.id || g.state == GateState::Idle || g.state == GateState::Closing) continue;
+        PlayerState* next = nullptr;
+        for (PlayerState& o : players)
+            if (o.id != ps.id && SameTeam(o, ps) && FindTrooper(o.trooperId)) next = &o;
+        if (next) {
+            g.playerId = next->id;
+            if (!g.toCommand) {
+                next->sgFollowers.insert(next->sgFollowers.end(), ps.sgFollowers.begin(), ps.sgFollowers.end());
+                next->sgGate = ps.sgGate;
+                ps.sgFollowers.clear();
+            }
+            continue;
+        }
         g.state = GateState::Closing;
         g.t = 0.0f;
     }
     ps.trooperId = -1;
     ps.trooperInput = TrooperInput{};
     ps.sgArrive = 0;
+    ps.sgFollowers.clear();
+    ps.sgGate = -1;
 }
 
-// Je Spieler im Einsatz: Dauer, nachkommende Kameraden und die Rückkehr. Hat
-// die Figur genug Proben und ist sie oder ein Kamerad nah an einem ruhenden
-// Tor, wird es angewählt; ist es offen, führt die oberste Stufe hinein.
-// Danach die Zustände aller Tore.
+int World::TeamSamples(const PlayerState& ps) const {
+    int n = 0;
+    for (const PlayerState& o : players)
+        if (SameTeam(o, ps))
+            if (const Trooper* t = FindTrooper(o.trooperId)) n += t->samples;
+    return n;
+}
+
+// Je Spieler im Einsatz: Dauer, nachkommende Kameraden und Mitspieler und
+// die Rückkehr. Hat das Team genug Proben (TeamSamples) und ist jemand von
+// ihm nah an einem ruhenden Tor, wird es angewählt; ist es offen, führt die
+// oberste Stufe hinein. Danach die Zustände aller Tore.
+// Team: im Einzelspieler der Spieler mit seinen Kameraden, im Mehrspieler
+// alle Spieler mit demselben sgTeam (und deren Kameraden).
 void World::UpdateStargates(float dt) {
+    // Spieler, zu dem eine Figur gehört (Kamerad: der Spieler seines Anführers)
+    auto ownerOf = [&](const Trooper& m) -> const PlayerState* {
+        if (m.playerId >= 0) return FindPlayer(m.playerId);
+        if (m.kind != TrooperKind::Mate) return nullptr;
+        const Trooper* l = FindTrooper(m.leaderId);
+        return l ? FindPlayer(l->playerId) : nullptr;
+    };
+    // Steht eine Figur, für deren Spieler member() gilt, in der Nähe des Tors?
+    auto nearGate = [&](const Stargate& g, auto member) {
+        for (const Trooper& m : troopers) {
+            if (m.down || Dist2D(g.pos, m.pos) >= cfg::GATE_RETURN_RANGE) continue;
+            const PlayerState* o = ownerOf(m);
+            if (o && member(*o)) return true;
+        }
+        return false;
+    };
+    auto memberOf = [](const Stargate& g, const PlayerState& o) { return o.id == g.playerId || (g.team != 0 && o.sgTeam == g.team); };
+
     for (PlayerState& ps : players) {
         const Trooper* t = ps.role == PlayerRole::Trooper ? FindTrooper(ps.trooperId) : nullptr;
         if (!t) continue;
@@ -339,27 +411,31 @@ void World::UpdateStargates(float dt) {
             --ps.sgArrive;
             ps.sgArriveT = cfg::GATE_MATE_INTERVAL;
             t = FindTrooper(ps.trooperId);
+        } else if (!ps.sgFollowers.empty() && ps.sgArriveT <= 0.0f) {
+            // Mehrspieler: der nächste Mitspieler kommt durch dasselbe Tor
+            const int next = ps.sgFollowers.front();
+            ps.sgFollowers.erase(ps.sgFollowers.begin());
+            if (PlayerState* f = FindPlayer(next)) StartSgMission(*f, 0, ps.sgGate);
+            ps.sgArriveT = cfg::GATE_MATE_INTERVAL;
+            t = FindTrooper(ps.trooperId);
         }
-        if (t->down || t->samples < cfg::SAMPLE_GOAL) continue;
+        if (t->down || TeamSamples(ps) < cfg::SAMPLE_GOAL) continue;
         bool busy = false;
         for (const Stargate& g : stargates)
-            if (g.playerId == ps.id && g.toCommand && g.state != GateState::Idle) busy = true;
+            if (g.toCommand && g.state != GateState::Idle && memberOf(g, ps)) busy = true;
         if (busy) continue;
         for (Stargate& g : stargates) {
             if (g.state != GateState::Idle) continue;
-            bool near = Dist2D(g.pos, t->pos) < cfg::GATE_RETURN_RANGE;
-            for (const Trooper& m : troopers)
-                if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == t->id && !m.down &&
-                    Dist2D(g.pos, m.pos) < cfg::GATE_RETURN_RANGE)
-                    near = true;
-            if (!near) continue;
+            if (!nearGate(g, [&](const PlayerState& o) { return SameTeam(o, ps); })) continue;
             g.state = GateState::Dialing;
             g.t = 0.0f;
             g.toCommand = true;
             g.playerId = ps.id;
+            g.team = ps.sgTeam;
             g.awayT = 0.0f;
             SoundAt(Sfx::ScanOn, g.pos, 1.0f, 0.0f, ps.id);
-            Notify(ps, "Stargate wird angewählt ...", Color{150, 210, 255, 255});
+            for (PlayerState& o : players)
+                if (SameTeam(o, ps) && o.trooperId >= 0) Notify(o, "Stargate wird angewählt ...", Color{150, 210, 255, 255});
             break;
         }
     }
@@ -367,7 +443,10 @@ void World::UpdateStargates(float dt) {
     for (Stargate& g : stargates) {
         g.t += dt;
         PlayerState* ps = g.playerId >= 0 ? FindPlayer(g.playerId) : nullptr;
-        const Trooper* t = ps ? FindTrooper(ps->trooperId) : nullptr;
+        // Ist noch jemand aus dem Team des Tors draußen (mit Figur)?
+        bool out = false;
+        for (const PlayerState& o : players)
+            if (memberOf(g, o) && FindTrooper(o.trooperId)) out = true;
         auto close = [&]() {
             g.state = GateState::Closing;
             g.t = 0.0f;
@@ -375,40 +454,47 @@ void World::UpdateStargates(float dt) {
         switch (g.state) {
             case GateState::Idle: break;
             case GateState::Dialing:
-                if (!t) close();
+                if (!out) close();
                 else if (g.t >= cfg::GATE_DIAL) {
                     g.state = GateState::Open;
                     g.t = 0.0f;
-                    SoundAt(Sfx::Discover, g.pos, 1.0f, 0.0f, ps->id);
-                    Notify(*ps, "Stargate offen: die Treppe hinauf und hindurch", Color{150, 210, 255, 255});
+                    SoundAt(Sfx::Discover, g.pos, 1.0f, 0.0f, g.playerId);
+                    for (PlayerState& o : players)
+                        if (memberOf(g, o) && o.trooperId >= 0)
+                            Notify(o, "Stargate offen: die Treppe hinauf und hindurch", Color{150, 210, 255, 255});
                 }
                 break;
             case GateState::Open:
                 if (!g.toCommand) {
                     // Ankunft: zu, wenn alle durch sind (der letzte ist eine
                     // Sekunde unterwegs) oder spätestens nach GATE_ARRIVE_MAX
-                    if (!t || (ps->sgArrive == 0 && ps->sgArriveT <= -1.0f) || g.t >= cfg::GATE_ARRIVE_MAX) close();
+                    if (!ps || !out || (ps->sgArrive == 0 && ps->sgFollowers.empty() && ps->sgArriveT <= -1.0f) ||
+                        g.t >= cfg::GATE_ARRIVE_MAX)
+                        close();
                     break;
                 }
-                if (!t) {
+                if (!out) {
                     close();
                     break;
                 }
+                g.awayT = nearGate(g, [&](const PlayerState& o) { return memberOf(g, o); }) ? 0.0f : g.awayT + dt;
+                // Wer vom Team auf der obersten Stufe steht, geht hindurch. Im
+                // Einzelspieler gehen die Kameraden mit dem Spieler (die
+                // Ansicht wechselt dann ohnehin ins Command Center); im
+                // Mehrspieler bleibt das Tor offen, bis alle durch sind.
                 {
-                    bool near = !t->down && Dist2D(g.pos, t->pos) < cfg::GATE_RETURN_RANGE;
-                    for (const Trooper& m : troopers)
-                        if (m.playerId < 0 && m.kind == TrooperKind::Mate && m.leaderId == t->id && !m.down &&
-                            Dist2D(g.pos, m.pos) < cfg::GATE_RETURN_RANGE)
-                            near = true;
-                    g.awayT = near ? 0.0f : g.awayT + dt;
-                }
-                // Im Einzelspieler gehen die Kameraden mit dem Spieler durch
-                // (die Ansicht wechselt dann ohnehin ins Command Center).
-                if (!t->down && InGatePassage(g, t->pos)) {
-                    SoundAt(Sfx::Dock, g.pos, 1.0f, 0.0f, ps->id);
-                    EndSgMission(*ps, true);
-                } else if (g.awayT >= cfg::GATE_IDLE_CLOSE) {
-                    close();
+                    std::vector<int> through;
+                    for (const PlayerState& o : players) {
+                        if (!memberOf(g, o)) continue;
+                        const Trooper* m = FindTrooper(o.trooperId);
+                        if (m && !m->down && InGatePassage(g, m->pos)) through.push_back(o.id);
+                    }
+                    for (int id : through)
+                        if (PlayerState* o = FindPlayer(id)) {
+                            SoundAt(Sfx::Dock, g.pos, 1.0f, 0.0f, id);
+                            EndSgMission(*o, true);
+                        }
+                    if (through.empty() && g.awayT >= cfg::GATE_IDLE_CLOSE) close();
                 }
                 break;
             case GateState::Closing:
@@ -417,6 +503,7 @@ void World::UpdateStargates(float dt) {
                     g.t = 0.0f;
                     g.toCommand = false;
                     g.playerId = -1;
+                    g.team = 0;
                 }
                 break;
         }
@@ -665,11 +752,16 @@ void World::UpdateTroopers(float dt) {
                 t.sampleId = -1;
                 t.sampleT = 0.0f;
                 SoundAt(Sfx::MineDone, t.pos, 1.0f, 0.0f, t.playerId);
-                if (PlayerState* owner = FindPlayer(t.playerId))
-                    Notify(*owner,
-                           t.samples >= cfg::SAMPLE_GOAL ? Fmt("Probe genommen (%d / %d): zurück zu einem Stargate!", t.samples, cfg::SAMPLE_GOAL)
-                                                         : Fmt("Probe genommen (%d / %d)", t.samples, cfg::SAMPLE_GOAL),
-                           Color{255, 225, 90, 255});
+                // Meldung an das ganze Team (Mehrspieler: die Proben zählen zusammen)
+                if (PlayerState* owner = FindPlayer(t.playerId)) {
+                    const int have = TeamSamples(*owner);
+                    for (PlayerState& o : players)
+                        if (SameTeam(o, *owner) && o.trooperId >= 0)
+                            Notify(o,
+                                   have >= cfg::SAMPLE_GOAL ? Fmt("Probe genommen (%d / %d): zurück zu einem Stargate!", have, cfg::SAMPLE_GOAL)
+                                                            : Fmt("Probe genommen (%d / %d)", have, cfg::SAMPLE_GOAL),
+                                   Color{255, 225, 90, 255});
+                }
             }
         }
         if (t.reloadT > 0.0f) {
@@ -716,7 +808,7 @@ void World::UpdateTroopers(float dt) {
         if (!t.down) continue;
         if (t.playerId >= 0 && t.downT >= cfg::TROOPER_RESPAWN) {
             PlayerState* ps = FindPlayer(t.playerId);
-            if (ps && ps->sgArrive == 0 && !TeamStanding(*this, t)) {
+            if (ps && ps->sgArrive == 0 && ps->sgFollowers.empty() && !TeamStanding(*this, t)) {
                 failed.push_back(ps->id);
                 continue;
             }

@@ -48,8 +48,9 @@
 //
 // Die beiden wichtigsten Techniken (ausführlich bei den Funktionen erklärt):
 //   - Vorhersage + Abgleich ("Client-side prediction and reconciliation") für
-//     das eigene Schiff: StepOwnShip() und ApplyMe().
-//   - Interpolation für fremde Schiffe: UpdateRemoteShips().
+//     das eigene Schiff: StepOwnShip() und ApplyMe(); zu Fuß ebenso für die
+//     eigene Figur (ApplyFoot, UpdateOwnFoot).
+//   - Interpolation für fremde Schiffe und Figuren: UpdateRemoteShips().
 // ---------------------------------------------------------------------------
 #include "NetClient.hpp"
 #include "Config.hpp"
@@ -108,6 +109,7 @@ constexpr float MAX_VIEW_DT = 1.0f / 20.0f;   // Darstellung (Partikel, Korrektu
 constexpr size_t MAX_PENDING_INPUTS = 90;     // höchstens 3 s unbestätigte Eingaben aufheben
 constexpr float CORRECTION_RATE = 10.0f;      // Korrekturversatz *= exp(-10 * dt) (docs/Mehrspieler.md 6.2)
 constexpr float CORRECTION_SNAP = 8.0f;       // m: größere Abweichung wird nicht geblendet, sondern gesprungen
+constexpr float FOOT_SNAP = 1.5f;             // m: dasselbe für die eigene Figur (läuft viel langsamer)
 constexpr float REMOTE_TELEPORT = 15.0f;      // m zwischen zwei Snapshots: nicht interpolieren
 constexpr size_t MAX_FRAMES = 32;             // gepufferte Snapshots für die Interpolation (~2 s)
 constexpr double MAX_EXTRAPOLATION = 0.25;    // s: so lange fremde Schiffe bei fehlenden Daten weiterrechnen
@@ -246,6 +248,26 @@ ShipInput PhysicsInput(const net::InputRecord& r) {
     return in;
 }
 
+// Dasselbe zu Fuß. Eine Eingabe ohne Werte zu Fuß (gerade erst durch das Tor,
+// Pause) lässt die Figur stehen und ihren Blick behalten, wie auf dem Server
+// (GameServer::ApplyInputs).
+TrooperInput FootInput(const net::InputRecord& r, const Trooper& t) {
+    TrooperInput in;
+    in.yaw = t.yaw;
+    in.pitch = t.pitch;
+    if (!r.foot) return in;
+    in.forward = r.forward;
+    in.strafe = r.strafe;
+    in.yaw = r.yaw;
+    in.pitch = r.pitch;
+    in.fire = r.fire;
+    in.jump = r.jump;
+    in.sprint = r.sprint;
+    in.reload = r.reload;
+    in.sample = r.sample;
+    return in;
+}
+
 } // namespace
 
 // ===========================================================================
@@ -344,10 +366,35 @@ struct NetClient::Impl {
     float fireCd = 0.0f;               // lokale Abklingzeit der Waffe (nur für den Schusston)
     float lastHp = -1.0f;              // für "Treffer erkannt" -> Bildschirm wackelt
 
+    // --- Eigene Figur zu Fuß (SG-Team im Einsatz): Vorhersage wie beim Schiff ---
+    bool footActive = false;           // haben wir gerade eine eigene Figur?
+    Trooper footPred;                  // vorhergesagter Zustand (Physik)
+    Vector3 footPrev{};                // Position vor dem letzten Schritt (Darstellung)
+    Vector3 footCorr{};                // Korrekturversatz (weich ausgeblendet)
+    net::SnapMeTrooper footSnap;       // letzter Stand vom Server (Schild, Munition, Proben ...)
+    bool haveFootInput = false;        // Update() bekommt gerade Eingaben zu Fuß
+    TrooperInput footHeld;             // ... die zuletzt gehaltenen
+    bool footJump = false;             // Sprung bzw. Nachladen seit dem letzten Schritt gedrückt
+    bool footReload = false;
+    bool blocksDirty = false;          // Hindernisse der Figuren neu aufbauen (Karte gewechselt, Stationen gewachsen)
+    // Fremde Figuren: zurückgelegter Weg (Laufanimation) und letzte Position
+    struct Walk {
+        float walked = 0.0f;
+        Vector3 last{};
+        unsigned seen = 0;
+    };
+    std::unordered_map<uint32_t, Walk> walks;
+    unsigned walkFrame = 0;
+
+    // --- SG-Teams ---------------------------------------------------------------------
+    net::TeamsMsg teams;
+    bool teamResult = false;           // für TakeTeamResult()
+
     // --- Fremde Schiffe: Interpolation ------------------------------------------------------
     struct Frame {
         double serverTime = 0.0;           // aus dem Schrittzähler (TickTime)
         std::vector<net::SnapShip> ships;
+        std::vector<net::SnapTrooper> troopers;
     };
     std::deque<Frame> frames;                         // gepufferte Snapshots, älteste zuerst
     std::unordered_map<uint32_t, size_t> scratchIndex; // Schiffs-ID -> Index (wiederverwendet)
@@ -386,6 +433,7 @@ struct NetClient::Impl {
     void HandleSettings(const net::SettingsMsg& m);
     void HandleMapUploadResult(const net::MapUploadResultMsg& m);
     void HandleMapData(const net::MapDataMsg& m);
+    void HandleTeams(const net::TeamsMsg& m);
 
     void SyncTime(double serverTime);
     // Serverzeit in Sekunden aus dem Schrittzähler, gezählt ab dem ersten
@@ -397,8 +445,11 @@ struct NetClient::Impl {
         return static_cast<double>(static_cast<uint32_t>(tick - tickBase)) / net::TICK_RATE;
     }
     void ApplyMe(const net::SnapMe& me);
+    void ApplyFoot(const net::SnapMe& me);
+    void ApplyGates(const std::vector<net::SnapGate>& gates);
     void StepOwnShip(const ShipInput& held);
     void UpdateOwnDisplay(float dt);
+    void UpdateOwnFoot(float dt);
     void UpdateRemoteShips();
     void UpdateBullets();
     void PushSound(const SoundEvent& e);
@@ -472,6 +523,8 @@ void NetClient::Impl::ResetSession() {
     ResetPrediction();
     frames.clear();
     bullets.clear();
+    teams = net::TeamsMsg{};
+    teamResult = false;
 }
 
 // Vorhersage komplett verwerfen (neue Verbindung, neue Welt): auch die
@@ -482,6 +535,11 @@ void NetClient::Impl::ResetPrediction() {
     accumulator = 0.0f;
     pending.clear();
     ForgetOwnShip();
+    footActive = false;
+    haveFootInput = false;
+    footJump = false;
+    footReload = false;
+    walks.clear();
 }
 
 // Nur das vorhergesagte Schiff vergessen (z. B. neues Schiff nach Absturz).
@@ -737,6 +795,11 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
             if (net::Decode(r, m)) HandleMapData(m);
             break;
         }
+        case net::MsgType::Teams: {
+            net::TeamsMsg m;
+            if (net::Decode(r, m)) HandleTeams(m);
+            break;
+        }
         case net::MsgType::ChatLine: {
             net::ChatLineMsg m;
             if (net::Decode(r, m) && state == NetState::Playing) {
@@ -851,6 +914,17 @@ void NetClient::Impl::HandleMapData(const net::MapDataMsg& m) {
     world.monorails.clear();
     if (m.custom) world.ApplyMap(m.map);
     else world.SpawnRovers();
+    // Stargates aus den Toren der Karte, in derselben Reihenfolge wie beim
+    // Server (GameServer::ApplyMapToWorld): SnapGate::index zeigt hinein.
+    world.stargates.clear();
+    world.BuildStargates();
+    blocksDirty = true;
+}
+
+// SG-Teams (nur in der Rolle SG-Team): Stand fürs Command Center
+void NetClient::Impl::HandleTeams(const net::TeamsMsg& m) {
+    teams = m;
+    if (m.fresh) teamResult = true;
 }
 
 // Begrüßung: Anmeldung/Zuschauen hat geklappt, oder der Server hat die Welt
@@ -865,6 +939,7 @@ void NetClient::Impl::HandleWelcome(const net::WelcomeMsg& m) {
 
     welcome = m;
     world.BuildMirror(m.worldSeed, m.settings);
+    world.BuildStargates();   // Tore der Zufallskarte (eine eigene Karte folgt mit MapData)
     baseDecos = world.decos;
     if (rebuild) world.drawRange = keepDrawRange;
     world.totalDelivered = m.totalDelivered;
@@ -943,6 +1018,7 @@ void NetClient::Impl::HandleSnapshot(net::SnapshotMsg& m) {
     Frame f;
     f.serverTime = serverTime;
     f.ships = std::move(m.ships);
+    f.troopers = std::move(m.troopers);
     frames.push_back(std::move(f));
     while (frames.size() > MAX_FRAMES) frames.pop_front();
 
@@ -966,7 +1042,35 @@ void NetClient::Impl::HandleSnapshot(net::SnapshotMsg& m) {
         world.wrecks.push_back(w);
     }
 
+    ApplyGates(m.gates);
     if (m.hasMe && state == NetState::Playing) ApplyMe(m.me);
+}
+
+// Stargates, die gerade benutzt werden (die übrigen ruhen). Die Zeit im
+// Zustand läuft lokal weiter (Update); nur bei einem neuen Zustand oder
+// deutlicher Abweichung wird die des Servers übernommen, sonst sprängen die
+// Animationen bei jedem Snapshot ein Stück zurück.
+void NetClient::Impl::ApplyGates(const std::vector<net::SnapGate>& gates) {
+    std::vector<bool> used(world.stargates.size(), false);
+    for (const net::SnapGate& sg : gates) {
+        if (sg.index >= world.stargates.size()) continue;
+        Stargate& g = world.stargates[sg.index];
+        used[sg.index] = true;
+        const GateState st = static_cast<GateState>(std::min<uint8_t>(sg.state, 3));
+        if (st != g.state || sg.toCommand != g.toCommand || std::fabs(sg.t - g.t) > 0.25f) g.t = sg.t;
+        g.state = st;
+        g.toCommand = sg.toCommand;
+        g.playerId = sg.playerId;
+        g.team = sg.team;
+    }
+    for (size_t i = 0; i < world.stargates.size(); ++i) {
+        if (used[i]) continue;
+        Stargate& g = world.stargates[i];
+        g.state = GateState::Idle;
+        g.t = 0.0f;
+        g.playerId = -1;
+        g.team = 0;
+    }
 }
 
 // Eigener Zustand vom Server: Konto, Scanner, Abbau ... direkt übernehmen;
@@ -974,6 +1078,8 @@ void NetClient::Impl::HandleSnapshot(net::SnapshotMsg& m) {
 void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     PlayerState& ps = world.Me();
     ps.id = myId;
+    ps.role = me.role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
+    ps.sgTeam = me.sgTeam;
     ps.balance = me.balance;
     for (int u = 0; u < cfg::UP_COUNT; ++u)
         ps.upgrades[u] = std::min<int>(me.upgrades[u], cfg::UPGRADE_LEVELS);   // Schutz für Tabellenzugriffe
@@ -1058,12 +1164,14 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     // Bestätigte Eingaben hat der Server angewendet: Sie stecken schon in
     // seiner Position und werden nicht mehr gebraucht.
     while (!pending.empty() && pending.front().seq <= me.ackSeq) pending.pop_front();
+    ApplyFoot(me);
 
     Ship& shown = world.ships[0];
-    if (me.shipId < 0) {
+    if (me.shipId < 0 || ps.role == PlayerRole::Trooper) {
         // Kein Schiff (abgestürzt, wartet auf ein neues): Platzhalter
         // verstecken, aber die letzte bekannte Position behalten (die Kamera
-        // bleibt dort, wo das Schiff aufgeschlagen ist).
+        // bleibt dort, wo das Schiff aufgeschlagen ist). SG-Team: Das Schiff
+        // wartet versteckt an der Station (der Server schickt es niemandem).
         ps.shipId = -1;
         ownShipActive = false;
         corrOffset = Vector3{0, 0, 0};
@@ -1184,6 +1292,66 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     }
 }
 
+// Eigene Figur zu Fuß: dasselbe Verfahren wie beim Schiff (ApplyMe). Auf den
+// Serverzustand zurücksetzen, die unbestätigten Eingaben erneut anwenden
+// (World::UpdateTrooperPhysics, wie der Server) und eine Abweichung weich
+// ausblenden (UpdateOwnFoot). Gefallen: nichts vorhersagen, Serverwerte.
+// Schild, Munition, Proben usw. kommen nur vom Server (footSnap).
+void NetClient::Impl::ApplyFoot(const net::SnapMe& me) {
+    PlayerState& ps = world.Me();
+    if (!me.hasTrooper) {
+        footActive = false;
+        ps.trooperId = -1;
+        return;
+    }
+    const net::SnapMeTrooper& ft = me.trooper;
+    footSnap = ft;
+    ps.trooperId = ft.id;
+    ps.sgTime = ft.sgTime;
+    ps.sgPirates = ft.sgPirates;
+
+    // Neue Figur (gerade durch das Tor): frisch einrichten. Den Blick gibt
+    // der Server vor (vom Tor weg); Multiplayer.cpp übernimmt ihn für die
+    // Maus, bevor es Eingaben zu Fuß schickt. Die Hindernisse baut der
+    // Server beim Start des Einsatzes, also hier ebenfalls.
+    const bool fresh = !footActive || footPred.id != ft.id;
+    if (fresh) {
+        footPred = Trooper{};
+        footPred.id = ft.id;
+        footPred.playerId = myId;
+        footPred.faction = Faction::Player;
+        footPred.yaw = ft.yaw;
+        footHeld = TrooperInput{};
+        footHeld.yaw = ft.yaw;
+        haveFootInput = false;
+        footActive = true;
+        world.BuildStargates();
+        blocksDirty = true;
+    }
+    if (blocksDirty) {
+        world.BuildTrooperBlocks();
+        blocksDirty = false;
+    }
+    footPred.team = ps.sgTeam;
+    const Vector3 oldPos = footPred.pos;
+    footPred.pos = Vector3{ft.x, ft.y, ft.z};
+    footPred.vel = Vector3{ft.vx, ft.vy, ft.vz};
+    footPred.yaw = ft.yaw;
+    footPred.onGround = ft.onGround;
+    footPred.down = ft.down;
+    if (!ft.down)
+        for (const net::InputRecord& rec : pending) world.UpdateTrooperPhysics(footPred, net::TICK_DT, FootInput(rec, footPred));
+
+    const Vector3 shift = Vector3Subtract(footPred.pos, oldPos);
+    if (fresh || ft.down || Vector3Length(shift) > FOOT_SNAP) {
+        footPrev = footPred.pos;
+        footCorr = Vector3{0, 0, 0};
+    } else {
+        footCorr = Vector3Subtract(footCorr, shift);
+        footPrev = Vector3Add(footPrev, shift);
+    }
+}
+
 // Lagerstätten: Die Liste ersetzt die alte vollständig (docs/Mehrspieler.md Abschnitt 4). Bekannte
 // behalten ihren Einblend-Fortschritt, neue wachsen aus dem Boden (revealT = 0).
 void NetClient::Impl::HandleDeposits(const net::DepositsMsg& m) {
@@ -1202,6 +1370,7 @@ void NetClient::Impl::HandleDeposits(const net::DepositsMsg& m) {
         d.model = net::DepositModel(models, nd.variant);
         d.amount = nd.amount;
         d.initial = nd.initial;
+        d.sample = static_cast<Sample>(std::min<uint8_t>(nd.sample, 2));   // gelbe Kristalle der SG-Teams
         d.revealed = true;   // der Server schickt nur, was wir sehen dürfen
         const auto it = oldReveal.find(d.id);
         d.revealT = it != oldReveal.end() ? it->second : 0.0f;
@@ -1268,6 +1437,7 @@ void NetClient::Impl::HandleEvents(const net::EventsMsg& m) {
                 // gezeichnet wird, die Menge mindestens auf die Schwelle setzen.
                 world.totalDelivered = std::max<long long>(world.totalDelivered, cfg::STATION_THRESHOLDS[stage]);
                 totalDelivered = std::max(totalDelivered, world.totalDelivered);
+                blocksDirty = true;   // neue Stationsteile sind auch Hindernisse zu Fuß
                 break;
             }
             case net::EventKind::Respawned:
@@ -1329,17 +1499,33 @@ void NetClient::Impl::HandleSettings(const net::SettingsMsg& m) {
 //   3. Die letzten bis zu 4 unbestätigten Eingaben schicken (unzuverlässig).
 //      Geht ein Paket verloren, steckt dieselbe Eingabe im nächsten noch drin.
 void NetClient::Impl::StepOwnShip(const ShipInput& held) {
+    auto finite = [](float v) { return std::isfinite(v) ? v : 0.0f; };
     net::InputRecord rec;
     rec.seq = ++seq;
-    rec.thrust = std::isfinite(held.thrust) ? std::clamp(held.thrust, -1.0f, 1.0f) : 0.0f;
-    rec.turn = std::isfinite(held.turn) ? std::clamp(held.turn, -1.0f, 1.0f) : 0.0f;
-    // Auf die Prozent-Stufen runden, in denen die Eingabe übertragen wird
+    if (footActive && haveFootInput) {
+        // Zu Fuß: Eingaben der Figur. Sprung und Nachladen zählen einmal.
+        rec.foot = true;
+        rec.forward = std::clamp(finite(footHeld.forward), -1.0f, 1.0f);
+        rec.strafe = std::clamp(finite(footHeld.strafe), -1.0f, 1.0f);
+        rec.yaw = finite(footHeld.yaw);
+        rec.pitch = std::clamp(finite(footHeld.pitch), -cfg::TROOPER_PITCH_MAX, cfg::TROOPER_PITCH_MAX);
+        rec.fire = footHeld.fire;
+        rec.sprint = footHeld.sprint;
+        rec.sample = footHeld.sample;
+        rec.jump = footJump;
+        rec.reload = footReload;
+    } else {
+        rec.thrust = std::clamp(finite(held.thrust), -1.0f, 1.0f);
+        rec.turn = std::clamp(finite(held.turn), -1.0f, 1.0f);
+        rec.fire = held.fire;
+    }
+    footJump = false;
+    footReload = false;
+    // Auf die Stufen runden, in denen die Eingabe übertragen wird
     // (Protocol.cpp, Encode(InputMsg)). So rechnet die Vorhersage mit genau
     // den Werten, die beim Server ankommen (wichtig bei Gamepad-Sticks;
     // Tasten liefern ohnehin nur -1, 0 oder 1).
-    rec.thrust = static_cast<float>(std::lround(rec.thrust * 100.0f)) / 100.0f;
-    rec.turn = static_cast<float>(std::lround(rec.turn * 100.0f)) / 100.0f;
-    rec.fire = held.fire;
+    net::QuantizeInput(rec);
     rec.scanPresses = scanPresses;
     rec.interactPresses = interactPresses;
     pending.push_back(rec);
@@ -1348,6 +1534,8 @@ void NetClient::Impl::StepOwnShip(const ShipInput& held) {
     prevPos = pred.pos;
     prevYaw = pred.yaw;
     prevBank = pred.bank;
+    footPrev = footPred.pos;
+    if (footActive && !footPred.down) world.UpdateTrooperPhysics(footPred, net::TICK_DT, FootInput(rec, footPred));
     if (ownShipActive && !pred.crashing && !pred.docked) {
         world.UpdateShipPhysics(pred, net::TICK_DT, PhysicsInput(rec));
         // Schusston sofort selbst erzeugen (wie World::UpdatePlayer: erst
@@ -1404,6 +1592,46 @@ void NetClient::Impl::UpdateOwnDisplay(float dt) {
     shown.dead = false;
 }
 
+// Jedes Frame: die eigene Figur zu Fuß in world.troopers (nach den fremden,
+// UpdateRemoteShips). Position wie beim Schiff aus Vorhersage, Mischanteil
+// und Korrekturversatz; der Blick direkt aus den gehaltenen Eingaben (Maus
+// ohne Verzögerung). Zeiten laufen bis zum nächsten Snapshot lokal weiter.
+// Proben: die des ganzen Teams (Hud.cpp zeigt sie an der eigenen Figur).
+void NetClient::Impl::UpdateOwnFoot(float dt) {
+    if (!footActive) return;
+    footCorr = Vector3Scale(footCorr, std::exp(-CORRECTION_RATE * dt));
+    PlayerState& ps = world.Me();
+    ps.sgTime += dt;
+    footSnap.age += dt;
+    footSnap.fireCd -= dt;
+    footSnap.hitFlash = std::max(0.0f, footSnap.hitFlash - dt * 3.0f);
+    if (footSnap.reloadT > 0.0f) footSnap.reloadT = std::max(0.0f, footSnap.reloadT - dt);
+    if (footSnap.sampleId >= 0) footSnap.sampleT = std::min(cfg::SAMPLE_TIME, footSnap.sampleT + dt);
+    if (footSnap.down) footSnap.downT += dt;
+
+    Trooper t = footPred;
+    const float a = std::clamp(accumulator / net::TICK_DT, 0.0f, 1.0f);
+    t.pos = Vector3Add(Vector3Lerp(footPrev, footPred.pos, a), footCorr);
+    if (haveFootInput && !footSnap.down) {
+        t.yaw = footHeld.yaw;
+        t.pitch = std::clamp(footHeld.pitch, -cfg::TROOPER_PITCH_MAX, cfg::TROOPER_PITCH_MAX);
+    }
+    t.hp = footSnap.hp;
+    t.maxHp = footSnap.maxHp > 0.0f ? footSnap.maxHp : cfg::TROOPER_HP;
+    t.hitFlash = footSnap.hitFlash;
+    t.mag = footSnap.mag;
+    t.ammo = footSnap.ammo;
+    t.reloadT = footSnap.reloadT;
+    t.fireCd = footSnap.fireCd;
+    t.samples = footSnap.samples;
+    t.sampleId = footSnap.sampleId;
+    t.sampleT = footSnap.sampleT;
+    t.down = footSnap.down;
+    t.downT = footSnap.downT;
+    t.age = footSnap.age;
+    world.troopers.push_back(t);
+}
+
 // ===========================================================================
 // Fremde Schiffe: Interpolation
 // ===========================================================================
@@ -1423,8 +1651,11 @@ void NetClient::Impl::UpdateOwnDisplay(float dt) {
 // Partner in A: direkt an ihrer Position), verschwundene fallen weg.
 // Fehlen Daten (Darstellungszeit schon hinter dem neuesten Snapshot), wird
 // kurz mit der letzten Geschwindigkeit weitergerechnet (Extrapolation).
+// Fremde Figuren zu Fuß (Mitspieler, Bodenpiraten) genauso; die eigene
+// hängt UpdateOwnFoot danach an.
 void NetClient::Impl::UpdateRemoteShips() {
     world.ships.resize(1);   // ships[0] = eigenes Schiff bzw. Platzhalter
+    world.troopers.clear();
     if (frames.empty() || !timeSynced) return;
 
     double renderTime = Now() + timeOffset - net::INTERP_DELAY;
@@ -1530,6 +1761,67 @@ void NetClient::Impl::UpdateRemoteShips() {
         s.hp = hpFrac * 100.0f;
         world.ships.push_back(s);
     }
+
+    // --- Figuren zu Fuß ---
+    // Ohne Spieler sind es Bodenpiraten (im Mehrspieler gibt es keine
+    // NPC-Kameraden). Für die Animationen (Render.cpp): Tempo aus der
+    // Bewegung, Laufweg (walked) hier mitgezählt, "im Kampf" als targetId,
+    // beim Zombie der Schlag im Takt ZOMBIE_HIT_INTERVAL.
+    scratchIndex.clear();
+    if (fa != fb)
+        for (size_t i = 0; i < fa->troopers.size(); ++i) scratchIndex[fa->troopers[i].id] = i;
+    ++walkFrame;
+    world.troopers.reserve(fb->troopers.size() + 1);
+    for (const net::SnapTrooper& b : fb->troopers) {
+        if (footActive && static_cast<int>(b.id) == footPred.id) continue;
+        const net::SnapTrooper* a = nullptr;
+        if (fa != fb) {
+            const auto it = scratchIndex.find(b.id);
+            if (it != scratchIndex.end()) a = &fa->troopers[it->second];
+        }
+        Trooper t;
+        t.id = static_cast<int>(b.id);
+        t.playerId = b.playerId;
+        t.faction = b.playerId >= 0 ? Faction::Player : Faction::Pirate;
+        t.kind = b.playerId >= 0 ? TrooperKind::Mate : TrooperKind::Pirate;
+        t.team = b.team;
+        t.skin = b.skin;
+        t.zombie = b.zombie;
+        t.onGround = b.onGround;
+        t.down = b.down;
+        t.downT = b.downT;
+        const Vector3 pb{b.x, b.y, b.z};
+        if (a && Vector2Distance({a->x, a->z}, {b.x, b.z}) < REMOTE_TELEPORT) {
+            const float k = std::min(alpha, 1.0f);
+            const Vector3 pa{a->x, a->y, a->z};
+            t.pos = Vector3Lerp(pa, pb, alpha);
+            t.pos.y = std::max(0.0f, Lerp(pa.y, pb.y, k));
+            t.yaw = WrapAngle(a->yaw + AngleDiff(a->yaw, b.yaw) * k);
+            t.pitch = Lerp(a->pitch, b.pitch, k);
+            t.hitFlash = Lerp(a->hitFlash, b.hitFlash, k);
+            if (span > 1e-5f) t.vel = Vector3Scale(Vector3Subtract(pb, pa), 1.0f / span);
+        } else {
+            t.pos = pb;
+            t.yaw = b.yaw;
+            t.pitch = b.pitch;
+            t.hitFlash = b.hitFlash;
+        }
+        t.targetId = b.shooting ? 0 : -1;
+        if (b.zombie && b.shooting)
+            t.fireCd = cfg::ZOMBIE_HIT_INTERVAL - std::fmod(world.time, cfg::ZOMBIE_HIT_INTERVAL);
+        t.age = world.time + static_cast<float>(t.id % 7) * 0.37f;   // Leerlauf nicht bei allen im Gleichtakt
+        Walk& wk = walks[b.id];
+        const float step = Dist2D(wk.last, t.pos);
+        if (wk.seen + 1 == walkFrame && step < REMOTE_TELEPORT) wk.walked += step;
+        wk.last = t.pos;
+        wk.seen = walkFrame;
+        t.walked = wk.walked;
+        world.troopers.push_back(t);
+    }
+    for (auto it = walks.begin(); it != walks.end();) {
+        if (it->second.seen != walkFrame) it = walks.erase(it);
+        else ++it;
+    }
 }
 
 // Geschosse fliegen geradeaus mit fester Geschwindigkeit. Zwischen zwei
@@ -1549,15 +1841,18 @@ void NetClient::Impl::UpdateBullets() {
     world.bullets.reserve(bullets.size());
     for (const net::SnapBullet& sb : bullets) {
         Bullet b;
-        b.pos = Vector3{sb.x + sb.vx * age, sb.y, sb.z + sb.vz * age};
-        b.vel = Vector3{sb.vx, 0.0f, sb.vz};
+        b.pos = Vector3{sb.x + sb.vx * age, sb.y + sb.vy * age, sb.z + sb.vz * age};
+        b.vel = Vector3{sb.vx, sb.vy, sb.vz};
         b.life = cfg::BULLET_LIFE;
         switch (sb.type) {
             case 0: b.faction = Faction::Player; b.ownerId = 0; break;
             case 1: b.faction = Faction::Pirate; b.ownerId = 0; break;
             case 3: b.faction = Faction::Neutral; b.ownerId = -1; break;
+            case 4: b.faction = Faction::Player; b.ownerId = -1; b.ground = true; break;   // Figur des SG-Teams
+            case 5: b.faction = Faction::Pirate; b.ownerId = -1; b.ground = true; break;   // Bodenpirat
             default: b.faction = Faction::Neutral; b.ownerId = 0; break;
         }
+        if (b.ground && b.pos.y < 0.0f) continue;   // schon am Boden aufgeschlagen
         world.bullets.push_back(b);
     }
 }
@@ -1742,8 +2037,14 @@ bool NetClient::TakeUploadResult(bool& ok, std::string& text) {
     return true;
 }
 
-void NetClient::Update(float dt, const ShipInput& held, bool scanPressed, bool interactPressed) {
+void NetClient::Update(float dt, const ShipInput& held, bool scanPressed, bool interactPressed, const TrooperInput* foot) {
     Impl& d = *impl_;
+    d.haveFootInput = foot != nullptr;
+    if (foot) {
+        d.footHeld = *foot;
+        d.footJump = d.footJump || foot->jump;
+        d.footReload = d.footReload || foot->reload;
+    }
     if (!(dt > 0.0f)) dt = 0.0f;   // auch NaN
     dt = std::min(dt, MAX_FRAME_DT);
 
@@ -1774,7 +2075,12 @@ void NetClient::Update(float dt, const ShipInput& held, bool scanPressed, bool i
         d.world.time += viewDt;
         d.UpdateRemoteShips();
         d.UpdateBullets();
-        if (d.state == NetState::Playing) d.UpdateOwnDisplay(viewDt);
+        if (d.state == NetState::Playing) {
+            d.UpdateOwnDisplay(viewDt);
+            d.UpdateOwnFoot(viewDt);
+        }
+        for (Stargate& g : d.world.stargates)
+            if (g.state != GateState::Idle) g.t += viewDt;
         d.world.UpdateCosmetics(viewDt);
     }
 
@@ -1807,6 +2113,24 @@ void NetClient::SendChatTyping(bool typing) {
     net::ChatTypingMsg m;
     m.typing = typing;
     d.Send(net::Encode(m), true);
+}
+
+void NetClient::SendTeamAction(net::TeamActionType action, int param) {
+    Impl& d = *impl_;
+    if (d.state != NetState::Playing) return;
+    net::TeamActionMsg m;
+    m.action = action;
+    m.param = static_cast<uint8_t>(std::clamp(param, 0, 255));
+    d.Send(net::Encode(m), true);
+    if (d.host) enet_host_flush(d.host);
+}
+
+const net::TeamsMsg& NetClient::Teams() const { return impl_->teams; }
+
+bool NetClient::TakeTeamResult() {
+    const bool r = impl_->teamResult;
+    impl_->teamResult = false;
+    return r;
 }
 
 bool NetClient::WorldReady() const { return impl_->worldReady; }

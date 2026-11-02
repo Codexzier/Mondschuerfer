@@ -27,6 +27,8 @@
 //      |                 "Neues Konto anlegen".
 //      |                    |  NetClient meldet NetState::Playing
 //      |                    v
+//      |                 Rollenwahl (Pilot oder SG-Team, die letzte Wahl ist
+//      |                 vorausgewählt), dann
 //      |                 Playing: Spiel wie im Einzelspieler, zusätzlich
 //      |                 "Beste Piloten", Namen über fremden Schiffen,
 //      |                 Anzeige nach Absturz, Abschlussanimation beim Ziel,
@@ -34,6 +36,9 @@
 //      |                 Pause (ESC) mit Weiterspielen / Optionen / Abmelden;
 //      |                 die Optionen (OptionsScreen) liegen wie die Pause
 //      |                 über dem Spiel, das auf dem Server weiterläuft.
+//      |                 SG-Team: Command Center (CommandCenterScreen::
+//      |                 DrawOnline: Teams gründen, beitreten, Tor anwählen),
+//      |                 im Einsatz Ego-Ansicht zu Fuß mit dem HUD der Figur.
 //
 //   Verbindungsverlust in irgendeiner Phase -> zurück zu Address mit Fehlertext.
 //
@@ -47,7 +52,9 @@
 // Steuerung: Das eigene Schiff lenkt ein PilotControls-Objekt (Tastatur,
 // Maus, Controller; src/Controls.hpp) – dieselbe Steuerung wie im
 // Einzelspieler. Ihre Befehle gehen als Eingabepakete an den Server; das
-// Netzwerkprotokoll ist dafür unverändert.
+// Netzwerkprotokoll ist dafür unverändert. Zu Fuß steuert TrooperControls
+// (Maus und rechter Stick: Blick, der Mauszeiger ist dann eingefangen,
+// CaptureCursor); die Eingaben gehen ebenfalls als Eingabepakete an den Server.
 //
 // Abhängigkeiten: NetClient, Chat, ClientConfig (das gemeinsame g_clientConfig),
 // Options (Optionen in der Pause), Controls (Flugsteuerung), World
@@ -55,6 +62,7 @@
 // ---------------------------------------------------------------------------
 #include "Chat.hpp"
 #include "ClientConfig.hpp"
+#include "CommandCenter.hpp"
 #include "Controls.hpp"
 #include "NetClient.hpp"
 #include "Options.hpp"
@@ -95,6 +103,9 @@ public:
     // Eine Zeile für --report (automatische Tests): Phase, Spieler, Kontostand ...
     std::string Report() const;
 
+    // Zu Fuß im Einsatz (nicht in Pause und Chat): main.cpp fängt den Mauszeiger ein
+    bool CaptureCursor() const;
+
 private:
     enum class Phase { Address, Lobby, Login, Playing, Spectating };
 
@@ -114,6 +125,10 @@ private:
     void ReadGameInput(float dt, ShipInput& held, bool& scan, bool& interact);
     void UpdateAutopilotDock(float dt);
     void UpdatePlayingCamera(float dt);
+    bool ReadFootInput(float dt, TrooperInput& in);   // zu Fuß; false = keine Eingaben (Figur bleibt stehen)
+    const Trooper* OwnTrooper() const;                // eigene Figur im Einsatz, sonst nullptr
+    bool InCommand() const;                           // Rolle SG-Team ohne Figur: im Command Center
+    void ChooseRole(int role);                        // 0 Pilot, 1 SG-Team: an den Server schicken
     void UpdateFireworks(float dt);
     void FireworkBurst(Vector3 center, float spread, int strength);
 
@@ -131,6 +146,8 @@ private:
     void DrawTopPilots(const World& w);
     Rectangle TopPilotsRect() const;
     void DrawShipNames(const World& w);
+    void DrawTeamMarkers();                 // Figuren der SG-Teams auf der Minikarte (Piloten)
+    void DrawCommand();
     void DrawNoShip(const World& w);
     void DrawGoalAnimation();
     void DrawPause();
@@ -202,6 +219,17 @@ private:
     bool hadShip_ = false;         // schon einmal ein eigenes Schiff gesehen (für "zerstört")
     ChatBox chat_;                 // Chatfenster unten links
     bool chatTypingSent_ = false;  // zuletzt an den Server gemeldet: Chat-Eingabe offen
+
+    // SG-Team
+    bool roleChoice_ = false;      // Rollenwahl nach der Anmeldung offen
+    int roleSel_ = 0;              // markierte Karte (0 Pilot, 1 SG-Team)
+    int roleFrames_ = 0;           // Frames seit dem Öffnen der Rollenwahl
+    bool inCommand_ = false;       // im Command Center (für OpenOnline beim Betreten)
+    CommandCenterScreen command_;
+    TrooperControls trooperControls_;   // Steuerung zu Fuß (Ego-Ansicht)
+    int lookTrooper_ = -1;         // Figur, zu der lookYaw_/lookPitch_ gehören
+    float lookYaw_ = 0.0f;         // Blickrichtung zu Fuß (Maus/rechter Stick)
+    float lookPitch_ = 0.0f;
 
     // Abschlussanimation "Ziel erreicht"
     float goalAnimT_ = -1.0f;      // < 0: keine Animation

@@ -341,6 +341,7 @@ void World::RemovePlayer(int playerId) {
     PlayerState* ps = FindPlayer(playerId);
     if (!ps) return;
     FailMission(*ps, false);   // laufende Mission: das Angebot kommt zurück
+    EndSgMission(*ps, false, false);   // laufender Einsatz: Figur weg, das Tor geht an das Team
     const int shipId = ps->shipId;
     // Schiff sofort entfernen; Geschosse und KI-Ziele verweisen nur über die ID darauf.
     // remove_if + erase ist das übliche C++-Muster zum Löschen aus einem
@@ -372,6 +373,7 @@ void World::SpawnPlayerShip(PlayerState& ps) {
     Ship s = MakeShip(ShipKind::Player, pos);
     s.yaw = YawTowards(c, pos);
     s.playerId = ps.id;
+    s.hidden = ps.role == PlayerRole::Trooper;   // SG-Team: das Schiff wartet versteckt (SetRole)
     ships.push_back(s);
     ps.shipId = s.id;
     ps.respawnT = 0.0f;
@@ -1151,6 +1153,8 @@ void World::Dock(PlayerState& ps, int station) {
         if (stage > lastStage) {
             lastStage = stage;
             stageAnim = 1.0f;
+            // Mehrspieler: SG-Teams unterwegs laufen um die neuen Stationsteile herum
+            if (!troopers.empty()) BuildTrooperBlocks();
             SoundAt(Sfx::StationGrow, p.pos, 1.0f, 0.8f, ps.id);
             if (!simulation) Notify(ps, Fmt("Die Station wächst! Ausbaustufe %d", stage), Color{255, 210, 120, 255});
             // Funken an allen neuen Bauteilen aller Handelsstationen

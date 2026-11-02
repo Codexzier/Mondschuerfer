@@ -244,7 +244,8 @@ public:
 
         // Zu Fuß ist der Mauszeiger im Spiel eingefangen (Blick mit der Maus),
         // in Pause und Menüs wieder frei (vor dem Lesen der Eingaben).
-        const bool capture = screen_ == Screen::Playing && OnFoot() && world_.outcome == Outcome::None;
+        const bool capture = (screen_ == Screen::Playing && OnFoot() && world_.outcome == Outcome::None) ||
+                             (screen_ == Screen::Multiplayer && mp_ && mp_->CaptureCursor());
         if (capture != cursorCaptured_) {
             if (capture) DisableCursor();
             else EnableCursor();
@@ -1038,54 +1039,15 @@ private:
     // bzw. Controller-A; ESC führt zurück ins Hauptmenü (ohne zu speichern).
     // Bedienbar erst zwei Frames nach dem Öffnen (der Klick aus dem Menü).
     void DrawRoles() {
-        const float s = Scale();
-        const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
-        DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
-        const bool live = roleFrames_ > 1;
-        TextCentered("WIE WILLST DU SPIELEN?", W * 0.5f, H * 0.14f, 52 * s, ACCENT);
-        TextCentered("Die Rolle lässt sich später wechseln: im Command Center und an der Handelsstation.", W * 0.5f,
-                     H * 0.14f + 66 * s, 20 * s, MUTED);
-        struct Card {
-            const char* title;
-            const char* sub;
-            std::string lines[3];
-        };
-        const Card cards[2] = {
-            {"PILOT", "Mit dem Raumschiff",
-             {"Kristalle scannen, abbauen und verkaufen,", "das Schiff aufrüsten, Missionen fliegen.",
-              "Ziel: 100.000 Ressourcenpunkte."}},
-            {"SG-TEAM", "Zu Fuß durch das Stargate",
-             {"Start im Command Center mit Team SG1.",
-              TextFormat("%d Proben an gelben Kristallen sammeln", cfg::SAMPLE_GOAL),
-              "und durch ein Stargate zurückkehren."}},
-        };
-        const float cw = 460 * s, ch = 250 * s, gap = 40 * s;
-        const float y = H * 0.5f - ch * 0.5f;
-        int pick = -1;
-        for (int i = 0; i < 2; ++i) {
-            const Rectangle r{W * 0.5f - cw - gap * 0.5f + i * (cw + gap), y, cw, ch};
-            if (Button(r, "", 20 * s, roleSel_ == i) && live) pick = i;
-            const Card& c = cards[i];
-            Text(c.title, r.x + 28 * s, r.y + 26 * s, 40 * s, roleSel_ == i ? ACCENT : TEXT);
-            Text(c.sub, r.x + 28 * s, r.y + 76 * s, 22 * s, MUTED);
-            for (int l = 0; l < 3; ++l) Text(c.lines[l], r.x + 28 * s, r.y + 124 * s + l * 30 * s, 20 * s, TEXT);
-        }
-        if (live) {
-            if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT)) roleSel_ = 0;
-            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) roleSel_ = 1;
-            if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) pick = roleSel_;
-        }
-        TextCentered("Klick oder Pfeiltasten und Enter: wählen    ESC: zurück", W * 0.5f, y + ch + 30 * s, 20 * s, MUTED);
+        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, false);
         if (pick == 0) {
-            g_audio.Play(Sfx::UiConfirm);
             world_.SetRole(world_.Me(), PlayerRole::Pilot);
             controls_.Reset();
             screen_ = Screen::Playing;
         } else if (pick == 1) {
-            g_audio.Play(Sfx::UiConfirm);
             world_.SetRole(world_.Me(), PlayerRole::Trooper);
             OpenCommand();
-        } else if (live && BackPressed()) {
+        } else if (roleFrames_ > 1 && BackPressed()) {
             BackToMenu();
         }
     }

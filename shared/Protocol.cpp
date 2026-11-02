@@ -259,6 +259,23 @@ float DUnit(uint8_t q) { return static_cast<float>(q) / 255.0f; }
 uint8_t QHeight(float y) { return ClampRound<uint8_t>(y * 20.0f, 0.0f, 255.0f); }
 float DHeight(uint8_t q) { return static_cast<float>(q) / 20.0f; }
 
+// Eingaben: Schub, Drehung, Laufen und Seitwärts in Prozent (int8), Blick
+// nach links/rechts als Winkelstufe (QAngle), nach oben/unten in
+// Zehntausendstel Bogenmaß (int16). Encode(InputMsg) schreibt genau diese Werte.
+namespace {
+float QPercent(float v) { return static_cast<float>(ClampRound<int8_t>(v * 100.0f, -100.0f, 100.0f)) / 100.0f; }
+int16_t QPitch(float v) { return ClampRound<int16_t>(v * 10000.0f, -32000.0f, 32000.0f); }
+} // namespace
+
+void QuantizeInput(InputRecord& in) {
+    in.thrust = QPercent(in.thrust);
+    in.turn = QPercent(in.turn);
+    in.forward = QPercent(in.forward);
+    in.strafe = QPercent(in.strafe);
+    in.yaw = DAngle(QAngle(in.yaw));
+    in.pitch = static_cast<float>(QPitch(in.pitch)) / 10000.0f;
+}
+
 // ===========================================================================
 // Hilfen für wiederkehrende Teile
 // ===========================================================================
@@ -469,12 +486,27 @@ std::vector<uint8_t> Encode(const InputMsg& m) {
     for (size_t i = first; i < m.records.size(); ++i) {
         const InputRecord& in = m.records[i];
         w.U32(in.seq);
-        // Schub und Drehung -1..1 in Prozent (int8 -100..100). Der Client
-        // rechnet seine Vorhersage mit genau diesen gerundeten Werten
+        // Bitfeld: 1 Feuer, 2 zu Fuß, 4 Sprung, 8 Sprint, 16 Nachladen, 32 Probe
+        uint8_t flags = 0;
+        if (in.fire) flags |= 1;
+        if (in.foot) flags |= 2;
+        if (in.foot && in.jump) flags |= 4;
+        if (in.foot && in.sprint) flags |= 8;
+        if (in.foot && in.reload) flags |= 16;
+        if (in.foot && in.sample) flags |= 32;
+        w.U8(flags);
+        // -1..1 in Prozent (int8 -100..100), Blick wie QuantizeInput. Der
+        // Client rechnet seine Vorhersage mit genau diesen gerundeten Werten
         // (NetClient::StepOwnShip), damit Server und Client gleich rechnen.
-        w.I8(ClampRound<int8_t>(in.thrust * 100.0f, -100.0f, 100.0f));
-        w.I8(ClampRound<int8_t>(in.turn * 100.0f, -100.0f, 100.0f));
-        w.U8(in.fire ? 1 : 0);
+        if (in.foot) {
+            w.I8(ClampRound<int8_t>(in.forward * 100.0f, -100.0f, 100.0f));
+            w.I8(ClampRound<int8_t>(in.strafe * 100.0f, -100.0f, 100.0f));
+            w.U16(QAngle(in.yaw));
+            w.I16(QPitch(in.pitch));
+        } else {
+            w.I8(ClampRound<int8_t>(in.thrust * 100.0f, -100.0f, 100.0f));
+            w.I8(ClampRound<int8_t>(in.turn * 100.0f, -100.0f, 100.0f));
+        }
         w.U8(in.scanPresses);
         w.U8(in.interactPresses);
     }
@@ -488,9 +520,22 @@ bool Decode(Reader& r, InputMsg& m) {
     for (uint8_t i = 0; i < n; ++i) {
         InputRecord in;
         in.seq = r.U32();
-        in.thrust = std::clamp(static_cast<float>(r.I8()) / 100.0f, -1.0f, 1.0f);
-        in.turn = std::clamp(static_cast<float>(r.I8()) / 100.0f, -1.0f, 1.0f);
-        in.fire = (r.U8() & 1) != 0;
+        const uint8_t flags = r.U8();
+        in.fire = (flags & 1) != 0;
+        in.foot = (flags & 2) != 0;
+        if (in.foot) {
+            in.jump = (flags & 4) != 0;
+            in.sprint = (flags & 8) != 0;
+            in.reload = (flags & 16) != 0;
+            in.sample = (flags & 32) != 0;
+            in.forward = std::clamp(static_cast<float>(r.I8()) / 100.0f, -1.0f, 1.0f);
+            in.strafe = std::clamp(static_cast<float>(r.I8()) / 100.0f, -1.0f, 1.0f);
+            in.yaw = DAngle(r.U16());
+            in.pitch = static_cast<float>(r.I16()) / 10000.0f;
+        } else {
+            in.thrust = std::clamp(static_cast<float>(r.I8()) / 100.0f, -1.0f, 1.0f);
+            in.turn = std::clamp(static_cast<float>(r.I8()) / 100.0f, -1.0f, 1.0f);
+        }
         in.scanPresses = r.U8();
         in.interactPresses = r.U8();
         m.records.push_back(in);
@@ -548,6 +593,22 @@ std::vector<uint8_t> Encode(const ChatTypingMsg& m) {
 
 bool Decode(Reader& r, ChatTypingMsg& m) {
     m.typing = r.U8() != 0;
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const TeamActionMsg& m) {
+    Writer w;
+    Start(MsgType::TeamAction, w);
+    w.U8(static_cast<uint8_t>(m.action));
+    w.U8(m.param);
+    return w.buf;
+}
+
+bool Decode(Reader& r, TeamActionMsg& m) {
+    const uint8_t a = r.U8();
+    if (a > static_cast<uint8_t>(TeamActionType::Abort)) return false;
+    m.action = static_cast<TeamActionType>(a);
+    m.param = r.U8();
     return r.ok();
 }
 
@@ -618,6 +679,7 @@ std::vector<uint8_t> Encode(const WelcomeMsg& m) {
     w.I64(m.totalDelivered);
     w.F32(m.serverTime);
     w.U32(m.tick);
+    w.U8(m.lastRole);
     return w.buf;
 }
 
@@ -631,6 +693,7 @@ bool Decode(Reader& r, WelcomeMsg& m) {
     m.totalDelivered = r.I64();
     m.serverTime = r.F32();
     m.tick = r.U32();
+    m.lastRole = r.U8();
     return r.ok();
 }
 
@@ -710,6 +773,36 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         // Funkspruch: Restzeit in Zehntelsekunden (höchstens 25,5 s)
         w.I8(e.cue);
         w.U8(static_cast<uint8_t>(std::clamp(e.cueT * 10.0f, 0.0f, 255.0f)));
+        // SG-Team: Rolle, Team und (im Einsatz) die eigene Figur, genau (float)
+        w.U8(e.role);
+        w.U8(e.sgTeam);
+        w.U8(e.hasTrooper ? 1 : 0);
+        if (e.hasTrooper) {
+            const SnapMeTrooper& t = e.trooper;
+            w.I32(t.id);
+            w.F32(t.x);
+            w.F32(t.y);
+            w.F32(t.z);
+            w.F32(t.vx);
+            w.F32(t.vy);
+            w.F32(t.vz);
+            w.F32(t.yaw);
+            w.U8(static_cast<uint8_t>((t.onGround ? 1 : 0) | (t.down ? 2 : 0)));
+            w.F32(t.hp);
+            w.F32(t.maxHp);
+            w.U8(QUnit(t.hitFlash));
+            w.U8(t.mag);
+            w.U16(t.ammo);
+            w.F32(t.reloadT);
+            w.F32(t.fireCd);
+            w.U8(t.samples);
+            w.I32(t.sampleId);
+            w.F32(t.sampleT);
+            w.F32(t.downT);
+            w.F32(t.age);
+            w.F32(t.sgTime);
+            w.U16(t.sgPirates);
+        }
     }
     w.U16(static_cast<uint16_t>(std::min<size_t>(m.ships.size(), 65535)));
     for (size_t i = 0; i < m.ships.size() && i < 65535; ++i) {
@@ -751,6 +844,7 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.I16(QVel(b.vx));
         w.I16(QVel(b.vz));
         w.U8(b.type);
+        if (b.type >= 4) w.I16(QVel(b.vy));   // Bodengeschoss: fliegt auch nach oben/unten
     }
     w.U16(static_cast<uint16_t>(std::min<size_t>(m.wrecks.size(), 65535)));
     for (size_t i = 0; i < m.wrecks.size() && i < 65535; ++i) {
@@ -766,6 +860,37 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         // Alter des Wracks in ganzen Sekunden (verschwindet nach 300 s; für
         // die Darstellung genügt diese Genauigkeit)
         w.U16(ClampU16(static_cast<int64_t>(k.age)));
+    }
+    w.U16(static_cast<uint16_t>(std::min<size_t>(m.troopers.size(), 65535)));
+    for (size_t i = 0; i < m.troopers.size() && i < 65535; ++i) {
+        const SnapTrooper& t = m.troopers[i];
+        w.U32(t.id);
+        w.I16(t.playerId);
+        w.U8(t.team);
+        w.U8(t.skin);
+        w.I16(QPos(t.x));
+        w.U8(QHeight(t.y));
+        w.I16(QPos(t.z));
+        w.U16(QAngle(t.yaw));
+        w.I8(ClampRound<int8_t>(t.pitch * 80.0f, -127.0f, 127.0f));   // ±1,45 rad genügt grob
+        w.U8(QUnit(t.hitFlash));
+        // Bitfeld: 1 am Boden, 2 gefallen, 4 Zombie, 8 im Kampf
+        uint8_t flags = 0;
+        if (t.onGround) flags |= 1;
+        if (t.down) flags |= 2;
+        if (t.zombie) flags |= 4;
+        if (t.shooting) flags |= 8;
+        w.U8(flags);
+        if (t.down) w.U8(static_cast<uint8_t>(std::clamp(t.downT * 20.0f, 0.0f, 255.0f)));
+    }
+    w.U8(static_cast<uint8_t>(std::min<size_t>(m.gates.size(), 255)));
+    for (size_t i = 0; i < m.gates.size() && i < 255; ++i) {
+        const SnapGate& g = m.gates[i];
+        w.U8(g.index);
+        w.U8(static_cast<uint8_t>(g.state | (g.toCommand ? 0x80 : 0)));
+        w.U16(ClampU16(static_cast<int64_t>(std::lround(g.t * 100.0f))));   // Hundertstelsekunden
+        w.I16(g.playerId);
+        w.U8(g.team);
     }
     return w.buf;
 }
@@ -840,6 +965,38 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         }
         e.cue = r.I8();
         e.cueT = r.U8() / 10.0f;
+        e.role = r.U8();
+        if (e.role > 1) return false;
+        e.sgTeam = r.U8();
+        e.hasTrooper = r.U8() != 0;
+        if (e.hasTrooper) {
+            SnapMeTrooper& t = e.trooper;
+            t.id = r.I32();
+            t.x = r.F32();
+            t.y = r.F32();
+            t.z = r.F32();
+            t.vx = r.F32();
+            t.vy = r.F32();
+            t.vz = r.F32();
+            t.yaw = r.F32();
+            const uint8_t tf = r.U8();
+            t.onGround = (tf & 1) != 0;
+            t.down = (tf & 2) != 0;
+            t.hp = r.F32();
+            t.maxHp = r.F32();
+            t.hitFlash = DUnit(r.U8());
+            t.mag = r.U8();
+            t.ammo = r.U16();
+            t.reloadT = r.F32();
+            t.fireCd = r.F32();
+            t.samples = r.U8();
+            t.sampleId = r.I32();
+            t.sampleT = r.F32();
+            t.downT = r.F32();
+            t.age = r.F32();
+            t.sgTime = r.F32();
+            t.sgPirates = r.U16();
+        }
     }
     const uint16_t ns = r.U16();
     if (ns > MAX_LIST) return false;
@@ -883,6 +1040,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         b.vx = DVel(r.I16());
         b.vz = DVel(r.I16());
         b.type = r.U8();
+        if (b.type >= 4) b.vy = DVel(r.I16());
         m.bullets.push_back(b);
     }
     const uint16_t nw = r.U16();
@@ -902,6 +1060,44 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         k.age = static_cast<float>(r.U16());
         m.wrecks.push_back(k);
     }
+    const uint16_t nt = r.U16();
+    if (nt > MAX_LIST) return false;
+    m.troopers.clear();
+    m.troopers.reserve(nt);
+    for (uint16_t i = 0; i < nt && r.ok(); ++i) {
+        SnapTrooper t;
+        t.id = r.U32();
+        t.playerId = r.I16();
+        t.team = r.U8();
+        t.skin = r.U8();
+        t.x = DPos(r.I16());
+        t.y = DHeight(r.U8());
+        t.z = DPos(r.I16());
+        t.yaw = DAngle(r.U16());
+        t.pitch = static_cast<float>(r.I8()) / 80.0f;
+        t.hitFlash = DUnit(r.U8());
+        const uint8_t flags = r.U8();
+        t.onGround = (flags & 1) != 0;
+        t.down = (flags & 2) != 0;
+        t.zombie = (flags & 4) != 0;
+        t.shooting = (flags & 8) != 0;
+        if (t.down) t.downT = r.U8() / 20.0f;
+        m.troopers.push_back(t);
+    }
+    const uint8_t ng = r.U8();
+    m.gates.clear();
+    for (uint8_t i = 0; i < ng && r.ok(); ++i) {
+        SnapGate g;
+        g.index = r.U8();
+        const uint8_t st = r.U8();
+        g.state = st & 0x7F;
+        if (g.state > 3) return false;
+        g.toCommand = (st & 0x80) != 0;
+        g.t = r.U16() / 100.0f;
+        g.playerId = r.I16();
+        g.team = r.U8();
+        m.gates.push_back(g);
+    }
     return r.ok();
 }
 
@@ -920,6 +1116,7 @@ std::vector<uint8_t> Encode(const DepositsMsg& m) {
         w.U8(d.variant);
         w.U16(d.amount);
         w.U16(d.initial);
+        w.U8(d.sample);
     }
     return w.buf;
 }
@@ -939,6 +1136,8 @@ bool Decode(Reader& r, DepositsMsg& m) {
         d.variant = r.U8();
         d.amount = r.U16();
         d.initial = r.U16();
+        d.sample = r.U8();
+        if (d.sample > 2) return false;
         m.deposits.push_back(d);
     }
     return r.ok();
@@ -1077,6 +1276,13 @@ std::vector<uint8_t> Encode(const PlayersMsg& m) {
         w.U16(p.kills);
         w.U16(p.goals);
         w.U8(p.lives);
+        // SG-Team: Rolle (Bit 0), Figur im Einsatz (Bit 1) mit Position
+        w.U8(static_cast<uint8_t>((p.role & 1) | (p.onFoot ? 2 : 0)));
+        w.U8(p.team);
+        if (p.onFoot) {
+            w.I16(QPos(p.x));
+            w.I16(QPos(p.z));
+        }
     }
     return w.buf;
 }
@@ -1105,6 +1311,14 @@ bool Decode(Reader& r, PlayersMsg& m) {
         p.kills = r.U16();
         p.goals = r.U16();
         p.lives = r.U8();
+        const uint8_t sg = r.U8();
+        p.role = sg & 1;
+        p.onFoot = (sg & 2) != 0;
+        p.team = r.U8();
+        if (p.onFoot) {
+            p.x = DPos(r.I16());
+            p.z = DPos(r.I16());
+        }
         m.players.push_back(p);
     }
     return r.ok();
@@ -1192,6 +1406,74 @@ bool Decode(Reader& r, ChatLineMsg& m) {
     m.playerId = r.I32();
     m.name = r.Str();
     m.text = r.Str();
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const TeamsMsg& m) {
+    Writer w;
+    Start(MsgType::Teams, w);
+    w.U8(m.moonGate ? 1 : 0);
+    w.U8(static_cast<uint8_t>(std::min<size_t>(m.teams.size(), 255)));
+    for (size_t i = 0; i < m.teams.size() && i < 255; ++i) {
+        const TeamEntry& t = m.teams[i];
+        w.U8(t.number);
+        w.U8(t.state);
+        w.F32(t.dialT);
+        const size_t n = std::min<size_t>(t.members.size(), cfg::SG_TEAM_MAX);
+        w.U8(static_cast<uint8_t>(n));
+        for (size_t k = 0; k < n; ++k) {
+            const TeamMember& mb = t.members[k];
+            w.I32(mb.playerId);
+            w.Str(mb.name);
+            w.U8(static_cast<uint8_t>((mb.ready ? 1 : 0) | (mb.out ? 2 : 0)));
+        }
+    }
+    // Bitfeld: 1 Ergebnis vorhanden, 2 gerade beendet, 4 zurückgekehrt
+    w.U8(static_cast<uint8_t>((m.hasResult ? 1 : 0) | (m.fresh ? 2 : 0) | (m.success ? 4 : 0)));
+    if (m.hasResult) {
+        w.U16(m.number);
+        w.U16(m.samples);
+        w.U16(m.pirates);
+        w.I32(m.points);
+        w.F32(m.seconds);
+    }
+    return w.buf;
+}
+
+bool Decode(Reader& r, TeamsMsg& m) {
+    m.moonGate = r.U8() != 0;
+    const uint8_t nt = r.U8();
+    m.teams.clear();
+    for (uint8_t i = 0; i < nt && r.ok(); ++i) {
+        TeamEntry t;
+        t.number = r.U8();
+        t.state = r.U8();
+        if (t.state > 2) return false;
+        t.dialT = r.F32();
+        const uint8_t n = r.U8();
+        if (n > cfg::SG_TEAM_MAX) return false;
+        for (uint8_t k = 0; k < n && r.ok(); ++k) {
+            TeamMember mb;
+            mb.playerId = r.I32();
+            mb.name = r.Str();
+            const uint8_t f = r.U8();
+            mb.ready = (f & 1) != 0;
+            mb.out = (f & 2) != 0;
+            t.members.push_back(mb);
+        }
+        m.teams.push_back(t);
+    }
+    const uint8_t f = r.U8();
+    m.hasResult = (f & 1) != 0;
+    m.fresh = (f & 2) != 0;
+    m.success = (f & 4) != 0;
+    if (m.hasResult) {
+        m.number = r.U16();
+        m.samples = r.U16();
+        m.pirates = r.U16();
+        m.points = r.I32();
+        m.seconds = r.F32();
+    }
     return r.ok();
 }
 

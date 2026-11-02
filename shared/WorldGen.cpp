@@ -578,11 +578,12 @@ void BuildShipDealer(Station& d) {
 // Neue Lagerstätten sind zunächst unentdeckt (revealed = false bzw. leere
 // revealedFor-Liste); erst der Scanner eines Spielers deckt sie auf.
 // ===========================================================================
-// Gelbe Kristalle (FPS-Modus, nur Einzelspieler ohne Simulation): Anteil
-// cfg::YELLOW_SHARE, ausgewählt über die ID statt mit einer Zufallszahl,
-// damit die Zahlenfolge von rng gleich bleibt.
+// Gelbe Kristalle (FPS-Modus, Einzelspieler ohne Simulation und Server):
+// Anteil cfg::YELLOW_SHARE, ausgewählt über die ID statt mit einer
+// Zufallszahl, damit die Zahlenfolge von rng gleich bleibt. Der Server zeigt
+// sie allen Spielern ohne Scanner (GameServer::MakeDeposits).
 bool World::StartsYellow(int depositId) const {
-    return !isServer && !simulation &&
+    return !simulation &&
            ((static_cast<unsigned>(depositId) * 2654435761u) >> 16) % 100u < static_cast<unsigned>(cfg::YELLOW_SHARE * 100.0f);
 }
 

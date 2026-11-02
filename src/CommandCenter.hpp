@@ -16,8 +16,15 @@
 //   in die eigene Welt der Einsatzkarte (World::StartSgMission,
 //   World::NewInstance, ausgeführt von main.cpp).
 //
+// Mehrspieler (DrawOnline): dieselbe Kulisse, aber ohne Einsatzkarten und
+//   NPC-Kameraden. Links das eigene Team (gründen, beitreten, bereit melden,
+//   verlassen; der Gründer wählt das Tor an), rechts alle SG-Teams des
+//   Servers. Was gewählt wird, schickt MultiplayerScreen als TeamAction an
+//   den Server; Anwahl und Ergebnis kommen von dort (net::TeamsMsg).
+//
 // Wer benutzt die Datei?
-//   src/main.cpp (Bildschirm Screen::Command). DrawGateWormhole ist in
+//   src/main.cpp (Bildschirm Screen::Command), src/Multiplayer.cpp (Command
+//   Center und Rollenwahl im Mehrspieler). DrawGateWormhole ist in
 //   src/Render.cpp definiert und zeichnet das Wurmloch in der Welt und hier.
 //
 // Abhängigkeiten: shared/World.hpp (PlayerState, Stargates, SgRecord),
@@ -25,6 +32,7 @@
 // ---------------------------------------------------------------------------
 #pragma once
 #include "MapFiles.hpp"
+#include "Protocol.hpp"
 #include "World.hpp"
 #include <string>
 #include <vector>
@@ -33,6 +41,14 @@
 // main.cpp. Die Zahl der Kameraden ändert der Bildschirm selbst
 // (PlayerState::sgMates).
 enum class CommandAction { None, Mission, Pilot, SaveAndMenu };
+
+// Mehrspieler: was im Command Center gewählt wurde (MultiplayerScreen
+// schickt es als TeamAction an den Server bzw. meldet ab).
+struct OnlineCommand {
+    enum class Kind { None, Create, Join, Leave, Ready, Dial, Pilot, Menu };
+    Kind kind = Kind::None;
+    int param = 0;   // Join: SG-Nummer, Ready: 1 = bereit, 0 = nicht mehr
+};
 
 class CommandCenterScreen {
 public:
@@ -52,8 +68,14 @@ public:
     // Gewähltes Ziel: Dateistamm der Einsatzkarte, "" = Mondkarte
     std::string TargetStem() const { return target_ > 0 ? targets_[static_cast<size_t>(target_ - 1)].stem : std::string(); }
 
+    // Mehrspieler: beim Betreten zurücksetzen, dann jedes Frame Update und
+    // DrawOnline. teams = Stand vom Server, myId = eigene Spieler-ID,
+    // fresh = gerade ist ein eigener Einsatz zu Ende gegangen (Ergebnis zeigen).
+    void OpenOnline();
+    OnlineCommand DrawOnline(const net::TeamsMsg& teams, int myId, bool fresh);
+
 private:
-    void DrawScene(const World& w);
+    void DrawScene(int figures);   // figures = so viele Figuren vor dem Tor (1..4)
     float time_ = 0.0f;    // Sekunden seit Open (Animationen)
     float dialT_ = -1.0f;  // Anwahl: Sekunden seit dem Start, -1 = keine
     int sel_ = 0;          // per Tastatur gewählter Knopf
@@ -65,7 +87,15 @@ private:
     int target_ = 0;                     // Ziel: 0 = Mondkarte, sonst targets_[target_ - 1]
     std::string previewStem_;            // Vorschaubild: Einsatzkarte, die in preview_ steht ("" = keine)
     GameMap preview_;
+    int joinTarget_ = 0;                 // Mehrspieler: Team für "Beitreten" (SG-Nummer, 0 = das erste offene)
 };
+
+// Rollenwahl (Einzelspieler nach "Neues Spiel"/"Fortsetzen", Mehrspieler
+// nach der Anmeldung): zwei Karten Pilot und SG-Team, abgedunkelt über dem
+// Bild. sel = markierte Karte (Pfeiltasten/A/D ändern sie), live = bedienbar.
+// Liefert 0 (Pilot) oder 1 (SG-Team), sobald gewählt wurde, sonst -1.
+// online = Texte für den Mehrspieler. ESC wertet der Aufrufer aus.
+int DrawRoleChoice(int& sel, bool live, bool online);
 
 // Wurmloch eines Stargates mit Fußpunkt pos, Drehung yaw und Größe scale
 // (Render.cpp). Mit BLEND_ADDITIVE und ohne Schreiben in den Tiefenpuffer
