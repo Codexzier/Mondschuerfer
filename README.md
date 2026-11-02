@@ -200,7 +200,11 @@ Zu Fuß zeigt die **Minikarte** oben rechts wie im Schiff die ganze Karte (auf e
 ihr Spielfeld): dich als Pfeil, dein Team, Stargates, Kristalle und Gegner im Radarkreis. Über
 den Gegnern steht ihr **HP-Balken** (abschaltbar in *Optionen → Steuerung*). Auf den Einsatzkarten
 wirkt die Schwerkraft der Erde (1 G, kurze Sprünge), auf der Mondkarte die des Mondes. Beim
-Nachladen senkt sich die Waffe schnell; wer währenddessen abdrückt, hört nur ein Klicken.
+Nachladen senkt sich die Waffe schnell; wer währenddessen abdrückt, hört nur ein Klicken. Über
+der Mondkarte steht ein Sternenhimmel, über den regelmäßig Kometen ziehen. Die Einsatzkarten
+bekommen zufällig eine Skybox passend zu ihrem Himmel (Tag/Abend: Tageshimmel, Nacht:
+Sternenhimmel mit Kometen); zwei große Trägerschiffe gehen am Horizont auf und ziehen langsam
+über den Himmel (nur zu Fuß zu sehen).
 
 **Rückkehr:** Mit 5 Proben (im Mehrspieler stellt der Betreiber die Zahl ein) gehst du zu einem Stargate (näher als 12 m, auch ein Kamerad dort
 genügt). Es wird angewählt und öffnet sich nach 3 Sekunden; die Treppe hinauf und hindurch, und
