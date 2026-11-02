@@ -315,6 +315,26 @@ void KeepNearest(std::vector<Candidate>& c, size_t keep) {
     c.resize(keep);
 }
 
+// Eingabe der Figur aus einer Eingabe des Clients (wie FootInput in
+// NetClient.cpp). Ohne Werte zu Fuß (gerade erst durch das Tor) behält die
+// Figur ihren Blick. Sprung und Nachladen nur aus einer neuen Eingabe (fresh).
+TrooperInput FootInputOf(const net::InputRecord& r, const Trooper& t, bool fresh) {
+    TrooperInput ti;
+    ti.yaw = t.yaw;
+    ti.pitch = t.pitch;
+    if (!r.foot) return ti;
+    ti.forward = r.forward;
+    ti.strafe = r.strafe;
+    ti.yaw = r.yaw;
+    ti.pitch = r.pitch;
+    ti.fire = r.fire;
+    ti.sprint = r.sprint;
+    ti.sample = r.sample;
+    ti.jump = fresh && r.jump;
+    ti.reload = fresh && r.reload;
+    return ti;
+}
+
 } // namespace
 
 // ===========================================================================
@@ -582,8 +602,16 @@ void GameServer::ApplyInputs() {
                 const net::InputRecord dropped = c.inputs.front();
                 c.inputs.pop_front();
                 if (dropped.fire) c.inputs.front().fire = true;
-                if (dropped.jump) c.inputs.front().jump = true;      // zu Fuß: Sprung und Nachladen
-                if (dropped.reload) c.inputs.front().reload = true;  // ebenso weitergeben
+                if (dropped.reload) c.inputs.front().reload = true;  // zu Fuß: Nachladen ebenso weitergeben
+                // Zu Fuß bewegt die übersprungene Eingabe die Figur trotzdem
+                // einen Schritt (mit ihrem Sprung), genau wie in der Vorhersage
+                // des Clients. Sonst fehlte dort ein Schritt (Ruckeln beim Abgleich).
+                Instance* inst = InstanceOf(c.playerId);
+                World& dw = inst ? *inst->world : world_;
+                const PlayerState* dp = dw.FindPlayer(c.playerId);
+                Trooper* dropT = dp && dp->role == PlayerRole::Trooper ? dw.FindTrooper(dp->trooperId) : nullptr;
+                if (dropT && !dropT->down) dw.UpdateTrooperPhysics(*dropT, net::TICK_DT, FootInputOf(dropped, *dropT, true));
+                else if (dropped.jump) c.inputs.front().jump = true;
             }
             c.queueMinInWindow = 1 << 30;
             c.queueWindowSteps = 0;
@@ -622,28 +650,17 @@ void GameServer::ApplyInputs() {
         if (tick_ < c.noInteractUntilTick) in.interact = false;
         ps->input = in;
         if (Ship* s = world_.PlayerShip(*ps)) s->chatting = c.chatting;
-        // SG-Team im Einsatz: Eingaben der Figur. Sprung und Nachladen nur aus
-        // einer neuen Eingabe (wie die Tastendrücke oben). Kommt noch keine
-        // Eingabe zu Fuß (gerade erst durch das Tor), behält die Figur ihren Blick.
-        // Auf einer Einsatzkarte steht die Figur in der Welt der Instanz.
+        // SG-Team im Einsatz: Eingaben der Figur (FootInputOf). Auf einer
+        // Einsatzkarte steht die Figur in der Welt der Instanz. Ohne neue
+        // Eingabe bleibt sie in diesem Schritt stehen (hold): Der Client bewegt
+        // sie je Eingabe genau einen Schritt; liefe sie hier weiter, wäre der
+        // Server einen Schritt voraus und die Vorhersage müsste nachkorrigieren
+        // (sichtbares Ruckeln, vor allem im Sprung).
         if (Instance* inst = InstanceOf(c.playerId)) ps = inst->world->FindPlayer(c.playerId);
         const World& fw = WorldOf(c.playerId);
         if (const Trooper* t = ps->role == PlayerRole::Trooper ? fw.FindTrooper(ps->trooperId) : nullptr) {
-            TrooperInput ti;
-            ti.yaw = t->yaw;
-            ti.pitch = t->pitch;
-            if (c.held.foot) {
-                ti.forward = c.held.forward;
-                ti.strafe = c.held.strafe;
-                ti.yaw = c.held.yaw;
-                ti.pitch = c.held.pitch;
-                ti.fire = c.held.fire;
-                ti.sprint = c.held.sprint;
-                ti.sample = c.held.sample;
-                ti.jump = fresh && c.held.jump;
-                ti.reload = fresh && c.held.reload;
-            }
-            ps->trooperInput = ti;
+            ps->trooperInput = FootInputOf(c.held, *t, fresh);
+            ps->trooperInput.hold = !fresh;
             ps->input = ShipInput{};
         }
     }

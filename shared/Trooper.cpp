@@ -810,7 +810,7 @@ void World::UpdateTroopers(float dt) {
             in.yaw = t.yaw;
             in.pitch = t.pitch;
         }
-        UpdateTrooperPhysics(t, dt, in);
+        if (!in.hold) UpdateTrooperPhysics(t, dt, in);   // hold: GameServer::ApplyInputs
         t.age += dt;
         t.fireCd -= dt;
         t.hitFlash = std::max(0.0f, t.hitFlash - dt * 3.0f);

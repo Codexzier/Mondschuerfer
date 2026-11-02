@@ -294,6 +294,7 @@ struct TrooperInput {
     bool sprint = false;
     bool reload = false;   // einmaliger Druck
     bool sample = false;   // gedrückt halten = Probe nehmen (an einem gelben Kristall)
+    bool hold = false;     // Mehrspieler: keine neue Eingabe, Figur in diesem Schritt nicht bewegen
 };
 
 // KI-Figuren (Trooper::playerId == -1, Ai.cpp): Kameraden des SG-Teams
