@@ -23,7 +23,7 @@
 //     ("[F] Andocken" bzw. "[Y] Andocken" / "[Dreieck] Andocken") und die
 //     Zeilen der Tastenhilfe.
 //   - ClientConfig.hpp: g_clientConfig.subtitles (Optionen: Untertitel der
-//     Funksprüche an/aus).
+//     Funksprüche an/aus) und enemyBars (HP-Balken über Gegnern zu Fuß).
 //   - Audio.hpp: g_audio für den Ton "Abgelehnt" (Sfx::Denied), wenn etwas
 //     zu teuer ist. Der Ton entsteht direkt hier im Client, auch im
 //     Mehrspieler – es ist reine Bedien-Rückmeldung, der Server weiß davon nichts.
@@ -48,8 +48,9 @@
 //   7. Funkspruch (Mission, Start, Fortsetzen) unten rechts
 //   8. Tastenhilfe unten links
 // Zu Fuß (Trupp, Ego-Ansicht) zeichnet DrawHud stattdessen DrawTrooperHud:
-// roter Warnrand, Fadenkreuz, Schild und Munition, Kameraden, Richtung zum
-// Tor, Meldungen, "Gefallen", Tastenhilfe.
+// roter Warnrand, HP-Balken über den Gegnern, Fadenkreuz, Schild und
+// Munition, Kameraden, Minikarte, Richtung zum Tor, Meldungen, "Gefallen",
+// Tastenhilfe.
 // ---------------------------------------------------------------------------
 #include "Hud.hpp"
 #include "Assets.hpp"
@@ -431,6 +432,112 @@ void DrawControls(float x, float y, float size, bool foot) {
 // ===========================================================================
 // HUD zu Fuß (Trupp, Ego-Ansicht)
 // ===========================================================================
+// Minikarte zu Fuß, an derselben Stelle und mit derselben Umrechnung wie
+// Minimap (die ganze Karte; Einsatzkarte: ihr Spielfeld fieldHalf). Gezeigt
+// werden: entdeckte Lagerstätten (gelbe Kristalle gelb), Stationen,
+// Stargates (hellblau, das der Rückkehr pulsiert), die Figuren des eigenen
+// Teams und Kameraden (Raute in Schildfarbe), andere Spieler (weiß) und
+// Gegner im Radarkreis (zwei Sichtweiten der KI, rot), die eigene Figur als
+// Pfeil in Blickrichtung.
+static void TrooperMinimap(const World& w, const Trooper& t, int homeGate) {
+    const float s = Scale();
+    const float size = 230 * s;
+    const Rectangle r{GetScreenWidth() - size - 16 * s, 16 * s, size, size};
+    Panel(r, Color{18, 22, 30, 215});
+    const float half = w.instance ? w.fieldHalf : cfg::WORLD_HALF;
+    auto map = [&](Vector3 p) {
+        return Vector2{r.x + (p.x + half) / (2 * half) * r.width, r.y + (p.z + half) / (2 * half) * r.height};
+    };
+    for (int i = 1; i < 6; ++i) {
+        float x = r.x + r.width * i / 6.0f, y = r.y + r.height * i / 6.0f;
+        DrawLineEx({x, r.y}, {x, r.y + r.height}, 1, Color{255, 255, 255, 18});
+        DrawLineEx({r.x, y}, {r.x + r.width, y}, 1, Color{255, 255, 255, 18});
+    }
+    const float radar = 2.0f * cfg::TROOPER_SIGHT_CELLS * (w.instance ? mapgrid::MISSION_CELL : mapgrid::CELL);
+    const Vector2 pp = map(t.pos);
+    DrawCircleLinesV(pp, radar / (2 * half) * r.width, Color{255, 255, 255, 35});
+    const Color yellow{255, 225, 90, 255}, gateCol{150, 210, 255, 255};
+    for (const auto& d : w.deposits) {
+        if (!d.revealed) continue;
+        const Vector2 m = map(d.pos);
+        DrawRectangleV({m.x - 2 * s, m.y - 2 * s}, {4 * s, 4 * s}, d.sample == Sample::Yellow ? yellow : GOOD);
+    }
+    for (const Station& st : w.stations) {
+        const Vector2 m = map(st.pos);
+        DrawRectangleV({m.x - 4 * s, m.y - 4 * s}, {8 * s, 8 * s}, StationColor(st.type));
+    }
+    const float pulse = 0.5f + 0.5f * sinf(w.time * 5.0f);
+    for (size_t i = 0; i < w.stargates.size(); ++i) {
+        const Vector2 m = map(w.stargates[i].pos);
+        if (static_cast<int>(i) == homeGate) DrawCircleV(m, (6.0f + 3.0f * pulse) * s, Fade(gateCol, 0.25f + 0.25f * pulse));
+        DrawCircleLinesV(m, 5.0f * s, gateCol);
+        DrawCircleLinesV(m, 4.0f * s, gateCol);
+    }
+    const PlayerState& me = w.Me();
+    for (const Trooper& o : w.troopers) {
+        if (o.id == t.id) continue;
+        const Vector2 m = map(o.pos);
+        if (!CheckCollisionPointRec(m, r)) continue;
+        const bool mine = o.faction == t.faction &&
+                          (o.leaderId == t.id || (o.playerId >= 0 && o.team != 0 && o.team == me.sgTeam));
+        if (mine) {
+            const float k = 3.5f * s;
+            const Color c = o.down ? Fade(SHIELD, 0.4f) : SHIELD;
+            DrawTriangle({m.x, m.y - k}, {m.x - k, m.y}, {m.x + k, m.y}, c);
+            DrawTriangle({m.x - k, m.y}, {m.x, m.y + k}, {m.x + k, m.y}, c);
+        } else if (o.faction == t.faction || o.playerId >= 0) {
+            if (!o.down) DrawCircleV(m, 2.4f * s, TEXT);
+        } else if (!o.down && Dist2D(o.pos, t.pos) <= radar) {
+            DrawCircleV(m, 2.6f * s, BAD);
+        }
+    }
+    if (!t.down) {
+        const Vector3 f = ForwardFromYaw(t.yaw);
+        const Vector2 fd{f.x, f.z};
+        const Vector2 sd{-fd.y, fd.x};
+        const Vector2 tip = Vector2Add(pp, Vector2Scale(fd, 8 * s));
+        const Vector2 a = Vector2Add(pp, Vector2Add(Vector2Scale(fd, -5 * s), Vector2Scale(sd, 5 * s)));
+        const Vector2 b = Vector2Add(pp, Vector2Add(Vector2Scale(fd, -5 * s), Vector2Scale(sd, -5 * s)));
+        DrawTriangle(tip, a, b, WHITE);
+        DrawTriangle(tip, b, a, WHITE);
+    }
+    Text("RADAR", r.x + 8 * s, r.y + 6 * s, 16 * s, MUTED);
+    struct L { const char* t; Color c; } legend[4] = {{"Stargate", gateCol}, {"Kristall", yellow}, {"Team", SHIELD}, {"Gegner", BAD}};
+    for (int i = 0; i < 4; ++i) {
+        const float lx = r.x + (i % 2) * r.width * 0.5f + 4 * s;
+        const float ly = r.y + r.height + 8 * s + (i / 2) * 20 * s;
+        DrawRectangleV({lx, ly + 3 * s}, {9 * s, 9 * s}, legend[i].c);
+        Text(legend[i].t, lx + 14 * s, ly, 15 * s, MUTED);
+    }
+}
+
+// HP-Balken über den Gegnern (Optionen: g_clientConfig.enemyBars): nur vor
+// der Kamera, bis zur dreifachen Sichtweite der KI und wenn kein Hindernis
+// dazwischen ist (TrooperLineClear). Grün, ab der Hälfte orange, unter einem
+// Viertel rot; mit der Entfernung etwas schmaler.
+static void DrawEnemyBars(const World& w, const Trooper& t, const Camera3D& cam) {
+    const float s = Scale();
+    const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+    const float range = 3.0f * cfg::TROOPER_SIGHT_CELLS * (w.instance ? mapgrid::MISSION_CELL : mapgrid::CELL);
+    const Vector3 look = Vector3Subtract(cam.target, cam.position);
+    for (const Trooper& o : w.troopers) {
+        if (o.down || o.faction == t.faction || o.maxHp <= 0.0f) continue;
+        const float d = Dist2D(o.pos, t.pos);
+        if (d > range) continue;
+        const Vector3 head{o.pos.x, o.pos.y + cfg::TROOPER_HEIGHT + 0.12f, o.pos.z};
+        if (Vector3DotProduct(Vector3Subtract(head, cam.position), look) <= 0.0f) continue;
+        if (!w.TrooperLineClear(cam.position, {o.pos.x, o.pos.y + cfg::TROOPER_HEIGHT * 0.8f, o.pos.z})) continue;
+        const Vector2 p = GetWorldToScreen(head, cam);
+        if (p.x < -60 || p.x > W + 60 || p.y < -30 || p.y > H + 30) continue;
+        const float frac = std::clamp(o.hp / o.maxHp, 0.0f, 1.0f);
+        const float bw = std::clamp(240.0f / std::max(d, 0.1f), 30.0f, 60.0f) * s, bh = 6 * s;
+        const Rectangle bg{p.x - bw * 0.5f - 1 * s, p.y - bh - 1 * s, bw + 2 * s, bh + 2 * s};
+        DrawRectangleRec(bg, Color{10, 12, 20, 170});
+        const Color c = frac > 0.5f ? GOOD : frac > 0.25f ? ACCENT : BAD;
+        DrawRectangleRec({bg.x + 1 * s, bg.y + 1 * s, bw * frac, bh}, c);
+    }
+}
+
 // Fadenkreuz in der Bildmitte (grau beim Nachladen), oben links Schild,
 // Munition (Magazin groß, Ersatz klein, beim Nachladen ein Balken) und
 // getragene Proben, oben in der Mitte ein Pfeil zum nächsten Stargate mit
@@ -438,10 +545,12 @@ void DrawControls(float x, float y, float size, bool foot) {
 // angewählt, zu diesem) und darunter der Hinweis zur Rückkehr, unten in der Mitte die laufende
 // Probe bzw. der Hinweis "[E] halten" an einem gelben Kristall. Die
 // Tastenhilfe steht die ersten 60 s zu Fuß ganz da, danach wie im Schiff mit
-// gehaltener Taste H.
-static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
+// gehaltener Taste H. Oben rechts die Minikarte (TrooperMinimap), über den
+// Gegnern ihre HP-Balken (DrawEnemyBars, abschaltbar).
+static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam, bool simulation) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+    if (g_clientConfig.enemyBars) DrawEnemyBars(w, t, cam);
 
     // Warnrand wie im Schiff: Treffer (hitFlash) oder Schild unter 30 %
     float danger = t.hitFlash * 0.6f;
@@ -520,6 +629,7 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
             gi = static_cast<int>(i);
     }
     const bool homeGate = gi >= 0;
+    TrooperMinimap(w, t, gi);
     if (!homeGate) gi = w.NearestGate(t.pos);
     if (gi >= 0) {
         const Stargate& sg = w.stargates[static_cast<size_t>(gi)];
@@ -590,7 +700,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     const PlayerState& me = w.Me();
     if (me.role == PlayerRole::Trooper) {
         if (const Trooper* t = w.FindTrooper(me.trooperId)) {
-            DrawTrooperHud(w, *t, simulation);
+            DrawTrooperHud(w, *t, cam, simulation);
             return;
         }
     }

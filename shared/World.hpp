@@ -298,9 +298,10 @@ struct TrooperInput {
 
 // KI-Figuren (Trooper::playerId == -1, Ai.cpp): Kameraden des SG-Teams
 // folgen ihrem Spieler und kämpfen mit, Bodenpiraten streifen um gelbe
-// Kristalle und greifen Figuren in Sichtweite an.
+// Kristalle und greifen Figuren in Sichtweite an (aus der Deckung, siehe
+// Ai.cpp), Zombies schlafen, bis sich etwas regt.
 enum class TrooperKind { Mate = 0, Pirate = 1 };
-enum class TrooperAiState { Follow = 0, Patrol = 1, Attack = 2, Retreat = 3 };
+enum class TrooperAiState { Follow = 0, Patrol = 1, Attack = 2, Retreat = 3, Cover = 4, Advance = 5, Search = 6, Flank = 7 };
 
 // Eine Figur zu Fuß: Spieler (playerId >= 0), Kamerad oder Bodenpirat.
 struct Trooper {
@@ -346,6 +347,21 @@ struct Trooper {
     float strafeDir = 1.0f;
     float stuckT = 0.0f;          // will laufen, kommt aber kaum voran (Hindernis)
     float detourT = 0.0f;         // > 0: weicht seitlich aus
+    // Nur Bodenpiraten und Zombies (Ai.cpp):
+    Vector3 cover{};              // Deckungspunkt (Cover, Advance, Retreat)
+    bool hasCover = false;
+    float coverT = 0.0f;          // Restzeit der laufenden Phase (verstecken, hervorschauen, hinlaufen)
+    float coverCd = 0.0f;         // > 0: noch keine neue Deckung suchen
+    bool peeking = false;         // schaut gerade aus der Deckung hervor
+    Vector3 lastSeen{};           // letzte bekannte Position des Gegners (gesehen, gehört, alarmiert)
+    float lastSeenT = 99.0f;      // Sekunden seit dieser Meldung
+    float reactT = 0.0f;          // > 0: Reaktionszeit nach einem neuen Ziel, schießt noch nicht
+    float aimT = 0.0f;            // Sekunden mit Sicht auf das Ziel (Treffsicherheit)
+    float aimSpread = 1.0f;       // Faktor auf GROUND_PIRATE_SPREAD (FireTrooperBullet)
+    int burst = 0;                // Schuss, die von der laufenden Salve noch übrig sind
+    float burstT = 0.0f;          // > 0: Pause bis zur nächsten Salve
+    float underFireT = 99.0f;     // Sekunden seit dem letzten Treffer oder knappen Fehlschuss
+    bool awake = true;            // Zombie: false = schläft (reagiert erst bei Nähe, Schüssen, Sprinten)
 };
 
 // Hindernis für Figuren: Kapsel a-b mit Radius r auf dem Boden, oben flach
@@ -967,6 +983,12 @@ public:
     bool SpawnPirateGroup(Vector3 team);               // Gruppe weit genug vom Team, bei einem gelben Kristall
     void UpdatePirateGroups(float dt);                 // fehlende Gruppen nach GROUND_PIRATE_RESPAWN ersetzen
     void UpdateTrooperAi(Trooper& t, float dt);        // Eingabe einer KI-Figur (Ai.cpp)
+    // Bodengegner (Ai.cpp): beschossen oder getroffen, Schuss gehört, Gruppe alarmieren
+    void NoticeShooter(Trooper& t, int shooterId);
+    void HearShot(const Trooper& shooter);
+    void AlertGroup(const Trooper& t, Vector3 where, int targetId);
+    // Deckung hinter einem Hindernis vor threat (Trooper.cpp; mode 0 nächste, 1 näher heran, 2 weit weg)
+    bool FindCover(const Trooper& t, Vector3 threat, int mode, Vector3& out) const;
 };
 
 // Augenpunkt und Blickrichtung (Länge 1) einer Figur (Trooper.cpp)
@@ -976,6 +998,8 @@ Vector3 TrooperAim(const Trooper& t);
 Vector3 MateSlot(const Trooper& leader, int slot);
 // Trifft die Strecke a-b (ein Schritt eines Geschosses) die Figur?
 bool SegmentHitsTrooper(Vector3 a, Vector3 b, const Trooper& t);
+// Fliegt sie waagerecht näher als dist an ihr vorbei (knapper Fehlschuss)?
+bool SegmentNearTrooper(Vector3 a, Vector3 b, const Trooper& t, float dist);
 
 // Autopilot für den Simulationsmodus (Ai.cpp), steuert den eigenen Spieler (players[0]).
 // Wird auch für die Hintergrundwelt im Hauptmenü benutzt (main.cpp).

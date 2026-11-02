@@ -138,7 +138,7 @@ const char* const kPixelNames[] = {"Aus", "Retro-Pixel fein", "Retro-Pixel mitte
 const char* const kShadowNames[] = {"Aus", "Niedrig", "Mittel", "Hoch"};
 const char* const kTrailNames[] = {"Aus", "Kurz", "Mittel", "Lang"};
 const char* const kStoneNames[] = {"Aus", "Nur zu Fuß", "Immer"};
-float ControlsHeight() { return (kRowH + kRowGap) + 30.0f + 30.0f + kControlCount * kTableRowH; }
+float ControlsHeight() { return 2.0f * (kRowH + kRowGap) + 30.0f + 30.0f + kControlCount * kTableRowH; }
 
 // Gesamthöhe des Fensters: Rand 24, Überschrift 64, Karteireiter, Abstand 20,
 // die längste Seite, Abstand 16, Knopf, Rand 24.
@@ -346,6 +346,12 @@ void OptionsScreen::SetTankSteeringOn(bool on) {
     g_clientConfig.Save();
 }
 
+// Wie SetSubtitlesOn; Hud.cpp liest den Wert jedes Frame aus g_clientConfig.
+void OptionsScreen::SetEnemyBarsOn(bool on) {
+    g_clientConfig.enemyBars = on;
+    g_clientConfig.Save();
+}
+
 // ===========================================================================
 // Zeichnen und Bedienen (Ablauf siehe Dateikopf)
 // ===========================================================================
@@ -367,6 +373,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_TRACKS;
     } else if (tab == TAB_CONTROLS) {
         rows[n++] = ROW_TANK;
+        rows[n++] = ROW_BARS;
     }
     rows[n++] = ROW_BACK;
     return n;
@@ -418,7 +425,7 @@ bool OptionsScreen::Draw() {
     // Seite wechseln: Tab (mit Umschalt rückwärts) bzw. LB/RB auf jeder Zeile,
     // auf den Karteireitern auch Pfeil links/rechts.
     const bool keys = frames_ > 1;
-    bool toggle = false, toggleSubs = false, toggleTank = false, close = false;
+    bool toggle = false, toggleSubs = false, toggleTank = false, toggleBars = false, close = false;
     float volStep = 0.0f, clipStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
     int msaaStep = 0, trackStep = 0, effectStep = 0;
     const bool padA = keys && PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
@@ -456,6 +463,7 @@ bool OptionsScreen::Draw() {
             if (sel_ == ROW_MUSIC) toggle = true;
             else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
             else if (sel_ == ROW_TANK) toggleTank = true;
+            else if (sel_ == ROW_BARS) toggleBars = true;
             else if (sel_ == ROW_BACK) close = true;
         }
         if (BackPressed()) close = true;
@@ -717,7 +725,22 @@ bool OptionsScreen::Draw() {
         Text(g_clientConfig.tankSteering ? "Stick vor/zurück = Schub, links/rechts = drehen" : "Stick zeigt die Flugrichtung im Bild",
              tankSw.x + tankSw.width + 30 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
         y += (kRowH + kRowGap) * s;
-        overRow = overTank;
+
+        // Zeile "HP-Balken": Schild über den Gegnern zu Fuß (Hud.cpp)
+        const Rectangle rowBars{x, y, iw, kRowH * s};
+        const bool overBars = CheckCollisionPointRec(mouse, rowBars);
+        if (overBars && MouseMoved()) sel_ = ROW_BARS;
+        DrawRow(rowBars, sel_ == ROW_BARS);
+        Text("HP-Balken", x + 22 * s, y + labelY, label, TEXT);
+        const Rectangle barsSw{x + kCtrlX * s, y + 9 * s, 120 * s, kRowH * s - 18 * s};
+        const bool barsClicked = Toggle(barsSw, g_clientConfig.enemyBars, 20 * s, sel_ == ROW_BARS);
+        if (barsClicked || (overBars && PointerPressed())) {
+            toggleBars = true;
+            sel_ = ROW_BARS;
+        }
+        Text("Schild über den Gegnern zu Fuß", barsSw.x + barsSw.width + 30 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
+        y += (kRowH + kRowGap) * s;
+        overRow = overTank || overBars;
 
         // Steuerung: Übersicht, nur Anzeige
         Text("Tastatur, Maus und Controller gehen jederzeit, auch gemischt.", x, y + 2 * s, 17 * s, MUTED);
@@ -766,6 +789,7 @@ bool OptionsScreen::Draw() {
         if (sel_ == ROW_MUSIC) toggle = true;
         else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
         else if (sel_ == ROW_TANK) toggleTank = true;
+        else if (sel_ == ROW_BARS) toggleBars = true;
         else if (sel_ == ROW_BACK) close = true;
     }
     if (volStep != 0.0f) {
@@ -808,7 +832,11 @@ bool OptionsScreen::Draw() {
         SetTankSteeringOn(!g_clientConfig.tankSteering);
         g_audio.Play(Sfx::UiConfirm);
     }
-    if ((sel_ != before || tab_ != tabBefore) && !toggle && !toggleSubs && !toggleTank) g_audio.Play(Sfx::UiMove);
+    if (toggleBars) {
+        SetEnemyBarsOn(!g_clientConfig.enemyBars);
+        g_audio.Play(Sfx::UiConfirm);
+    }
+    if ((sel_ != before || tab_ != tabBefore) && !toggle && !toggleSubs && !toggleTank && !toggleBars) g_audio.Play(Sfx::UiMove);
     if (close) {
         Close();
         return true;

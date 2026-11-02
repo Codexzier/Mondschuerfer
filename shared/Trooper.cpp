@@ -180,6 +180,11 @@ bool SegmentHitsTrooper(Vector3 a, Vector3 b, const Trooper& t) {
     return y >= t.pos.y && y <= t.pos.y + cfg::TROOPER_HEIGHT;
 }
 
+bool SegmentNearTrooper(Vector3 a, Vector3 b, const Trooper& t, float dist) {
+    const Vector2 p{t.pos.x, t.pos.z};
+    return Vector2Distance(p, ClosestOnSeg(p, {a.x, a.z}, {b.x, b.z})) < dist;
+}
+
 Vector3 TrooperAim(const Trooper& t) {
     const Vector3 f = ForwardFromYaw(t.yaw);
     const float c = cosf(t.pitch);
@@ -300,7 +305,8 @@ bool World::StartSgMission(PlayerState& ps, int mates, int gate) {
         return true;
     }
     // Bodenpiraten (KI, Ai.cpp), weit genug vom Tor; Anzahl je Team: Einstellung des Servers
-    for (int i = 0; i < settings.groundPirates; ++i) SpawnPirateGroup(t.pos);
+    // (Zombies: ZOMBIE_GROUP_FACTOR mal so viele Gruppen)
+    for (int i = 0; i < settings.groundPirates * (zombies ? cfg::ZOMBIE_GROUP_FACTOR : 1); ++i) SpawnPirateGroup(t.pos);
     pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
     SoundAt(Sfx::Discover, exit, 0.8f, 0.0f, ps.id);
     return true;
@@ -607,6 +613,75 @@ bool World::TrooperLineClear(Vector3 a, Vector3 b) const {
     return true;
 }
 
+// Deckung für einen Bodenpiraten (Ai.cpp): ein Punkt direkt hinter einem
+// Hindernis, das höher als die Augen ist, von threat aus gesehen. Kandidaten
+// liegen hinter der Stelle des Hindernisses, die der Figur am nächsten ist,
+// und hinter seinen beiden Enden. Gültig ist ein Punkt, der frei und im
+// Spielfeld liegt, von dem aus threat die Augen nicht sieht und an dem keine
+// andere Figur der Seite steht oder hinwill.
+//   mode 0: die nächste Deckung bis zur Sichtweite
+//   mode 1: näher heran (mindestens ein Rasterfeld näher am Gegner, aber nicht
+//           näher als zwei Felder; kurze Wege bevorzugt)
+//   mode 2: weit weg (mindestens 1,3 Sichtweiten vom Gegner, bis 2,5 Sicht-
+//           weiten von der Figur)
+// Geprüft werden nur die 24 besten Kandidaten (Sichtlinien kosten Zeit).
+bool World::FindCover(const Trooper& t, Vector3 threat, int mode, Vector3& out) const {
+    const float cell = instance ? mapgrid::MISSION_CELL : mapgrid::CELL;
+    const float sight = cfg::TROOPER_SIGHT_CELLS * cell;
+    const float reach = mode == 2 ? sight * 2.5f : sight;
+    const float lim = fieldHalf - (instance ? 0.5f : 2.0f);
+    const Vector2 p{t.pos.x, t.pos.z}, th{threat.x, threat.z};
+    const float dNow = Vector2Distance(p, th);
+    struct Cand {
+        Vector2 pos;
+        float score;
+    };
+    std::vector<Cand> cands;
+    for (const TrooperBlock& o : trooperBlocks) {
+        if (o.h < cfg::TROOPER_EYE + 0.05f) continue;   // zu niedrig: die Augen schauen darüber
+        const Vector2 closest = ClosestOnSeg(p, o.a, o.b);
+        if (Vector2Distance(p, closest) > reach + o.r) continue;
+        const Vector2 pts[3] = {closest, o.a, o.b};
+        const int np = Vector2Distance(o.a, o.b) < 0.05f ? 1 : 3;
+        for (int i = 0; i < np; ++i) {
+            const Vector2 away = Vector2Subtract(pts[i], th);
+            const float l = Vector2Length(away);
+            if (l < 1e-3f) continue;
+            const Vector2 c = Vector2Add(pts[i], Vector2Scale(away, (o.r + cfg::TROOPER_RADIUS + 0.12f) / l));
+            if (fabsf(c.x) > lim || fabsf(c.y) > lim) continue;
+            const float hop = Vector2Distance(p, c), dThreat = Vector2Distance(c, th);
+            if (hop > reach) continue;
+            float score = hop;
+            if (mode == 1) {
+                if (dThreat > dNow - cell || dThreat < 2.0f * cell) continue;
+                score = hop + 0.5f * dThreat;
+            } else if (mode == 2 && (dThreat < sight * 1.3f || dThreat < dNow + cell)) {
+                continue;
+            }
+            cands.push_back({c, score});
+        }
+    }
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
+    const Vector3 threatEye{threat.x, threat.y + cfg::TROOPER_EYE, threat.z};
+    int checks = 0;
+    for (const Cand& c : cands) {
+        if (++checks > 24) break;
+        const Vector3 cp{c.pos.x, 0.0f, c.pos.y};
+        bool taken = false;
+        for (const Trooper& o : troopers)
+            if (o.id != t.id && !o.down && o.faction == t.faction &&
+                ((o.hasCover && Dist2D(o.cover, cp) < 0.5f) || Dist2D(o.pos, cp) < 0.35f)) {
+                taken = true;
+                break;
+            }
+        if (taken || TrooperBlocked({cp.x, 0.1f, cp.z})) continue;
+        if (TrooperLineClear({cp.x, cfg::TROOPER_EYE, cp.z}, threatEye)) continue;   // von dort aus zu sehen
+        out = cp;
+        return true;
+    }
+    return false;
+}
+
 int World::NearestGate(Vector3 p) const {
     int best = -1;
     float bestD = 1e9f;
@@ -802,6 +877,9 @@ void World::UpdateTroopers(float dt) {
             t.fireCd = t.playerId >= 0 ? cfg::TROOPER_FIRE_INTERVAL
                        : t.kind == TrooperKind::Pirate ? cfg::GROUND_PIRATE_FIRE_INTERVAL
                                                         : cfg::MATE_FIRE_INTERVAL;
+            // Bodenpirat: Salve zu Ende, dann eine Pause (Ai.cpp)
+            if (t.playerId < 0 && t.kind == TrooperKind::Pirate && --t.burst <= 0)
+                t.burstT = Rand(cfg::AI_BURST_PAUSE_MIN, cfg::AI_BURST_PAUSE_MAX);
         } else if (t.ammo == 0) {
             SoundAt(Sfx::Denied, t.pos, 0.6f, 0.0f, t.playerId);
             t.fireCd = 0.5f;
@@ -849,12 +927,14 @@ void World::UpdateTroopers(float dt) {
 
 // Das Geschoss startet etwas rechts unterhalb der Augen (an der Waffe) und
 // fliegt parallel zur Blickrichtung: Beim Spieler trifft es knapp neben dem
-// Fadenkreuz. KI-Figuren streuen (MATE_SPREAD, GROUND_PIRATE_SPREAD).
+// Fadenkreuz. KI-Figuren streuen (MATE_SPREAD, GROUND_PIRATE_SPREAD, beim
+// Bodenpiraten mal Trooper::aimSpread). Gegner in Hörweite merken den Schuss
+// (HearShot).
 void World::FireTrooperBullet(Trooper& t) {
     Vector3 dir = TrooperAim(t);
     const bool pirate = t.playerId < 0 && t.kind == TrooperKind::Pirate;
     if (t.playerId < 0) {
-        const float spread = pirate ? cfg::GROUND_PIRATE_SPREAD : cfg::MATE_SPREAD;
+        const float spread = pirate ? cfg::GROUND_PIRATE_SPREAD * t.aimSpread : cfg::MATE_SPREAD;
         const float yaw = t.yaw + Rand(-spread, spread), pitch = t.pitch + Rand(-spread, spread) * 0.6f;
         const Vector3 f = ForwardFromYaw(yaw);
         dir = {f.x * cosf(pitch), sinf(pitch), f.z * cosf(pitch)};
@@ -873,23 +953,21 @@ void World::FireTrooperBullet(Trooper& t) {
     bullets.push_back(b);
     if (t.playerId >= 0) SoundAt(Sfx::PlayerShot, t.pos, 0.7f);
     else SoundAt(pirate ? Sfx::EnemyShot : Sfx::PlayerShot, t.pos, pirate ? 0.5f : 0.4f);
+    HearShot(t);
 }
 
 // ===========================================================================
 // Treffer und Fallen
 // ===========================================================================
 // Getroffene KI-Figuren nehmen den Schützen ins Visier, auch wenn er weiter
-// weg ist, als sie sehen. Fällt der Schild auf 0, liegt die Figur am Boden;
+// weg ist, als sie sehen (NoticeShooter). Fällt der Schild auf 0, liegt die Figur am Boden;
 // der Spieler verliert dabei seine getragenen Proben.
 void World::DamageTrooper(Trooper& t, const Bullet& b) {
     if (t.down) return;
     t.hp -= b.damage;
     t.hitFlash = 1.0f;
     t.calmT = 0.0f;
-    if (t.playerId < 0 && b.ownerTrooper >= 0 && (t.targetId < 0 || !t.seesTarget)) {
-        t.targetId = b.ownerTrooper;
-        t.thinkT = 0.0f;
-    }
+    if (t.playerId < 0 && b.ownerTrooper >= 0) NoticeShooter(t, b.ownerTrooper);
     if (t.playerId >= 0) SoundAt(Sfx::ShieldHit, t.pos, 0.7f, 0.0f, t.playerId);
     if (t.hp > 0.0f) return;
     t.hp = 0.0f;
@@ -947,7 +1025,7 @@ void World::SpawnMate(const Trooper& leader, int slot, Vector3 pos, float yaw) {
 // zufälliger Punkt 60 bis 140 m vom Team. false = kein Platz gefunden.
 // Einsatzkarte: an einem freien Gegner-Startplatz (enemySpots), sonst wie
 // oben, nur mit kürzeren Abständen. Mit dem Thema Friedhof (World::zombies)
-// ist die Gruppe aus ZOMBIE_MIN bis _MAX Zombies.
+// ist die Gruppe aus ZOMBIE_MIN bis _MAX Zombies, die zuerst schlafen.
 bool World::SpawnPirateGroup(Vector3 team) {
     const float spacing = instance ? 6.0f : 20.0f;   // Abstand zur nächsten Gruppe
     auto taken = [&](Vector3 p) {
@@ -996,6 +1074,7 @@ bool World::SpawnPirateGroup(Vector3 team) {
             p.zombie = true;
             p.skin = RandInt(7, 9);   // zombieA bis C
             p.hp = p.maxHp = cfg::ZOMBIE_HP;
+            p.awake = false;
         }
         p.home = c;
         p.pos = {c.x + cosf(a) * 2.5f, 0.0f, c.z + sinf(a) * 2.5f};
@@ -1010,7 +1089,8 @@ bool World::SpawnPirateGroup(Vector3 team) {
 
 // Fehlt eine Gruppe (alle ihre Figuren sind gefallen und verschwunden),
 // kommt nach GROUND_PIRATE_RESPAWN Sekunden eine neue, weit genug vom Team
-// (der ersten Spielerfigur). Sollzahl: settings.groundPirates je Team, das
+// (der ersten Spielerfigur). Sollzahl: settings.groundPirates je Team (mit
+// Zombies ZOMBIE_GROUP_FACTOR mal so viele), das
 // gerade draußen ist (Mehrspieler: mehrere Teams auf der Mondkarte); die neue
 // Gruppe kommt dann zu einer zufälligen Spielerfigur.
 void World::UpdatePirateGroups(float dt) {
@@ -1026,7 +1106,8 @@ void World::UpdatePirateGroups(float dt) {
             groups.push_back(t.group);
     }
     if (mine.empty()) return;
-    if (static_cast<int>(groups.size()) >= settings.groundPirates * static_cast<int>(teams.size())) {
+    const int perTeam = settings.groundPirates * (zombies ? cfg::ZOMBIE_GROUP_FACTOR : 1);
+    if (static_cast<int>(groups.size()) >= perTeam * static_cast<int>(teams.size())) {
         pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
         return;
     }

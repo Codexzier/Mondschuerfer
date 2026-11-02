@@ -1887,6 +1887,11 @@ void World::UpdateBullets(float dt) {
                 break;
             }
             if (b.life <= 0.0f) continue;
+            // Knapp vorbei: KI-Figuren der anderen Seite merken, dass auf sie
+            // geschossen wird (Ai.cpp, NoticeShooter: in Deckung gehen)
+            for (auto& t : troopers)
+                if (t.playerId < 0 && !t.down && t.faction != b.faction && SegmentNearTrooper(from, b.pos, t, 1.0f))
+                    NoticeShooter(t, b.ownerTrooper);
             if (b.pos.y <= 0.0f || TrooperBlocked(b.pos)) {
                 b.life = 0.0f;
                 SpawnSparks({b.pos.x, std::max(b.pos.y, 0.05f), b.pos.z}, Color{255, 200, 90, 255}, 4);

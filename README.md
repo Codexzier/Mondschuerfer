@@ -168,8 +168,11 @@ der Stargates heraus bzw. am Stargate der Einsatzkarte, die Kameraden kurz nache
 Einsatzkarte ist eine eigene Welt nur für dein Team: ihr Gelände, Himmel und Licht, keine Schiffe,
 die gelben Kristalle an den Kristallplätzen (nach der Probe grün, abgebaut wird dort nichts) und
 die Bodenpiraten an den Gegner-Startplätzen. Auf Karten mit dem Thema Friedhof sind die Gegner
-**Zombies**: Gruppen von drei bis fünf, langsamer als du, mit mehr Schild; sie schießen nicht,
-sondern schlagen aus der Nähe zu. Auftrag und Punkte sind dieselben. *Als Pilot
+**Zombies**: doppelt so viele Gruppen von je fünf bis acht, langsamer als du, mit mehr Schild; sie
+schießen nicht, sondern schlagen aus der Nähe zu. Zuerst dösen sie vor sich hin. Wach werden sie,
+wenn du oder ein Kamerad zu nah kommt, in der Nähe sprintet (Umschalt) oder schießt; ein wacher
+Zombie weckt alle um sich herum, so pflanzt sich der Alarm fort. Sie kreisen euch von mehreren
+Seiten ein und stürmen auf den letzten Metern los. Auftrag und Punkte sind dieselben. *Als Pilot
 spielen* führt zurück ins Schiff; umgekehrt bringt dich an der Handelsstation der Knopf *Als
 SG-Team spielen* ins Command Center.
 
@@ -181,11 +184,21 @@ Mit dir kommen bis zu drei **Kameraden** (SG1-2 bis SG1-4) durch das Tor. Sie fo
 sich nach deiner Laufrichtung richtet (drehst du dich nur um, bleiben sie, wo sie sind), und
 schießen auf Gegner in Sichtweite; gefallene Kameraden kommen nach 20 Sekunden zurück. An
 gelben Kristallen, mindestens 60 m entfernt, streifen Gruppen von zwei bis vier **Bodenpiraten**
-umher. Sie greifen an, sobald sie dich oder einen Kameraden sehen, und ziehen sich mit wenig Schild
-zurück. Ist eine Gruppe ausgeschaltet, kommt später eine neue. Der Schild lädt sich nach 5 Sekunden
+umher. Sie kämpfen aus der Deckung: Unter Beschuss laufen sie hinter Felsen oder Mauern, schauen
+seitlich hervor, schießen eine Salve und laden nur in Deckung nach. Bist du zu weit weg, rücken
+sie von Deckung zu Deckung vor (immer nur einer, die anderen geben Deckungsfeuer). Wer dich sieht
+oder Schüsse hört, alarmiert seine Gruppe; einer versucht, dich seitlich zu umgehen, und verlieren
+sie dich, suchen sie dort, wo du zuletzt warst. Nach dem ersten Blick brauchen sie einen Moment,
+bis sie schießen, und treffen umso besser, je länger sie dich sehen (schlechter auf Entfernung
+und wenn du sprintest). Unter 35 % Schild fliehen sie außer Sichtweite und kommen mit
+aufgeladenem Schild zurück. Ist eine Gruppe ausgeschaltet, kommt später eine neue. Der Schild lädt sich nach 5 Sekunden
 ohne Treffer wieder auf. Fällst du, verlierst du deine getragenen Proben und stehst nach
 5 Sekunden am Ankunftstor wieder auf, solange noch ein Kamerad steht. Fällt das ganze Team, ist
 der Einsatz gescheitert.
+
+Zu Fuß zeigt die **Minikarte** oben rechts wie im Schiff die ganze Karte (auf einer Einsatzkarte
+ihr Spielfeld): dich als Pfeil, dein Team, Stargates, Kristalle und Gegner im Radarkreis. Über
+den Gegnern steht ihr **HP-Balken** (abschaltbar in *Optionen → Steuerung*).
 
 **Rückkehr:** Mit 5 Proben (im Mehrspieler stellt der Betreiber die Zahl ein) gehst du zu einem Stargate (näher als 12 m, auch ein Kamerad dort
 genügt). Es wird angewählt und öffnet sich nach 3 Sekunden; die Treppe hinauf und hindurch, und
@@ -480,6 +493,7 @@ und setzen später an derselben Stelle fort.
 *Steuerung*
 - Tank-Steuerung an / aus: wie der linke Stick des Controllers lenkt (aus = Flugrichtung im Bild,
   an = vor / zurück fliegen und links / rechts drehen, siehe oben).
+- HP-Balken an / aus: Schild über den Gegnern zu Fuß (Standard an).
 - Übersicht der Flug- und Menütasten für Tastatur/Maus, Xbox- und PlayStation-Controller
   (alle übrigen Tasten, z. B. im Stationsfenster, stehen oben im Abschnitt „Steuerung“).
 
