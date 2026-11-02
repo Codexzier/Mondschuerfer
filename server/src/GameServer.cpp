@@ -1491,7 +1491,13 @@ void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
     };
     switch (m.action) {
         case net::TeamActionType::Role: {
-            const PlayerRole want = m.param == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
+            PlayerRole want = m.param == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
+            // FPS-Modus aus: nur Piloten (die Rollenwahl nach der Anmeldung wird zu "Pilot")
+            if (want == PlayerRole::Trooper && !settings_.fpsMode) {
+                world_.Notify(*ps, "Der FPS-Modus ist auf diesem Server ausgeschaltet.", bad);
+                if (c.roleChosen) break;
+                want = PlayerRole::Pilot;
+            }
             if (c.roleChosen) {
                 if (want == ps->role) break;
                 const bool atTrade = ps->dockedAt >= 0 && ps->dockedAt < static_cast<int>(world_.stations.size()) &&
@@ -1633,6 +1639,21 @@ void GameServer::UpdateTeams() {
 
 void GameServer::SendTeams() {
     const bool periodic = tick_ % net::TICK_RATE == 0;
+    RecordMissions();
+    // Scoreboard: einmal pro Sekunde neu bauen, verschickt wird es nur bei einer Änderung
+    if (periodic) {
+        const bool anyone = std::any_of(clients_.begin(), clients_.end(), [&](const std::unique_ptr<Client>& up) {
+            const PlayerState* o = up->role == Role::Player && !up->isBot ? world_.FindPlayer(up->playerId) : nullptr;
+            return o && o->role == PlayerRole::Trooper;
+        });
+        if (anyone) {
+            std::vector<uint8_t> board = net::Encode(MakeScoreboard());
+            if (board != scoreboard_) {
+                scoreboard_ = std::move(board);
+                ++scoreboardRev_;
+            }
+        }
+    }
     std::vector<uint8_t> maps;   // freigegebene Einsatzkarten, erst bei Bedarf gebaut
     for (auto& up : clients_) {
         Client& c = *up;
@@ -1652,11 +1673,122 @@ void GameServer::SendTeams() {
             Send(c, maps, true);
             c.sentMissionMaps = missionMapsRev_;
         }
+        if (c.sentScoreboard != scoreboardRev_ && !scoreboard_.empty()) {
+            Send(c, scoreboard_, true);
+            c.sentScoreboard = scoreboardRev_;
+        }
         if (!periodic && !teamsChanged_ && ps->sgEnded == 0) continue;
         Send(c, net::Encode(MakeTeams(*ps)), true);
         ps->sgEnded = 0;   // das Ergebnis ist unterwegs (zuverlässig)
     }
+    for (PlayerState& ps : world_.players) ps.sgEnded = 0;   // auch ohne Empfänger (Bots): schon gezählt
     teamsChanged_ = false;
+}
+
+// Läuft vor dem Verschicken der Teams (dort wird sgEnded zurückgesetzt).
+// Die Punkte stehen schon in PlayerState::sgTotal (World::EndSgMission);
+// hier kommen sie ins Konto, und das Team sammelt die Punkte seiner
+// Mitglieder. Sind alle zurück (niemand mehr im Einsatz oder unterwegs
+// durch das Tor) und hat es mindestens einer durch das Stargate geschafft,
+// geht TeamHome an alle Spieler und Zuschauer.
+void GameServer::RecordMissions() {
+    bool any = false;
+    for (auto& up : clients_) {
+        Client& c = *up;
+        if (c.role != Role::Player) continue;
+        const PlayerState* ps = world_.FindPlayer(c.playerId);
+        if (!ps || ps->sgEnded == 0 || ps->sgLog.empty()) continue;
+        StoreProgress(c);
+        any = true;
+        if (SgTeam* t = TeamOf(ps->id)) {
+            t->homePoints += ps->sgLog.back().points;
+            t->homeSuccess = t->homeSuccess || ps->sgEnded == 1;
+            t->homePending = true;
+        }
+    }
+    if (any) accounts_.SaveAccounts();
+    for (SgTeam& t : teams_) {
+        if (!t.homePending || TeamBusy(t)) continue;
+        if (t.homeSuccess) {
+            std::string names;
+            for (int id : t.members)
+                if (const PlayerState* o = world_.FindPlayer(id)) names += (names.empty() ? "" : ", ") + o->name;
+            net::NetEvent ev;
+            ev.kind = net::EventKind::TeamHome;
+            ev.text = Fmt("SG%d (%s)", t.number, names.c_str());
+            ev.points = t.homePoints;
+            for (auto& up : clients_)
+                if (!up->closing && (up->role == Role::Player || up->role == Role::Spectator)) up->events.push_back(ev);
+            Log(Fmt("%s ist zurück: %d Punkte", ev.text.c_str(), t.homePoints));
+        }
+        t.homePoints = 0;
+        t.homeSuccess = false;
+        t.homePending = false;
+    }
+}
+
+// Alle Spieler mit Konto, die schon etwas erreicht haben (Einsätze oder
+// Abschüsse als Pilot), nach Punkten; wer online ist, mit den Werten von
+// jetzt statt dem letzten Speicherstand.
+net::ScoreboardMsg GameServer::MakeScoreboard() const {
+    std::vector<net::ScoreEntry> all;
+    std::vector<const Account*> online;
+    for (const auto& up : clients_) {
+        const Client& c = *up;
+        const PlayerState* ps = c.role == Role::Player && c.account ? world_.FindPlayer(c.playerId) : nullptr;
+        if (!ps) continue;
+        online.push_back(c.account);
+        net::ScoreEntry e;
+        e.playerId = ps->id;
+        e.name = ps->name;
+        e.points = ps->sgTotal.points;
+        e.samples = ps->sgTotal.samples;
+        e.pirates = ps->sgTotal.pirates;
+        e.kills = ps->kills;
+        e.returns = ps->sgTotal.returns;
+        all.push_back(e);
+    }
+    for (const auto& kv : accounts_.All()) {
+        const Account& a = kv.second;
+        const PlayerProgress& p = a.progress;
+        if (std::find(online.begin(), online.end(), &a) != online.end()) continue;
+        if (p.sgPoints <= 0 && p.sgSamples <= 0 && p.sgPirates <= 0 && p.kills <= 0 && p.sgReturns <= 0) continue;
+        net::ScoreEntry e;
+        e.name = a.name;
+        e.points = p.sgPoints;
+        e.samples = p.sgSamples;
+        e.pirates = p.sgPirates;
+        e.kills = p.kills;
+        e.returns = p.sgReturns;
+        all.push_back(e);
+    }
+    std::sort(all.begin(), all.end(), [](const net::ScoreEntry& a, const net::ScoreEntry& b) {
+        return a.points != b.points ? a.points > b.points : a.name < b.name;
+    });
+    if (all.size() > static_cast<size_t>(net::MAX_SCOREBOARD)) all.resize(net::MAX_SCOREBOARD);
+    net::ScoreboardMsg m;
+    m.entries = std::move(all);
+    return m;
+}
+
+// Ohne FPS-Modus gibt es nur Piloten: laufende Einsätze (auch auf
+// Einsatzkarten) enden ohne Wertung, alle Teams lösen sich auf, und wer im
+// Command Center oder zu Fuß war, sitzt wieder im Schiff.
+void GameServer::EndFpsMode() {
+    for (Instance& in : instances_)
+        while (!in.world->players.empty()) LeaveInstance(in, in.world->players.front().id, true);
+    instances_.clear();
+    teams_.clear();
+    teamsChanged_ = true;
+    for (PlayerState& ps : world_.players) {
+        ps.sgTeam = 0;
+        ps.sgFollowers.clear();
+        if (ps.role != PlayerRole::Trooper) continue;
+        world_.SetRole(ps, PlayerRole::Pilot);
+        ps.lastRole = PlayerRole::Pilot;
+        if (Ship* sp = world_.PlayerShip(ps)) sp->hidden = false;
+        world_.Notify(ps, "Der FPS-Modus wurde auf dem Server ausgeschaltet: weiter als Pilot.", Color{255, 170, 120, 255});
+    }
 }
 
 GameServer::SgTeam* GameServer::TeamOf(int playerId) {
@@ -1755,6 +1887,7 @@ bool GameServer::StartInstance(SgTeam& t) {
         w.SetRole(ip, PlayerRole::Trooper);   // versteckt das Schiff
         ip.sgTeam = t.number;
         ip.sgLog = mp->sgLog;                 // die Einsätze zählen weiter
+        ip.sgTotal = mp->sgTotal;
     }
     if (w.players.empty()) return false;
     PlayerState& lead = w.players.front();
@@ -1870,6 +2003,7 @@ void GameServer::LeaveInstance(Instance& in, int playerId, bool notify) {
     if (!ip) return;
     if (PlayerState* mp = world_.FindPlayer(playerId)) {
         mp->sgLog = ip->sgLog;
+        mp->sgTotal = ip->sgTotal;
         mp->sgEnded = ip->sgEnded;   // das Command Center zeigt das Ergebnis (SendTeams)
     }
     w.RemovePlayer(playerId);   // eine noch stehende Figur verschwindet, das Tor geht an das Team
@@ -2669,6 +2803,11 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     ps.deaths = std::max(0, p.deaths);
     ps.goals = std::max(0, p.goals);
     ps.lastRole = p.role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;   // Vorauswahl der Rollenwahl
+    ps.sgTotal.points = std::max(0, p.sgPoints);
+    ps.sgTotal.samples = std::max(0, p.sgSamples);
+    ps.sgTotal.pirates = std::max(0, p.sgPirates);
+    ps.sgTotal.returns = std::max(0, p.sgReturns);
+    ps.sgTotal.downs = std::max(0, p.sgDowns);
     world_.ApplyUpgrades(ps, true);   // Geschwindigkeit, Schild, Waffe, Lager aus den Stufen
     if (Ship* s = world_.PlayerShip(ps)) {
         s->cargo = std::clamp(p.cargo, 0, s->cargoMax);
@@ -2719,6 +2858,11 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     p.deaths = ps.deaths;
     p.goals = ps.goals;
     p.role = static_cast<int>(ps.role);
+    p.sgPoints = ps.sgTotal.points;
+    p.sgSamples = ps.sgTotal.samples;
+    p.sgPirates = ps.sgTotal.pirates;
+    p.sgReturns = ps.sgTotal.returns;
+    p.sgDowns = ps.sgTotal.downs;
     return p;
 }
 
@@ -2745,10 +2889,14 @@ void GameServer::ApplySettings(const GameSettings& s) {
     const GameSettings old = settings_;
     settings_ = s;
     const bool rebuild = NeedsWorldRebuild(old, s);
-    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben, %d Missionen, %d Einsatzkarten, neue Konten %s%s",
+    Log(Fmt("Einstellungen geändert: \"%s\", %s (%d Gegner), %d Handelsstation(en), %d Werft(en), Mond %s, max. %d Spieler, %d Leben, %d Missionen, %d Einsatzkarten, FPS-Modus %s (%d %% gelb, Ziel %d Proben, %d Bodenpiraten je Team, Friendly Fire %s), neue Konten %s%s",
             s.serverName.c_str(), DifficultyName(s.difficulty), s.enemyShips, s.tradeStations, s.shipyards,
-            MoonColorName(s.moon), s.maxPlayers, s.lives, s.missions, s.maxInstances, s.allowRegistration ? "erlaubt" : "nicht erlaubt",
+            MoonColorName(s.moon), s.maxPlayers, s.lives, s.missions, s.maxInstances, s.fpsMode ? "an" : "aus", s.yellowShare,
+            s.sampleGoal, s.groundPirates, s.friendlyFire ? "an" : "aus", s.allowRegistration ? "erlaubt" : "nicht erlaubt",
             rebuild ? " – Karte wird neu aufgebaut" : ""));
+    if (old.fpsMode && !s.fpsMode) EndFpsMode();
+    // Laufende Einsatzkarten übernehmen Friendly Fire, Bodenpiraten usw. sofort
+    for (Instance& in : instances_) in.world->settings = s;
     if (rebuild) {
         RebuildWorld();
     } else {

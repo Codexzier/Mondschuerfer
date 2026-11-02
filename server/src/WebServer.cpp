@@ -326,6 +326,11 @@ void WriteSettings(JsonWriter& w, const GameSettings& g) {
     w.Key("lives").Int(g.lives);
     w.Key("missions").Int(g.missions);
     w.Key("maxInstances").Int(g.maxInstances);
+    w.Key("fpsMode").Bool(g.fpsMode);
+    w.Key("yellowShare").Int(g.yellowShare);
+    w.Key("sampleGoal").Int(g.sampleGoal);
+    w.Key("groundPirates").Int(g.groundPirates);
+    w.Key("friendlyFire").Bool(g.friendlyFire);
     w.Key("allowRegistration").Bool(g.allowRegistration);
     w.EndObject();
 }
@@ -471,6 +476,8 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("maxLives").Int(limits::MAX_LIVES);
     w.Key("maxMissions").Int(limits::MAX_MISSIONS);
     w.Key("maxInstancesLimit").Int(limits::MAX_INSTANCES);
+    w.Key("maxSampleGoal").Int(limits::MAX_SAMPLE_GOAL);
+    w.Key("maxGroundPirates").Int(limits::MAX_GROUND_PIRATES);
     w.Key("maxShipTypes").Int(limits::MAX_SHIP_TYPES);
     w.Key("maxShipName").Int(limits::MAX_SHIP_NAME);
     w.Key("minShipShield").Int(limits::MIN_SHIP_SHIELD);
@@ -893,7 +900,8 @@ bool ParseIntInRange(const std::string& text, int minValue, int maxValue, int& o
 bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& next, std::string& error) {
     static const char* const kKnown[] = {"serverName", "difficulty", "enemyShips", "tradeStations",
                                          "shipyards",  "moon",       "maxPlayers", "lives", "missions",
-                                         "maxInstances", "allowRegistration"};
+                                         "maxInstances", "fpsMode", "yellowShare", "sampleGoal",
+                                         "groundPirates", "friendlyFire", "allowRegistration"};
     for (const auto& kv : fields) {
         const bool known = std::any_of(std::begin(kKnown), std::end(kKnown), [&](const char* k) { return kv.first == k; });
         if (!known) {
@@ -979,6 +987,38 @@ bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& n
             error = "Einsatzkarten gleichzeitig: bitte eine ganze Zahl von 1 bis " + std::to_string(limits::MAX_INSTANCES) + ".";
             return false;
         }
+    }
+    if (const std::string* v = field("fpsMode")) {
+        if (*v != "0" && *v != "1") {
+            error = "FPS-Modus: bitte 0 oder 1.";
+            return false;
+        }
+        next.fpsMode = *v == "1";
+    }
+    if (const std::string* v = field("yellowShare")) {
+        if (!ParseIntInRange(*v, 0, 100, next.yellowShare)) {
+            error = "Anteil gelber Kristalle: bitte eine ganze Zahl von 0 bis 100.";
+            return false;
+        }
+    }
+    if (const std::string* v = field("sampleGoal")) {
+        if (!ParseIntInRange(*v, 1, limits::MAX_SAMPLE_GOAL, next.sampleGoal)) {
+            error = "Proben-Ziel: bitte eine ganze Zahl von 1 bis " + std::to_string(limits::MAX_SAMPLE_GOAL) + ".";
+            return false;
+        }
+    }
+    if (const std::string* v = field("groundPirates")) {
+        if (!ParseIntInRange(*v, 0, limits::MAX_GROUND_PIRATES, next.groundPirates)) {
+            error = "Bodenpiraten je Team: bitte eine ganze Zahl von 0 bis " + std::to_string(limits::MAX_GROUND_PIRATES) + ".";
+            return false;
+        }
+    }
+    if (const std::string* v = field("friendlyFire")) {
+        if (*v != "0" && *v != "1") {
+            error = "Friendly Fire: bitte 0 oder 1.";
+            return false;
+        }
+        next.friendlyFire = *v == "1";
     }
     if (const std::string* v = field("allowRegistration")) {
         if (*v != "0" && *v != "1") {
@@ -1113,7 +1153,9 @@ bool SameSettings(const GameSettings& a, const GameSettings& b) {
     return a.serverName == b.serverName && a.difficulty == b.difficulty && a.enemyShips == b.enemyShips &&
            a.tradeStations == b.tradeStations && a.shipyards == b.shipyards && a.moon == b.moon &&
            a.maxPlayers == b.maxPlayers && a.lives == b.lives && a.missions == b.missions &&
-           a.maxInstances == b.maxInstances && a.allowRegistration == b.allowRegistration;
+           a.maxInstances == b.maxInstances && a.fpsMode == b.fpsMode && a.yellowShare == b.yellowShare &&
+           a.sampleGoal == b.sampleGoal && a.groundPirates == b.groundPirates && a.friendlyFire == b.friendlyFire &&
+           a.allowRegistration == b.allowRegistration;
 }
 
 // Erfolgsantwort für beide Einstellungs-Routen.

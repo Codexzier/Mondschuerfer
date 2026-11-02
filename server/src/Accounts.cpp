@@ -485,6 +485,11 @@ bool Accounts::Load(std::string& error) {
             else if (k == "deaths") ParseInt(v, p.deaths, 0, 1000000000);
             else if (k == "goals") ParseInt(v, p.goals, 0, 1000000000);
             else if (k == "role") ParseInt(v, p.role, 0, 1);
+            else if (k == "sgPoints") ParseInt(v, p.sgPoints, 0, 1000000000);
+            else if (k == "sgSamples") ParseInt(v, p.sgSamples, 0, 1000000000);
+            else if (k == "sgPirates") ParseInt(v, p.sgPirates, 0, 1000000000);
+            else if (k == "sgReturns") ParseInt(v, p.sgReturns, 0, 1000000000);
+            else if (k == "sgDowns") ParseInt(v, p.sgDowns, 0, 1000000000);
             else if (k == "lives") ParseInt(v, p.lives, 1, limits::MAX_LIVES);
             else if (k == "upgrades") {
                 // "1,2,0,3" -> vier Stufen, jeweils auf 0..UPGRADE_LEVELS begrenzt
@@ -708,6 +713,9 @@ void Accounts::SaveAccounts() {
         out += " deaths=" + std::to_string(p.deaths);
         out += " goals=" + std::to_string(p.goals);
         out += " role=" + std::to_string(p.role);
+        out += " sgPoints=" + std::to_string(p.sgPoints) + " sgSamples=" + std::to_string(p.sgSamples) +
+               " sgPirates=" + std::to_string(p.sgPirates) + " sgReturns=" + std::to_string(p.sgReturns) +
+               " sgDowns=" + std::to_string(p.sgDowns);
         if (p.hasPos)
             out += " pos=" + NumText(p.posX) + "," + NumText(p.posZ) + "," + NumText(p.yaw) + "," + std::to_string(p.posSeed);
         out += "\n";
@@ -790,6 +798,11 @@ bool Accounts::LoadSettings(GameSettings& inOut) const {
         else if (key == "lives") ParseInt(value, inOut.lives, 1, limits::MAX_LIVES);
         else if (key == "missions") ParseInt(value, inOut.missions, 0, limits::MAX_MISSIONS);
         else if (key == "maxInstances") ParseInt(value, inOut.maxInstances, 1, limits::MAX_INSTANCES);
+        else if (key == "fpsMode") inOut.fpsMode = value != "0";
+        else if (key == "yellowShare") ParseInt(value, inOut.yellowShare, 0, 100);
+        else if (key == "sampleGoal") ParseInt(value, inOut.sampleGoal, 1, limits::MAX_SAMPLE_GOAL);
+        else if (key == "groundPirates") ParseInt(value, inOut.groundPirates, 0, limits::MAX_GROUND_PIRATES);
+        else if (key == "friendlyFire") inOut.friendlyFire = value != "0";
         else if (key == "registration") inOut.allowRegistration = value != "0";
     }
     Sanitize(inOut);
@@ -811,6 +824,11 @@ void Accounts::SaveSettings(const GameSettings& s) {
     out += "lives=" + std::to_string(s.lives) + "\n";
     out += "missions=" + std::to_string(s.missions) + "\n";
     out += "maxInstances=" + std::to_string(s.maxInstances) + "\n";
+    out += std::string("fpsMode=") + (s.fpsMode ? "1" : "0") + "\n";
+    out += "yellowShare=" + std::to_string(s.yellowShare) + "\n";
+    out += "sampleGoal=" + std::to_string(s.sampleGoal) + "\n";
+    out += "groundPirates=" + std::to_string(s.groundPirates) + "\n";
+    out += std::string("friendlyFire=") + (s.friendlyFire ? "1" : "0") + "\n";
     out += std::string("registration=") + (s.allowRegistration ? "1" : "0") + "\n";
     QueueWrite(PathOf(SETTINGS_FILE), std::move(out), false, "Einstellungen");
 }

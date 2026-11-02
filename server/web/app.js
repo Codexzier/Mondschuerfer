@@ -438,7 +438,7 @@
     // =========================================================================
     const form = () => $('settings-form');
     const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers', 'lives', 'missions',
-        'maxInstances', 'allowRegistration'];
+        'maxInstances', 'fpsMode', 'yellowShare', 'sampleGoal', 'groundPirates', 'friendlyFire', 'allowRegistration'];
 
     // Aktuelle Eingaben als Objekt (gleicher Aufbau wie "settings" im JSON)
     function readForm() {
@@ -454,6 +454,11 @@
             lives: Number($('f-lives').value),
             missions: Number($('f-missions').value),
             maxInstances: Number($('f-maxInstances').value),
+            fpsMode: $('f-fpsMode').checked,
+            yellowShare: Number($('f-yellowShare').value),
+            sampleGoal: Number($('f-sampleGoal').value),
+            groundPirates: Number($('f-groundPirates').value),
+            friendlyFire: $('f-friendlyFire').checked,
             allowRegistration: $('f-allowRegistration').checked,
         };
     }
@@ -474,6 +479,11 @@
         $('f-lives').value = s.lives;
         $('f-missions').value = s.missions;
         $('f-maxInstances').value = s.maxInstances;
+        $('f-fpsMode').checked = s.fpsMode !== false;
+        $('f-yellowShare').value = s.yellowShare;
+        $('f-sampleGoal').value = s.sampleGoal;
+        $('f-groundPirates').value = s.groundPirates;
+        $('f-friendlyFire').checked = s.friendlyFire === true;
         $('f-allowRegistration').checked = s.allowRegistration !== false;
         updateEnemyField();
         updateNameCounter();
@@ -517,6 +527,10 @@
         setText('f-missions-help', `0 bis ${limits.maxMissions}, 0 = keine Missionen`);
         $('f-maxInstances').max = limits.maxInstancesLimit;
         setText('f-maxInstances-help', `1 bis ${limits.maxInstancesLimit}, je SG-Team auf einer Einsatzkarte eine eigene Welt`);
+        $('f-sampleGoal').max = limits.maxSampleGoal;
+        setText('f-sampleGoal-help', `1 bis ${limits.maxSampleGoal} Proben je Team für die Rückkehr`);
+        $('f-groundPirates').max = limits.maxGroundPirates;
+        setText('f-groundPirates-help', `0 bis ${limits.maxGroundPirates} Gruppen`);
     }
 
     function showDefaults(def) {
@@ -530,6 +544,11 @@
         setText('d-lives', String(def.lives));
         setText('d-missions', String(def.missions));
         setText('d-maxInstances', String(def.maxInstances));
+        setText('d-fpsMode', def.fpsMode === false ? 'aus' : 'an');
+        setText('d-yellowShare', String(def.yellowShare));
+        setText('d-sampleGoal', String(def.sampleGoal));
+        setText('d-groundPirates', String(def.groundPirates));
+        setText('d-friendlyFire', def.friendlyFire === true ? 'an' : 'aus');
         setText('d-allowRegistration', def.allowRegistration === false ? 'aus' : 'an');
     }
 
@@ -605,6 +624,9 @@
             ['f-lives', 'Leben pro Spieler'],
             ['f-missions', 'Mini-Missionen gleichzeitig'],
             ['f-maxInstances', 'Einsatzkarten gleichzeitig'],
+            ['f-yellowShare', 'Anteil gelber Kristalle'],
+            ['f-sampleGoal', 'Proben-Ziel'],
+            ['f-groundPirates', 'Bodenpiraten je Team'],
         ];
         for (const [id, label] of numbers) {
             const input = $(id);
@@ -700,6 +722,11 @@
         body.set('lives', String(s.lives));
         body.set('missions', String(s.missions));
         body.set('maxInstances', String(s.maxInstances));
+        body.set('fpsMode', s.fpsMode ? '1' : '0');
+        body.set('yellowShare', String(s.yellowShare));
+        body.set('sampleGoal', String(s.sampleGoal));
+        body.set('groundPirates', String(s.groundPirates));
+        body.set('friendlyFire', s.friendlyFire ? '1' : '0');
         body.set('allowRegistration', s.allowRegistration ? '1' : '0');
         await postSettings('/api/settings', body);
     }
@@ -713,6 +740,8 @@
             `Standard: ${DIFFICULTY_NAMES[def.difficulty] || '–'} (${def.enemyShips} feindliche Schiffe), ` +
                 `${def.tradeStations} Handelsstation(en), ${def.shipyards} Werft(en), Mond ${MOON_NAMES[def.moon] || '–'}, ` +
                 `max. ${def.maxPlayers} Spieler, ${def.lives} Leben, ${def.missions} Mini-Missionen, ${def.maxInstances} Einsatzkarten gleichzeitig, ` +
+                `FPS-Modus ${def.fpsMode === false ? 'aus' : 'an'} (${def.yellowShare} % gelbe Kristalle, Proben-Ziel ${def.sampleGoal}, ` +
+                `${def.groundPirates} Bodenpiraten je Team, Friendly Fire ${def.friendlyFire === true ? 'an' : 'aus'}), ` +
                 `neue Konten ${def.allowRegistration === false ? 'nicht erlaubt' : 'erlaubt'}.`,
         ];
         if (def.tradeStations !== cur.tradeStations || def.shipyards !== cur.shipyards || def.moon !== cur.moon) {

@@ -392,6 +392,7 @@ struct NetClient::Impl {
     net::TeamsMsg teams;
     bool teamResult = false;           // für TakeTeamResult()
     net::MissionMapsMsg missionMaps;   // freigegebene Einsatzkarten (Ziele im Command Center)
+    net::ScoreboardMsg scoreboard;     // alle Spieler des Servers nach Punkten (Command Center)
 
     // --- Fremde Schiffe: Interpolation ------------------------------------------------------
     struct Frame {
@@ -533,6 +534,7 @@ void NetClient::Impl::ResetSession() {
     teams = net::TeamsMsg{};
     teamResult = false;
     missionMaps = net::MissionMapsMsg{};
+    scoreboard = net::ScoreboardMsg{};
     lastMap = net::MapDataMsg{};
     inInstance = false;
 }
@@ -808,6 +810,11 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
         case net::MsgType::Teams: {
             net::TeamsMsg m;
             if (net::Decode(r, m)) HandleTeams(m);
+            break;
+        }
+        case net::MsgType::Scoreboard: {
+            net::ScoreboardMsg m;
+            if (net::Decode(r, m)) scoreboard = std::move(m);
             break;
         }
         case net::MsgType::MissionMaps: {
@@ -1542,6 +1549,10 @@ void NetClient::Impl::HandleEvents(const net::EventsMsg& m) {
                 // SnapMe mit der neuen Schiffs-ID richtet das neue ein.
                 ForgetOwnShip();
                 break;
+            case net::EventKind::TeamHome:
+                world.Notify(world.Me(), Fmt("%s ist durch das Stargate zurück: %d Punkte", e.text.c_str(), e.points),
+                             Color{150, 210, 255, 255});
+                break;
         }
     }
 }
@@ -2223,6 +2234,7 @@ void NetClient::SendTeamAction(net::TeamActionType action, int param) {
 
 const net::TeamsMsg& NetClient::Teams() const { return impl_->teams; }
 const std::vector<GameMap>& NetClient::MissionMaps() const { return impl_->missionMaps.maps; }
+const net::ScoreboardMsg& NetClient::Scoreboard() const { return impl_->scoreboard; }
 
 bool NetClient::TakeTeamResult() {
     const bool r = impl_->teamResult;

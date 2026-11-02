@@ -93,6 +93,8 @@ struct PlayerProgress {
     int deaths = 0;
     int goals = 0;                              // so oft das Ziel erreicht
     int role = 0;                               // zuletzt gespielte Rolle (0 Pilot, 1 SG-Team): Vorauswahl der Rollenwahl
+    // SG-Team: alle Einsätze zusammen (PlayerState::sgTotal, Scoreboard im Command Center)
+    int sgPoints = 0, sgSamples = 0, sgPirates = 0, sgReturns = 0, sgDowns = 0;
     // Ort des Schiffs beim Abmelden. Beim nächsten Anmelden geht es genau dort
     // weiter, statt an einer Handelsstation: Abmelden + Anmelden ist damit
     // keine Abkürzung zur Station (sonst spart man den Rückflug und die Zeit
@@ -176,6 +178,7 @@ public:
     // oder MAX_ACCOUNTS erreicht ist. Speichert NICHT automatisch.
     Account* Create(const std::string& name, const net::Key32& key, int64_t now);
     int Count() const { return static_cast<int>(accounts_.size()); }
+    const std::map<std::string, Account>& All() const { return accounts_; }   // Scoreboard aller Spieler
     void SaveAccounts();     // Auftrag an den Schreib-Thread
 
     // --- Bestenliste -------------------------------------------------------------

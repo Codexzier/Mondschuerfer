@@ -157,6 +157,11 @@ je Spieler; gespeichert in `/data/karten/`, die aktive Karte und die freigegeben
 | `MAX_PLAYERS` | `16` | gleichzeitig angemeldete Spieler, 1–64 (plus bis zu 16 Zuschauer) |
 | `MISSIONS` | `3` | Mini-Missionen gleichzeitig auf der Karte, 0–10 (`0` = keine Missionen) |
 | `MAX_INSTANCES` | `4` | SG-Teams gleichzeitig auf einer Einsatzkarte, 1–16 (je Team rechnet der Server eine eigene Welt) |
+| `FPS_MODE` | `1` | SG-Teams zu Fuß, `0` = nur Piloten (die Rollenwahl entfällt, Einsätze enden beim Ausschalten ohne Wertung) |
+| `YELLOW_SHARE` | `40` | Anteil gelber Kristalle in Prozent, 0–100 (gilt für neu entstehende Kristalle der Mondkarte) |
+| `SAMPLE_GOAL` | `5` | Proben je Team für die Rückkehr, 1–20 (auf einer Einsatzkarte höchstens so viele, wie sie Kristallplätze hat) |
+| `GROUND_PIRATES` | `3` | Gruppen von Bodenpiraten je SG-Team, das draußen ist, 0–6 |
+| `FRIENDLY_FIRE` | `0` | `1` = Figuren verschiedener SG-Teams treffen einander (das eigene Team nie) |
 | `MAX_CONNECTIONS_PER_IP` | `8` | max. Verbindungen je öffentlicher IP-Adresse, `0` = unbegrenzt; Heimnetz-Adressen sind ausgenommen |
 | `WEB_PUBLISH_ADDRESS` | leer (= `127.0.0.1`) | Verwaltungsseite im Heimnetz freigeben, z. B. `0.0.0.0` (unverschlüsselt, siehe [Sicherheit](#die-verwaltungsseite)) |
 | `DOMAIN` | leer | nur für das Profil `online` (HTTPS mit Caddy), z. B. `mond.example.org` |

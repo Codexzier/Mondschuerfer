@@ -409,13 +409,14 @@ void CommandCenterScreen::OpenOnline() {
 
 // Aufbau wie im Einzelspieler: links Team, Auftrag und Knöpfe, rechts die
 // Teams des Servers (Klick auf ein Team: Ziel für "Beitreten") und darunter
-// die Vorschau der gewählten Einsatzkarte, oben in der Mitte das Ergebnis des
+// die Vorschau der gewählten Einsatzkarte, im zweiten Reiter das Scoreboard
+// aller Spieler (Tab-Taste oder RB wechselt), oben in der Mitte das Ergebnis des
 // letzten Einsatzes, unten die Anwahl. Die Anwahl beginnt, wenn der Server
 // sie meldet (Team im Zustand 1); die Uhr läuft dann hier weiter (Update),
 // den Einsatz startet der Server. Das Ziel wählt der Gründer ("Ziel: ..."
 // schaltet weiter wie im Einzelspieler); die anderen sehen es.
-OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const std::vector<GameMap>& maps, int myId,
-                                              bool fresh) {
+OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const net::ScoreboardMsg& board,
+                                              const std::vector<GameMap>& maps, int myId, int sampleGoal, bool fresh) {
     const net::TeamEntry* mine = nullptr;
     for (const net::TeamEntry& t : teams.teams)
         for (const net::TeamMember& mb : t.members)
@@ -451,6 +452,14 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
     const int target = mine && static_cast<size_t>(mine->target) <= maps.size() ? mine->target : 0;
     const GameMap* mission = target > 0 ? &maps[static_cast<size_t>(target - 1)] : nullptr;
     const bool hasGate = mission || teams.moonGate;   // Einsatzkarten haben immer ein Tor (der Editor prüft es)
+    // Proben-Ziel: auf einer Einsatzkarte höchstens so viele, wie sie Kristallplätze hat (wie World::SampleGoal)
+    int samples = std::max(1, sampleGoal);
+    if (mission) {
+        int crystals = 0;
+        for (const MapPiece& q : mission->pieces)
+            if (q.model == MARKER_CRYSTAL) ++crystals;
+        samples = std::min(samples, std::max(1, crystals));
+    }
 
     TextCentered("COMMAND CENTER", W * 0.5f, 20 * s, 44 * s, ACCENT);
     TextCentered(mine ? TextFormat("Stargate-Kommando  ·  Team SG%d", mine->number) : "Stargate-Kommando  ·  Mehrspieler", W * 0.5f,
@@ -484,7 +493,7 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
     Text("AUFTRAG", x, y, 18 * s, MUTED);
     y += 26 * s;
     const std::string brief[] = {mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
-                                 TextFormat("Sammelt %d Proben an gelben Kristallen", cfg::SAMPLE_GOAL),
+                                 TextFormat("Sammelt %d Proben an gelben Kristallen", samples),
                                  "(sie zählen für das ganze Team).", "Dann ein Stargate in der Nähe anwählen:",
                                  "die Treppe hinauf und hindurch.",
                                  mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!"};
@@ -548,46 +557,84 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
         else if (c == 3) cmd.kind = OnlineCommand::Kind::Menu;
     }
 
-    // --- rechts: alle Teams ---------------------------------------------------
+    // --- rechts: alle Teams oder Scoreboard (Reiter wie im Stationsfenster) ----
     const Rectangle rp{W - 24 * s - 460 * s, top, 460 * s, H - top - 24 * s};
     Panel(rp);
     x = rp.x + 20 * s;
     y = rp.y + 18 * s;
     const float rx = rp.x + rp.width - 20 * s;
-    Text("SG-TEAMS", x, y, 24 * s, ACCENT);
-    y += 32 * s;
-    Text(mine ? "Alle Teams auf diesem Server" : "Klick auf ein Team: dort beitreten", x, y, 16 * s, MUTED);
-    y += 30 * s;
-    if (teams.teams.empty()) Text("Noch kein Team gegründet.", x, y + 6 * s, 18 * s, MUTED);
-    // Vorschau der gewählten Einsatzkarte unten im Feld; die Teamliste endet darüber
-    const float pvs = std::min(280 * s, rp.width - 40 * s);
-    const Rectangle pr{rp.x + (rp.width - pvs) * 0.5f, rp.y + rp.height - 26 * s - pvs, pvs, pvs};
-    const float listEnd = mission ? pr.y - 40 * s : rp.y + rp.height - 20 * s;
-    if (mission) {
-        Text(TextFormat("VORSCHAU: %s", mission->name.c_str()), pr.x, pr.y - 24 * s, 16 * s, MUTED);
-        DrawMapPreview(*mission, pr);
+    if (live && (IsKeyPressed(KEY_TAB) || PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1))) {
+        rightTab_ = 1 - rightTab_;
+        g_audio.Play(Sfx::UiMove);
     }
-    static const char* states[] = {"im Command Center", "wählt an ...", "im Einsatz"};
-    for (const net::TeamEntry& t : teams.teams) {
-        if (y > listEnd - 40 * s) break;
-        const float rowH = 34 * s + 22 * s * static_cast<float>(t.members.size());
-        const Rectangle row{rp.x + 8 * s, y - 6 * s, rp.width - 16 * s, rowH};
-        const bool target = !mine && join == &t;
-        if (&t == mine || target) DrawRectangleRec(row, PANEL_LIGHT);
-        if (!mine && joinable(t) && live && PointerPressed() && CheckCollisionPointRec(PointerPos(), row)) {
-            joinTarget_ = t.number;
+    const char* tabNames[2] = {"SG-Teams", "Scoreboard"};
+    const float tabW = (rx - x - 10 * s) * 0.5f;
+    for (int t = 0; t < 2; ++t) {
+        const Rectangle tr{x + t * (tabW + 10 * s), y, tabW, 38 * s};
+        const bool hover = CheckCollisionPointRec(PointerPos(), tr);
+        if (live && hover && PointerPressed() && rightTab_ != t) {
+            rightTab_ = t;
             g_audio.Play(Sfx::UiMove);
         }
-        Text(TextFormat("SG%d", t.number), x, y, 22 * s, &t == mine ? ACCENT : TEXT);
-        Text(TextFormat("%d / %d", static_cast<int>(t.members.size()), cfg::SG_TEAM_MAX), x + 70 * s, y + 3 * s, 18 * s, MUTED);
-        TextRight(states[std::min<int>(t.state, 2)], rx, y + 3 * s, 18 * s, t.state == 2 ? SHIELD : t.state == 1 ? ACCENT : GOOD);
+        const bool current = t == rightTab_;
+        DrawRectangleRec(tr, current ? ACCENT : (hover ? PANEL_LIGHT : Color{15, 18, 24, 200}));
+        if (!current) DrawRectangleLinesEx(tr, 1.0f, ACCENT_DIM);
+        TextCentered(tabNames[t], tr.x + tr.width * 0.5f, tr.y + 8 * s, 20 * s, current ? Color{26, 31, 41, 255} : TEXT, !current);
+    }
+    y += 50 * s;
+    if (rightTab_ == 1) {
+        // Scoreboard: Summe aller Einsätze je Spieler, darunter Proben,
+        // Bodenpiraten, als Pilot abgeschossene Schiffe und Rückkehren
+        Text("Alle Spieler des Servers, nach Punkten", x, y, 16 * s, MUTED);
         y += 30 * s;
-        for (const net::TeamMember& mb : t.members) {
-            Text(mb.name, x + 16 * s, y, 18 * s, mb.playerId == myId ? ACCENT : TEXT);
-            if (mb.ready) TextRight("bereit", rx, y, 16 * s, GOOD);
-            y += 22 * s;
+        if (board.entries.empty()) Text("Noch hat niemand Punkte.", x, y + 6 * s, 18 * s, MUTED);
+        for (size_t i = 0; i < board.entries.size(); ++i) {
+            if (y + 44 * s > rp.y + rp.height - 16 * s) break;
+            const net::ScoreEntry& e = board.entries[i];
+            const bool me = e.playerId >= 0 && e.playerId == myId;
+            if (me) DrawRectangleRec({rp.x + 8 * s, y - 5 * s, rp.width - 16 * s, 46 * s}, PANEL_LIGHT);
+            const Color tc = me ? ACCENT : TEXT;
+            Text(TextFormat("%d", static_cast<int>(i) + 1), x, y, 20 * s, tc);
+            Text(e.name, x + 34 * s, y, 20 * s, tc);
+            TextRight(ui::Num(e.points), rx, y, 20 * s, tc);
+            Text(TextFormat("Proben %d · Piraten %d · Abschüsse %d · Rückkehr %d", e.samples, e.pirates, e.kills, e.returns),
+                 x + 34 * s, y + 23 * s, 14 * s, MUTED);
+            y += 50 * s;
         }
-        y += 10 * s;
+    } else {
+        Text(mine ? "Alle Teams auf diesem Server" : "Klick auf ein Team: dort beitreten", x, y, 16 * s, MUTED);
+        y += 30 * s;
+        if (teams.teams.empty()) Text("Noch kein Team gegründet.", x, y + 6 * s, 18 * s, MUTED);
+        // Vorschau der gewählten Einsatzkarte unten im Feld; die Teamliste endet darüber
+        const float pvs = std::min(280 * s, rp.width - 40 * s);
+        const Rectangle pr{rp.x + (rp.width - pvs) * 0.5f, rp.y + rp.height - 26 * s - pvs, pvs, pvs};
+        const float listEnd = mission ? pr.y - 40 * s : rp.y + rp.height - 20 * s;
+        if (mission) {
+            Text(TextFormat("VORSCHAU: %s", mission->name.c_str()), pr.x, pr.y - 24 * s, 16 * s, MUTED);
+            DrawMapPreview(*mission, pr);
+        }
+        static const char* states[] = {"im Command Center", "wählt an ...", "im Einsatz"};
+        for (const net::TeamEntry& t : teams.teams) {
+            if (y > listEnd - 40 * s) break;
+            const float rowH = 34 * s + 22 * s * static_cast<float>(t.members.size());
+            const Rectangle row{rp.x + 8 * s, y - 6 * s, rp.width - 16 * s, rowH};
+            const bool target = !mine && join == &t;
+            if (&t == mine || target) DrawRectangleRec(row, PANEL_LIGHT);
+            if (!mine && joinable(t) && live && PointerPressed() && CheckCollisionPointRec(PointerPos(), row)) {
+                joinTarget_ = t.number;
+                g_audio.Play(Sfx::UiMove);
+            }
+            Text(TextFormat("SG%d", t.number), x, y, 22 * s, &t == mine ? ACCENT : TEXT);
+            Text(TextFormat("%d / %d", static_cast<int>(t.members.size()), cfg::SG_TEAM_MAX), x + 70 * s, y + 3 * s, 18 * s, MUTED);
+            TextRight(states[std::min<int>(t.state, 2)], rx, y + 3 * s, 18 * s, t.state == 2 ? SHIELD : t.state == 1 ? ACCENT : GOOD);
+            y += 30 * s;
+            for (const net::TeamMember& mb : t.members) {
+                Text(mb.name, x + 16 * s, y, 18 * s, mb.playerId == myId ? ACCENT : TEXT);
+                if (mb.ready) TextRight("bereit", rx, y, 16 * s, GOOD);
+                y += 22 * s;
+            }
+            y += 10 * s;
+        }
     }
 
     // --- Mitte: Ergebnis des letzten Einsatzes, Anwahl, Team unterwegs --------
@@ -620,7 +667,7 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
 // ===========================================================================
 // Rollenwahl
 // ===========================================================================
-int DrawRoleChoice(int& sel, bool live, bool online) {
+int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
@@ -638,7 +685,7 @@ int DrawRoleChoice(int& sel, bool live, bool online) {
           "Ziel: 100.000 Ressourcenpunkte."}},
         {"SG-TEAM", "Zu Fuß durch das Stargate",
          {online ? "Start im Command Center: Team gründen oder beitreten." : "Start im Command Center mit Team SG1.",
-          TextFormat("%d Proben an gelben Kristallen sammeln", cfg::SAMPLE_GOAL),
+          TextFormat("%d Proben an gelben Kristallen sammeln", sampleGoal),
           "und durch ein Stargate zurückkehren."}},
     };
     const float cw = 460 * s, ch = 250 * s, gap = 40 * s;

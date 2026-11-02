@@ -299,8 +299,8 @@ bool World::StartSgMission(PlayerState& ps, int mates, int gate) {
         SoundAt(Sfx::Discover, exit, 0.8f, 0.0f, ps.id);
         return true;
     }
-    // Bodenpiraten (KI, Ai.cpp), weit genug vom Tor
-    for (int i = 0; i < cfg::GROUND_PIRATE_GROUPS; ++i) SpawnPirateGroup(t.pos);
+    // Bodenpiraten (KI, Ai.cpp), weit genug vom Tor; Anzahl je Team: Einstellung des Servers
+    for (int i = 0; i < settings.groundPirates; ++i) SpawnPirateGroup(t.pos);
     pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
     SoundAt(Sfx::Discover, exit, 0.8f, 0.0f, ps.id);
     return true;
@@ -320,6 +320,10 @@ void World::EndSgMission(PlayerState& ps, bool success, bool record) {
         r.pirates = ps.sgPirates;
         r.points = r.samples * cfg::SG_POINTS_SAMPLE + r.pirates * cfg::SG_POINTS_PIRATE + (success ? cfg::SG_POINTS_RETURN : 0);
         r.seconds = ps.sgTime;
+        ps.sgTotal.points += r.points;
+        ps.sgTotal.samples += r.samples;
+        ps.sgTotal.pirates += r.pirates;
+        if (success) ++ps.sgTotal.returns;
         ps.sgLog.push_back(r);
         if (ps.sgLog.size() > static_cast<size_t>(cfg::SG_LOG_MAX)) {
             auto worst = std::min_element(ps.sgLog.begin(), ps.sgLog.end() - 1,
@@ -372,6 +376,20 @@ int World::TeamSamples(const PlayerState& ps) const {
     return n;
 }
 
+// Auf einer Einsatzkarte gibt es nur die Kristallplätze aus dem Editor (alle
+// in deposits, auch beprobte); mehr Proben als Plätze wären unerreichbar.
+int World::SampleGoal() const {
+    if (!instance) return std::max(1, settings.sampleGoal);
+    return std::clamp(settings.sampleGoal, 1, std::max(1, static_cast<int>(deposits.size())));
+}
+
+PlayerState* World::PlayerOfTrooper(const Trooper* t) {
+    if (!t) return nullptr;
+    if (t->playerId >= 0) return FindPlayer(t->playerId);
+    if (const Trooper* leader = FindTrooper(t->leaderId); leader && leader->playerId >= 0) return FindPlayer(leader->playerId);
+    return nullptr;
+}
+
 // Je Spieler im Einsatz: Dauer, nachkommende Kameraden und Mitspieler und
 // die Rückkehr. Hat das Team genug Proben (TeamSamples) und ist jemand von
 // ihm nah an einem ruhenden Tor, wird es angewählt; ist es offen, führt die
@@ -419,7 +437,7 @@ void World::UpdateStargates(float dt) {
             ps.sgArriveT = cfg::GATE_MATE_INTERVAL;
             t = FindTrooper(ps.trooperId);
         }
-        if (t->down || TeamSamples(ps) < cfg::SAMPLE_GOAL) continue;
+        if (t->down || TeamSamples(ps) < SampleGoal()) continue;
         bool busy = false;
         for (const Stargate& g : stargates)
             if (g.toCommand && g.state != GateState::Idle && memberOf(g, ps)) busy = true;
@@ -754,12 +772,12 @@ void World::UpdateTroopers(float dt) {
                 SoundAt(Sfx::MineDone, t.pos, 1.0f, 0.0f, t.playerId);
                 // Meldung an das ganze Team (Mehrspieler: die Proben zählen zusammen)
                 if (PlayerState* owner = FindPlayer(t.playerId)) {
-                    const int have = TeamSamples(*owner);
+                    const int have = TeamSamples(*owner), goal = SampleGoal();
                     for (PlayerState& o : players)
                         if (SameTeam(o, *owner) && o.trooperId >= 0)
                             Notify(o,
-                                   have >= cfg::SAMPLE_GOAL ? Fmt("Probe genommen (%d / %d): zurück zu einem Stargate!", have, cfg::SAMPLE_GOAL)
-                                                            : Fmt("Probe genommen (%d / %d)", have, cfg::SAMPLE_GOAL),
+                                   have >= goal ? Fmt("Probe genommen (%d / %d): zurück zu einem Stargate!", have, goal)
+                                                : Fmt("Probe genommen (%d / %d)", have, goal),
                                    Color{255, 225, 90, 255});
                 }
             }
@@ -886,20 +904,16 @@ void World::DamageTrooper(Trooper& t, const Bullet& b) {
     // Wer bekommt die Meldung? Der Spieler der gefallenen Figur bzw. ihres
     // Anführers, bei einem Bodenpiraten der Spieler des Schützen (auch wenn
     // ein Kamerad geschossen hat).
-    auto playerOf = [&](const Trooper* f) -> PlayerState* {
-        if (!f) return nullptr;
-        if (f->playerId >= 0) return FindPlayer(f->playerId);
-        if (const Trooper* leader = FindTrooper(f->leaderId); leader && leader->playerId >= 0) return FindPlayer(leader->playerId);
-        return nullptr;
-    };
     const Color bad{255, 110, 90, 255};
     if (t.playerId >= 0) {
-        if (PlayerState* ps = FindPlayer(t.playerId))
+        if (PlayerState* ps = FindPlayer(t.playerId)) {
             Notify(*ps, t.samples > 0 ? Fmt("Gefallen! %d Proben verloren", t.samples) : std::string("Gefallen!"), bad);
+            ++ps->sgTotal.downs;
+        }
         t.samples = 0;
     } else if (t.kind == TrooperKind::Mate) {
-        if (PlayerState* ps = playerOf(&t)) Notify(*ps, "Ein Kamerad ist gefallen", bad);
-    } else if (PlayerState* ps = playerOf(FindTrooper(b.ownerTrooper))) {
+        if (PlayerState* ps = PlayerOfTrooper(&t)) Notify(*ps, "Ein Kamerad ist gefallen", bad);
+    } else if (PlayerState* ps = PlayerOfTrooper(FindTrooper(b.ownerTrooper))) {
         Notify(*ps, t.zombie ? "Zombie ausgeschaltet" : "Bodenpirat ausgeschaltet", Color{150, 255, 170, 255});
         ++ps->sgPirates;
     }
@@ -996,27 +1010,30 @@ bool World::SpawnPirateGroup(Vector3 team) {
 
 // Fehlt eine Gruppe (alle ihre Figuren sind gefallen und verschwunden),
 // kommt nach GROUND_PIRATE_RESPAWN Sekunden eine neue, weit genug vom Team
-// (der ersten Spielerfigur).
+// (der ersten Spielerfigur). Sollzahl: settings.groundPirates je Team, das
+// gerade draußen ist (Mehrspieler: mehrere Teams auf der Mondkarte); die neue
+// Gruppe kommt dann zu einer zufälligen Spielerfigur.
 void World::UpdatePirateGroups(float dt) {
-    Vector3 team{};
-    bool any = false;
-    std::vector<int> groups;
+    std::vector<const Trooper*> mine;   // Spielerfiguren
+    std::vector<int> groups, teams;     // Gruppen der Piraten, Teams draußen (allein: -1 - Spieler-ID)
     for (const Trooper& t : troopers) {
-        if (t.playerId >= 0 && !any) {
-            team = t.pos;
-            any = true;
+        if (t.playerId >= 0) {
+            mine.push_back(&t);
+            const int team = t.team != 0 ? t.team : -1 - t.playerId;
+            if (std::find(teams.begin(), teams.end(), team) == teams.end()) teams.push_back(team);
         }
         if (t.playerId < 0 && t.kind == TrooperKind::Pirate && std::find(groups.begin(), groups.end(), t.group) == groups.end())
             groups.push_back(t.group);
     }
-    if (!any) return;
-    if (static_cast<int>(groups.size()) >= cfg::GROUND_PIRATE_GROUPS) {
+    if (mine.empty()) return;
+    if (static_cast<int>(groups.size()) >= settings.groundPirates * static_cast<int>(teams.size())) {
         pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
         return;
     }
     pirateGroupT -= dt;
     if (pirateGroupT <= 0.0f) {
-        SpawnPirateGroup(team);
+        const size_t k = teams.size() > 1 ? static_cast<size_t>(RandInt(0, static_cast<int>(mine.size()) - 1)) : 0;
+        SpawnPirateGroup(mine[k]->pos);
         pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
     }
 }

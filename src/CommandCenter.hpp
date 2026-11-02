@@ -19,7 +19,8 @@
 // Mehrspieler (DrawOnline): dieselbe Kulisse, aber ohne NPC-Kameraden.
 //   Links das eigene Team (gründen, beitreten, bereit melden, verlassen;
 //   der Gründer wählt das Ziel und das Tor an), rechts alle SG-Teams des
-//   Servers und die Vorschau der gewählten Einsatzkarte. Ziele sind die
+//   Servers und die Vorschau der gewählten Einsatzkarte, im zweiten Reiter
+//   das Scoreboard aller Spieler (net::ScoreboardMsg). Ziele sind die
 //   Mondkarte und die auf dem Server freigegebenen Einsatzkarten
 //   (net::MissionMapsMsg). Was gewählt wird, schickt MultiplayerScreen als
 //   TeamAction an den Server; Anwahl und Ergebnis kommen von dort (net::TeamsMsg).
@@ -71,11 +72,13 @@ public:
     std::string TargetStem() const { return target_ > 0 ? targets_[static_cast<size_t>(target_ - 1)].stem : std::string(); }
 
     // Mehrspieler: beim Betreten zurücksetzen, dann jedes Frame Update und
-    // DrawOnline. teams = Stand vom Server, maps = freigegebene Einsatzkarten
-    // (Ziele), myId = eigene Spieler-ID, fresh = gerade ist ein eigener
+    // DrawOnline. teams = Stand vom Server, board = Scoreboard aller Spieler,
+    // maps = freigegebene Einsatzkarten (Ziele), myId = eigene Spieler-ID,
+    // sampleGoal = Proben-Ziel des Servers, fresh = gerade ist ein eigener
     // Einsatz zu Ende gegangen (Ergebnis zeigen).
     void OpenOnline();
-    OnlineCommand DrawOnline(const net::TeamsMsg& teams, const std::vector<GameMap>& maps, int myId, bool fresh);
+    OnlineCommand DrawOnline(const net::TeamsMsg& teams, const net::ScoreboardMsg& board, const std::vector<GameMap>& maps,
+                             int myId, int sampleGoal, bool fresh);
 
 private:
     void DrawScene(int figures);   // figures = so viele Figuren vor dem Tor (1..4)
@@ -91,14 +94,16 @@ private:
     std::string previewStem_;            // Vorschaubild: Einsatzkarte, die in preview_ steht ("" = keine)
     GameMap preview_;
     int joinTarget_ = 0;                 // Mehrspieler: Team für "Beitreten" (SG-Nummer, 0 = das erste offene)
+    int rightTab_ = 0;                   // Mehrspieler: rechtes Feld 0 = SG-Teams, 1 = Scoreboard
 };
 
 // Rollenwahl (Einzelspieler nach "Neues Spiel"/"Fortsetzen", Mehrspieler
 // nach der Anmeldung): zwei Karten Pilot und SG-Team, abgedunkelt über dem
 // Bild. sel = markierte Karte (Pfeiltasten/A/D ändern sie), live = bedienbar.
 // Liefert 0 (Pilot) oder 1 (SG-Team), sobald gewählt wurde, sonst -1.
-// online = Texte für den Mehrspieler. ESC wertet der Aufrufer aus.
-int DrawRoleChoice(int& sel, bool live, bool online);
+// online = Texte für den Mehrspieler, sampleGoal = Proben für die Rückkehr.
+// ESC wertet der Aufrufer aus.
+int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal);
 
 // Wurmloch eines Stargates mit Fußpunkt pos, Drehung yaw und Größe scale
 // (Render.cpp). Mit BLEND_ADDITIVE und ohne Schreiben in den Tiefenpuffer

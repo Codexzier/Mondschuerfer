@@ -107,6 +107,7 @@ public:
     bool TakeTeamResult();                // true einmalig, wenn ein eigener Einsatz gerade zu Ende ging
     // Freigegebene Einsatzkarten (Ziele im Command Center, net::TeamEntry::target)
     const std::vector<GameMap>& MissionMaps() const;
+    const net::ScoreboardMsg& Scoreboard() const;   // alle Spieler des Servers nach Punkten (Rolle SG-Team)
 
     // --- Spielwelt ---------------------------------------------------------------
     bool WorldReady() const;              // Welcome empfangen, Welt aufgebaut

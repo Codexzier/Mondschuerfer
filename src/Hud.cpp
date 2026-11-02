@@ -473,7 +473,7 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
     if (t.reloadT > 0.0f) Bar({x, y + 42 * s, bw, 6 * s}, 1.0f - t.reloadT / cfg::TROOPER_RELOAD, Color{255, 200, 120, 255});
     y += 56 * s;
     Text("PROBEN", x, y, 18 * s, MUTED);
-    TextRight(TextFormat("%d / %d", t.samples, cfg::SAMPLE_GOAL), x + bw, y, 18 * s, yellow);
+    TextRight(TextFormat("%d / %d", t.samples, w.SampleGoal()), x + bw, y, 18 * s, yellow);
 
     // Kameraden (NPC) unter dem Panel: Name und Schild, gefallene mit Restzeit
     // bis zur Rückkehr
@@ -543,7 +543,7 @@ static void DrawTrooperHud(const World& w, const Trooper& t, bool simulation) {
             TextCentered("Stargate offen: die Treppe hinauf und hindurch", W * 0.5f, hy, 20 * s, GOOD);
         else if (homeGate)
             TextCentered("Stargate wird angewählt ...", W * 0.5f, hy, 20 * s, ac);
-        else if (t.samples >= cfg::SAMPLE_GOAL)
+        else if (t.samples >= w.SampleGoal())
             TextCentered(TextFormat("Alle Proben: zu einem Stargate (näher als %.0f m)", cfg::GATE_RETURN_RANGE), W * 0.5f, hy,
                          20 * s, yellow);
     }

@@ -155,6 +155,16 @@ void ReadEnvironment(Options& o) {
     EnvInt("LIVES", s.lives, 1, limits::MAX_LIVES);
     EnvInt("MISSIONS", s.missions, 0, limits::MAX_MISSIONS);
     EnvInt("MAX_INSTANCES", s.maxInstances, 1, limits::MAX_INSTANCES);
+    // Schalter als 0/1
+    int flag = s.fpsMode ? 1 : 0;
+    EnvInt("FPS_MODE", flag, 0, 1);
+    s.fpsMode = flag != 0;
+    EnvInt("YELLOW_SHARE", s.yellowShare, 0, 100);
+    EnvInt("SAMPLE_GOAL", s.sampleGoal, 1, limits::MAX_SAMPLE_GOAL);
+    EnvInt("GROUND_PIRATES", s.groundPirates, 0, limits::MAX_GROUND_PIRATES);
+    flag = s.friendlyFire ? 1 : 0;
+    EnvInt("FRIENDLY_FIRE", flag, 0, 1);
+    s.friendlyFire = flag != 0;
     Sanitize(s);
 }
 
@@ -181,7 +191,9 @@ void PrintUsage() {
         << "  TRADE_STATIONS (1-" << limits::MAX_TRADE_STATIONS << "), SHIPYARDS (1-" << limits::MAX_SHIPYARDS
         << "), MOON_COLOR (grey|orange|blue), MAX_PLAYERS (1-" << limits::MAX_PLAYERS_LIMIT << "), LIVES (1-" << limits::MAX_LIVES << "),\n"
         << "  MISSIONS (0-" << limits::MAX_MISSIONS << ", Mini-Missionen gleichzeitig),\n"
-        << "  MAX_INSTANCES (1-" << limits::MAX_INSTANCES << ", SG-Teams gleichzeitig auf Einsatzkarten)\n"
+        << "  MAX_INSTANCES (1-" << limits::MAX_INSTANCES << ", SG-Teams gleichzeitig auf Einsatzkarten),\n"
+        << "  FPS_MODE (0|1), YELLOW_SHARE (0-100, Prozent gelber Kristalle), SAMPLE_GOAL (1-" << limits::MAX_SAMPLE_GOAL << "),\n"
+        << "  GROUND_PIRATES (0-" << limits::MAX_GROUND_PIRATES << ", Gruppen je SG-Team), FRIENDLY_FIRE (0|1)\n"
         << "Verwaltungsseite: ADMIN_USER und ADMIN_PASSWORD (mind. 10 Zeichen) müssen gesetzt sein.\n";
 }
 
@@ -281,6 +293,9 @@ void PrintSettings(const GameSettings& s) {
               << "   Leben pro Spieler: " << s.lives << " (höchstens " << limits::MAX_LIVES << ")\n"
               << "   Mini-Missionen  : " << s.missions << " gleichzeitig (höchstens " << limits::MAX_MISSIONS << ")\n"
               << "   Einsatzkarten   : " << s.maxInstances << " gleichzeitig (höchstens " << limits::MAX_INSTANCES << ")\n"
+              << "   FPS-Modus       : " << (s.fpsMode ? "an" : "aus") << " (" << s.yellowShare << " % gelbe Kristalle, Proben-Ziel "
+              << s.sampleGoal << ", " << s.groundPirates << " Bodenpiraten-Gruppen je Team, Friendly Fire "
+              << (s.friendlyFire ? "an" : "aus") << ")\n"
               << "   Neue Konten     : " << (s.allowRegistration ? "erlaubt" : "nicht erlaubt") << "\n";
 }
 

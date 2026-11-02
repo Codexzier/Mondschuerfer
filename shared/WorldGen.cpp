@@ -579,12 +579,13 @@ void BuildShipDealer(Station& d) {
 // revealedFor-Liste); erst der Scanner eines Spielers deckt sie auf.
 // ===========================================================================
 // Gelbe Kristalle (FPS-Modus, Einzelspieler ohne Simulation und Server):
-// Anteil cfg::YELLOW_SHARE, ausgewählt über die ID statt mit einer
-// Zufallszahl, damit die Zahlenfolge von rng gleich bleibt. Der Server zeigt
-// sie allen Spielern ohne Scanner (GameServer::MakeDeposits).
+// Anteil settings.yellowShare (Prozent, Standard cfg::YELLOW_SHARE),
+// ausgewählt über die ID statt mit einer Zufallszahl, damit die Zahlenfolge
+// von rng gleich bleibt. Der Server zeigt sie allen Spielern ohne Scanner
+// (GameServer::MakeDeposits). FPS-Modus aus: keine neuen gelben Kristalle.
 bool World::StartsYellow(int depositId) const {
-    return !simulation &&
-           ((static_cast<unsigned>(depositId) * 2654435761u) >> 16) % 100u < static_cast<unsigned>(cfg::YELLOW_SHARE * 100.0f);
+    return !simulation && settings.fpsMode &&
+           ((static_cast<unsigned>(depositId) * 2654435761u) >> 16) % 100u < static_cast<unsigned>(settings.yellowShare);
 }
 
 void World::SpawnDeposit(bool initial) {

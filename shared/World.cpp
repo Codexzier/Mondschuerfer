@@ -1862,10 +1862,25 @@ void World::UpdateBullets(float dt) {
         // wird die Strecke dieses Schritts, sonst flöge es mit über 1 m je
         // Schritt durch die schmale Figur hindurch), endet am Boden oder an
         // einem Hindernis (Funken). Schiffe trifft es nicht.
+        // Friendly Fire (Server-Einstellung): auch Figuren anderer SG-Teams,
+        // das eigene Team nie.
         if (b.ground) {
             const Vector3 from = Vector3Subtract(b.pos, Vector3Scale(b.vel, dt));
+            PlayerState* shooter = nullptr;
+            bool shooterKnown = false;
+            auto otherTeam = [&](const Trooper& t) {
+                if (!settings.friendlyFire || b.faction != Faction::Player) return false;
+                if (!shooterKnown) {
+                    shooter = PlayerOfTrooper(FindTrooper(b.ownerTrooper));
+                    shooterKnown = true;
+                }
+                const PlayerState* victim = PlayerOfTrooper(&t);
+                return shooter && victim && !SameTeam(*shooter, *victim);
+            };
             for (auto& t : troopers) {
-                if (t.down || t.faction == b.faction || t.id == b.ownerTrooper || !SegmentHitsTrooper(from, b.pos, t)) continue;
+                if (t.down || t.id == b.ownerTrooper || (t.faction == b.faction && !otherTeam(t)) ||
+                    !SegmentHitsTrooper(from, b.pos, t))
+                    continue;
                 b.life = 0.0f;
                 SpawnSparks(b.pos, b.faction == Faction::Player ? Color{255, 200, 90, 255} : Color{255, 90, 80, 255}, 5);
                 DamageTrooper(t, b);
