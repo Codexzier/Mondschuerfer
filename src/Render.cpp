@@ -425,7 +425,8 @@ int YellowCrystal(const World& w, int model) {
 // Waffe der eigenen Figur in der Ego-Ansicht: Blaster aus dem Blaster Kit
 // (Lauf zeigt im Modell nach -z wie die Schiffsnasen), rechts unten vor der
 // Kamera und mit dem Blick geneigt. Dazu ein leichtes Wippen beim Laufen,
-// ein kleiner Rückstoß nach jedem Schuss und beim Nachladen ein Absenken.
+// ein kleiner Rückstoß nach jedem Schuss und beim Nachladen ein Absenken:
+// schnell hinunter (0,15 s), unten bleiben, am Ende schnell wieder hoch (0,25 s).
 // Alle Maße passen zur Figurengröße (ein Drittel, siehe Config.hpp); main.cpp
 // stellt dafür die nahe Clip-Ebene auf 2 cm.
 void DrawTrooperWeapon(const Trooper& t, float time) {
@@ -437,7 +438,11 @@ void DrawTrooperWeapon(const Trooper& t, float time) {
     const float speed = std::min(1.0f, Vector2Length({t.vel.x, t.vel.z}) / cfg::TROOPER_WALK);
     const float bob = t.onGround ? sinf(time * 9.0f) * 0.004f * speed : 0.0f;
     const float kick = std::max(0.0f, t.fireCd) / cfg::TROOPER_FIRE_INTERVAL * 0.013f;
-    const float reload = t.reloadT > 0.0f ? sinf(PI * (1.0f - t.reloadT / cfg::TROOPER_RELOAD)) : 0.0f;
+    float reload = 0.0f;
+    if (t.reloadT > 0.0f) {
+        reload = std::clamp(std::min((cfg::TROOPER_RELOAD - t.reloadT) / 0.15f, t.reloadT / 0.25f), 0.0f, 1.0f);
+        reload = reload * reload * (3.0f - 2.0f * reload);   // weich ein- und auslaufen
+    }
     Vector3 pos = Vector3Add(TrooperEye(t), Vector3Scale(dir, 0.113f - kick));
     pos = Vector3Add(pos, Vector3Scale(right, 0.053f));
     pos = Vector3Add(pos, Vector3Scale(up, -0.05f + bob - 0.027f * reload));

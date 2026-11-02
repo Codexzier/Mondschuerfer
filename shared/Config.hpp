@@ -329,11 +329,13 @@ constexpr float MP_SPAWN_DISTANCE = 24.0f;    // Abstand des neuen Schiffs zur H
 // Die Figur ist ein Drittel so groß wie ein Mensch in Weltgröße (sonst wirken
 // Gebäude und Stargates neben ihr winzig).
 constexpr float MOON_GRAVITY = 1.62f;         // Schwerkraft des Mondes (m/s²): Sprünge tragen weit
+constexpr float EARTH_GRAVITY = 9.81f;        // 1 G auf den Einsatzkarten (ein Stück eines Planeten)
 constexpr float TROOPER_WALK = 2.4f;          // Gehen
 constexpr float TROOPER_SPRINT = 4.2f;        // Sprinten (nur vorwärts)
 constexpr float TROOPER_ACCEL = 30.0f;        // so schnell folgt das Tempo am Boden der Eingabe (m/s²)
 constexpr float TROOPER_AIR_CONTROL = 0.25f;  // Anteil davon in der Luft
 constexpr float TROOPER_JUMP = 1.27f;         // Absprung nach oben: knapp 0,5 m hoch (fast Figurengröße), gut 1,5 s in der Luft
+constexpr float TROOPER_JUMP_EARTH = 2.4f;    // ... bei 1 G: knapp 0,3 m hoch, 0,5 s in der Luft
 constexpr float TROOPER_RADIUS = 0.13f;       // Kollision mit Felsen und Stationsteilen
 constexpr float TROOPER_HEIGHT = 0.6f;        // Teile, die höher anfangen, gehen über den Kopf hinweg
 constexpr float TROOPER_EYE = 0.55f;          // Augenhöhe (Ego-Kamera)

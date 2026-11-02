@@ -77,7 +77,7 @@ namespace net {
 //             TeamAction Target, TeamEntry::target, GameSettings::maxInstances).
 // Version 13: Scoreboard aller Spieler, EventKind::TeamHome, GameSettings fpsMode,
 //             yellowShare, sampleGoal, groundPirates und friendlyFire.
-// Version 14: SnapTrooper::hp (HP-Balken über Gegnern).
+// Version 14: SnapTrooper::hp (HP-Balken über Gegnern), Sfx::DryFire.
 constexpr uint16_t PROTOCOL_VERSION = 14;
 constexpr uint16_t DEFAULT_PORT = 7777;
 

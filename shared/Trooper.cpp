@@ -711,6 +711,8 @@ int World::SampleTarget(Vector3 p, float range) const {
 // ===========================================================================
 // Bewegung
 // ===========================================================================
+// Schwerkraft: auf der Mondkarte MOON_GRAVITY, auf Einsatzkarten 1 G
+// (EARTH_GRAVITY, Absprung TROOPER_JUMP_EARTH).
 // Am Boden folgt das Tempo der Eingabe mit TROOPER_ACCEL, in der Luft nur mit
 // einem Viertel davon. Hindernisse schieben die Figur seitlich hinaus und
 // nehmen das Tempo in ihre Richtung weg. Niedrige Hindernisse (bis
@@ -735,10 +737,10 @@ void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
     t.vel.z += dv.y;
     const bool wasOnGround = t.onGround;
     if (in.jump && t.onGround) {
-        t.vel.y = cfg::TROOPER_JUMP;
+        t.vel.y = instance ? cfg::TROOPER_JUMP_EARTH : cfg::TROOPER_JUMP;
         t.onGround = false;
     }
-    t.vel.y -= cfg::MOON_GRAVITY * dt;
+    t.vel.y -= (instance ? cfg::EARTH_GRAVITY : cfg::MOON_GRAVITY) * dt;
     t.pos = Vector3Add(t.pos, Vector3Scale(t.vel, dt));
     const float lim = fieldHalf - (instance ? 0.3f : 2.0f);
     t.pos.x = std::clamp(t.pos.x, -lim, lim);
@@ -870,6 +872,10 @@ void World::UpdateTroopers(float dt) {
             t.reloadT = cfg::TROOPER_RELOAD;
             if (t.playerId >= 0) SoundAt(Sfx::UiMove, t.pos, 0.8f, 0.0f, t.playerId);
         }
+        // Abzug während des Nachladens: nur ein Klicken (bei jedem neuen Druck)
+        const bool pull = in.fire && !t.trigger;
+        t.trigger = in.fire;
+        if (pull && t.reloadT > 0.0f && t.playerId >= 0) SoundAt(Sfx::DryFire, t.pos, 0.8f, 0.0f, t.playerId);
         if (!in.fire || t.reloadT > 0.0f || t.fireCd > 0.0f) continue;
         if (t.mag > 0) {
             FireTrooperBullet(t);

@@ -317,6 +317,7 @@ struct Trooper {
     int ammo = cfg::TROOPER_AMMO; // Ersatzmunition
     float reloadT = 0.0f;         // > 0: lädt nach (Restzeit)
     float fireCd = 0.0f;
+    bool trigger = false;         // Feuertaste im letzten Schritt gedrückt (Klicken beim Nachladen)
     float hitFlash = 0.0f;        // wie Ship::hitFlash
     float age = 0.0f;             // Sekunden seit dem Aussteigen (Tastenhilfe im HUD)
     int samples = 0;              // getragene Proben
