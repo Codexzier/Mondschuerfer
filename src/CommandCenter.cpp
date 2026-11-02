@@ -408,11 +408,14 @@ void CommandCenterScreen::OpenOnline() {
 }
 
 // Aufbau wie im Einzelspieler: links Team, Auftrag und Knöpfe, rechts die
-// Teams des Servers (Klick auf ein Team: Ziel für "Beitreten"), oben in der
-// Mitte das Ergebnis des letzten Einsatzes, unten die Anwahl. Die Anwahl
-// beginnt, wenn der Server sie meldet (Team im Zustand 1); die Uhr läuft dann
-// hier weiter (Update), den Einsatz startet der Server.
-OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, int myId, bool fresh) {
+// Teams des Servers (Klick auf ein Team: Ziel für "Beitreten") und darunter
+// die Vorschau der gewählten Einsatzkarte, oben in der Mitte das Ergebnis des
+// letzten Einsatzes, unten die Anwahl. Die Anwahl beginnt, wenn der Server
+// sie meldet (Team im Zustand 1); die Uhr läuft dann hier weiter (Update),
+// den Einsatz startet der Server. Das Ziel wählt der Gründer ("Ziel: ..."
+// schaltet weiter wie im Einzelspieler); die anderen sehen es.
+OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const std::vector<GameMap>& maps, int myId,
+                                              bool fresh) {
     const net::TeamEntry* mine = nullptr;
     for (const net::TeamEntry& t : teams.teams)
         for (const net::TeamMember& mb : t.members)
@@ -444,6 +447,10 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, int my
     const net::TeamEntry* join = nullptr;
     for (const net::TeamEntry& t : teams.teams)
         if (joinable(t) && (!join || t.number == joinTarget_)) join = &t;
+    // Ziel des eigenen Teams: 0 = Mondkarte, sonst maps[target - 1]
+    const int target = mine && static_cast<size_t>(mine->target) <= maps.size() ? mine->target : 0;
+    const GameMap* mission = target > 0 ? &maps[static_cast<size_t>(target - 1)] : nullptr;
+    const bool hasGate = mission || teams.moonGate;   // Einsatzkarten haben immer ein Tor (der Editor prüft es)
 
     TextCentered("COMMAND CENTER", W * 0.5f, 20 * s, 44 * s, ACCENT);
     TextCentered(mine ? TextFormat("Stargate-Kommando  ·  Team SG%d", mine->number) : "Stargate-Kommando  ·  Mehrspieler", W * 0.5f,
@@ -476,44 +483,66 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, int my
     y += 12 * s;
     Text("AUFTRAG", x, y, 18 * s, MUTED);
     y += 26 * s;
-    const char* brief[] = {"Durch das Stargate auf den Mond.", TextFormat("Sammelt %d Proben an gelben Kristallen", cfg::SAMPLE_GOAL),
-                           "(sie zählen für das ganze Team).", "Dann ein Stargate in der Nähe anwählen:",
-                           "die Treppe hinauf und hindurch.", "Vorsicht vor Bodenpiraten!"};
-    for (const char* line : brief) {
+    const std::string brief[] = {mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
+                                 TextFormat("Sammelt %d Proben an gelben Kristallen", cfg::SAMPLE_GOAL),
+                                 "(sie zählen für das ganze Team).", "Dann ein Stargate in der Nähe anwählen:",
+                                 "die Treppe hinauf und hindurch.",
+                                 mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!"};
+    for (const std::string& line : brief) {
         Text(line, x, y, 18 * s, TEXT);
         y += 24 * s;
     }
+    y += 6 * s;
+    if (mission)
+        Text(TextFormat("Einsatzkarte: %s · %d m · %s · nur euer Team", MapThemeName(mission->theme), mission->size,
+                        MapSkyName(mission->sky)),
+             x, y, 16 * s, ACCENT);
+    else if (!maps.empty())
+        Text("Mondkarte: gemeinsam mit den Piloten", x, y, 16 * s, MUTED);
 
+    // Ziel: Mondkarte, dann die Einsatzkarten der Reihe nach (wie im
+    // Einzelspieler). Ohne Team legt die Wahl eins an (der Server).
+    const std::string goal = "Ziel: " + (mission ? mission->name : std::string("Mondkarte (gemeinsam)"));
+    const int nextTarget = (target + 1) % (static_cast<int>(maps.size()) + 1);
     std::vector<std::string> items;
     std::vector<bool> enabled;
     if (!mine) {
-        items = {"Tor anwählen (allein)", "Team gründen", join ? TextFormat("Beitreten: SG%d", join->number) : "Beitreten",
+        items = {"Tor anwählen (allein)", goal, "Team gründen", join ? TextFormat("Beitreten: SG%d", join->number) : "Beitreten",
                  "Als Pilot spielen", "Abmelden & zum Hauptmenü"};
-        enabled = {teams.moonGate, true, join != nullptr, true, true};
+        enabled = {teams.moonGate, !maps.empty(), true, join != nullptr, true, true};
+    } else if (founder) {
+        items = {"Tor anwählen", goal, "Team verlassen", "Als Pilot spielen", "Abmelden & zum Hauptmenü"};
+        enabled = {!busy && hasGate && allReady, !busy && !maps.empty(), !busy, !busy, true};
     } else {
-        items = {founder ? "Tor anwählen" : myReady ? "Nicht mehr bereit" : "Bereit", "Team verlassen", "Als Pilot spielen",
-                 "Abmelden & zum Hauptmenü"};
-        enabled = {!busy && (!founder || (teams.moonGate && allReady)), !busy, !busy, true};
+        items = {myReady ? "Nicht mehr bereit" : "Bereit", "Team verlassen", "Als Pilot spielen", "Abmelden & zum Hauptmenü"};
+        enabled = {!busy, !busy, !busy, true};
     }
     sel_ = std::min(sel_, static_cast<int>(items.size()) - 1);
     const float bh = 50 * s, gap = 10 * s;
     const float n = static_cast<float>(items.size());
     const float listTop = lp.y + lp.height - 18 * s - n * bh - (n - 1) * gap;
-    if (!teams.moonGate) Text("Auf der Mondkarte steht kein Stargate.", x, listTop - 30 * s, 18 * s, BAD);
+    if (!hasGate) Text("Auf der Mondkarte steht kein Stargate.", x, listTop - 30 * s, 18 * s, BAD);
     else if (founder && !busy && !allReady) Text("Warte, bis alle bereit sind.", x, listTop - 30 * s, 18 * s, MUTED);
-    else if (mine && !founder && !busy) Text("Der Gründer wählt das Tor an.", x, listTop - 30 * s, 18 * s, MUTED);
+    else if (mine && !founder && !busy) Text("Der Gründer wählt Ziel und Tor.", x, listTop - 30 * s, 18 * s, MUTED);
     int c = ButtonList(items, enabled, sel_, lp.x + pw * 0.5f, listTop, iw, bh, gap, 22 * s);
     if (!live) c = -1;
     OnlineCommand cmd;
     if (c >= 0) g_audio.Play(Sfx::UiConfirm);
     if (!mine) {
         if (c == 0) cmd.kind = OnlineCommand::Kind::Dial;
-        else if (c == 1) cmd.kind = OnlineCommand::Kind::Create;
-        else if (c == 2 && join) cmd = {OnlineCommand::Kind::Join, join->number};
+        else if (c == 1) cmd = {OnlineCommand::Kind::Target, nextTarget};
+        else if (c == 2) cmd.kind = OnlineCommand::Kind::Create;
+        else if (c == 3 && join) cmd = {OnlineCommand::Kind::Join, join->number};
+        else if (c == 4) cmd.kind = OnlineCommand::Kind::Pilot;
+        else if (c == 5) cmd.kind = OnlineCommand::Kind::Menu;
+    } else if (founder) {
+        if (c == 0) cmd.kind = OnlineCommand::Kind::Dial;
+        else if (c == 1) cmd = {OnlineCommand::Kind::Target, nextTarget};
+        else if (c == 2) cmd.kind = OnlineCommand::Kind::Leave;
         else if (c == 3) cmd.kind = OnlineCommand::Kind::Pilot;
         else if (c == 4) cmd.kind = OnlineCommand::Kind::Menu;
     } else {
-        if (c == 0) cmd = founder ? OnlineCommand{OnlineCommand::Kind::Dial, 0} : OnlineCommand{OnlineCommand::Kind::Ready, myReady ? 0 : 1};
+        if (c == 0) cmd = {OnlineCommand::Kind::Ready, myReady ? 0 : 1};
         else if (c == 1) cmd.kind = OnlineCommand::Kind::Leave;
         else if (c == 2) cmd.kind = OnlineCommand::Kind::Pilot;
         else if (c == 3) cmd.kind = OnlineCommand::Kind::Menu;
@@ -530,9 +559,17 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, int my
     Text(mine ? "Alle Teams auf diesem Server" : "Klick auf ein Team: dort beitreten", x, y, 16 * s, MUTED);
     y += 30 * s;
     if (teams.teams.empty()) Text("Noch kein Team gegründet.", x, y + 6 * s, 18 * s, MUTED);
+    // Vorschau der gewählten Einsatzkarte unten im Feld; die Teamliste endet darüber
+    const float pvs = std::min(280 * s, rp.width - 40 * s);
+    const Rectangle pr{rp.x + (rp.width - pvs) * 0.5f, rp.y + rp.height - 26 * s - pvs, pvs, pvs};
+    const float listEnd = mission ? pr.y - 40 * s : rp.y + rp.height - 20 * s;
+    if (mission) {
+        Text(TextFormat("VORSCHAU: %s", mission->name.c_str()), pr.x, pr.y - 24 * s, 16 * s, MUTED);
+        DrawMapPreview(*mission, pr);
+    }
     static const char* states[] = {"im Command Center", "wählt an ...", "im Einsatz"};
     for (const net::TeamEntry& t : teams.teams) {
-        if (y > rp.y + rp.height - 60 * s) break;
+        if (y > listEnd - 40 * s) break;
         const float rowH = 34 * s + 22 * s * static_cast<float>(t.members.size());
         const Rectangle row{rp.x + 8 * s, y - 6 * s, rp.width - 16 * s, rowH};
         const bool target = !mine && join == &t;

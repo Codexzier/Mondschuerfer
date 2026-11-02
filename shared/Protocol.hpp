@@ -37,8 +37,11 @@
 //      Players (1/s), Highscores (bei Änderung), Settings (wenn der
 //      Betreiber Einstellungen ohne Neuaufbau der Welt ändert, z. B. Schiffe)
 //      ChatLine (Chat-Nachricht eines Spielers, an alle Spieler) und Teams
-//      (SG-Teams, an Spieler in der Rolle SG-Team).
+//      (SG-Teams, an Spieler in der Rolle SG-Team; vorher bei Bedarf
+//      MissionMaps, die freigegebenen Einsatzkarten).
 //      Nach jedem Welcome und beim Kartenwechsel: MapData (aktive Karte).
+//      SG-Team auf einer Einsatzkarte: InstanceStart (eigene Welt des Teams)
+//      und bei der Rückkehr InstanceEnd (wieder die Mondkarte).
 //   Karte hochladen (Karteneditor): wie 3b LoginStart -> LoginChallenge, dann
 //   MapUpload statt LoginProof -> Server antwortet MapUploadResult. Das meldet
 //   nicht im Spiel an; der Client trennt danach die Verbindung.
@@ -70,7 +73,9 @@ namespace net {
 // Version 10: Einsatzkarten (Karte mit Kartenart, Thema, Größe, Boden, Himmel; Höhe je Teil).
 // Version 11: SG-Teams (TeamAction, Teams, Eingaben zu Fuß, SnapMe/SnapTrooper/SnapGate,
 //             Bodengeschosse, gelbe Kristalle, Welcome::lastRole, Rolle in PlayerEntry).
-constexpr uint16_t PROTOCOL_VERSION = 11;
+// Version 12: Einsatzkarten im Mehrspieler (InstanceStart, InstanceEnd, MissionMaps,
+//             TeamAction Target, TeamEntry::target, GameSettings::maxInstances).
+constexpr uint16_t PROTOCOL_VERSION = 12;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -131,6 +136,9 @@ enum class MsgType : uint8_t {
     MapData = 111,
     ChatLine = 112,
     Teams = 113,
+    InstanceStart = 114,
+    InstanceEnd = 115,
+    MissionMaps = 116,
 };
 
 enum class ErrorCode : uint8_t {
@@ -313,7 +321,9 @@ struct ChatTypingMsg {
 //   Ready:  param 1 = bereit, 0 = nicht bereit.
 //   Dial:   Gründer: Tor anwählen (alle anderen müssen bereit sein).
 //   Abort:  laufenden Einsatz abbrechen (zurück ins Command Center).
-enum class TeamActionType : uint8_t { Role = 0, Create = 1, Join = 2, Leave = 3, Ready = 4, Dial = 5, Abort = 6 };
+//   Target: Gründer: Ziel wählen, param 0 = Mondkarte, k = Einsatzkarte
+//           MissionMapsMsg::maps[k - 1]. Ändert es sich, ist niemand mehr bereit.
+enum class TeamActionType : uint8_t { Role = 0, Create = 1, Join = 2, Leave = 3, Ready = 4, Dial = 5, Abort = 6, Target = 7 };
 
 struct TeamActionMsg {
     TeamActionType action = TeamActionType::Role;
@@ -646,6 +656,7 @@ struct TeamMember {
 struct TeamEntry {
     uint8_t number = 0;           // SG-Nummer
     uint8_t state = 0;            // 0 im Command Center, 1 Anwahl läuft, 2 im Einsatz
+    uint8_t target = 0;           // Ziel: 0 = Mondkarte, k = MissionMapsMsg::maps[k - 1]
     float dialT = 0;              // Anwahl: Sekunden seit dem Start
     std::vector<TeamMember> members;   // Gründer zuerst (er wählt das Tor an), höchstens cfg::SG_TEAM_MAX
 };
@@ -660,6 +671,30 @@ struct TeamsMsg {
     uint16_t number = 0, samples = 0, pirates = 0;
     int32_t points = 0;
     float seconds = 0;
+};
+
+// Freigegebene Einsatzkarten (Verwaltungsseite), die Ziele im Command Center
+// mit Vorschaubild. Vor dem ersten Teams und bei jeder Änderung; die
+// Reihenfolge gilt für TeamAction Target und TeamEntry::target.
+constexpr int MAX_MISSION_MAPS = 20;   // >= Accounts::MAX_MAPS
+struct MissionMapsMsg {
+    std::vector<GameMap> maps;    // ohne author
+};
+
+// Das SG-Team geht auf eine Einsatzkarte: eigene Welt nur für das Team
+// (World::NewInstance mit Seed und Karte). Snapshots bis einschließlich tick
+// gehören noch zur Mondkarte (wie beim Welcome).
+struct InstanceStartMsg {
+    uint32_t tick = 0;
+    uint32_t seed = 0;
+    GameMap map;                  // ohne author
+};
+
+// Einsatz auf der Einsatzkarte vorbei (zurück, gescheitert oder
+// abgebrochen): wieder die Mondkarte. Snapshots bis tick gehören noch zur
+// Einsatzkarte.
+struct InstanceEndMsg {
+    uint32_t tick = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -689,6 +724,9 @@ std::vector<uint8_t> Encode(const MapUploadResultMsg& m);
 std::vector<uint8_t> Encode(const MapDataMsg& m);
 std::vector<uint8_t> Encode(const ChatLineMsg& m);
 std::vector<uint8_t> Encode(const TeamsMsg& m);
+std::vector<uint8_t> Encode(const MissionMapsMsg& m);
+std::vector<uint8_t> Encode(const InstanceStartMsg& m);
+std::vector<uint8_t> Encode(const InstanceEndMsg& m);
 
 bool Decode(Reader& r, RegisterMsg& m);
 bool Decode(Reader& r, LoginStartMsg& m);
@@ -713,6 +751,9 @@ bool Decode(Reader& r, MapUploadResultMsg& m);
 bool Decode(Reader& r, MapDataMsg& m);
 bool Decode(Reader& r, ChatLineMsg& m);
 bool Decode(Reader& r, TeamsMsg& m);
+bool Decode(Reader& r, MissionMapsMsg& m);
+bool Decode(Reader& r, InstanceStartMsg& m);
+bool Decode(Reader& r, InstanceEndMsg& m);
 
 // ---------------------------------------------------------------------------
 // Modellvarianten: über das Netz werden kleine Nummern statt Modell-IDs geschickt

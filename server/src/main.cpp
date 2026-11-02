@@ -154,6 +154,7 @@ void ReadEnvironment(Options& o) {
     EnvInt("MAX_PLAYERS", s.maxPlayers, 1, limits::MAX_PLAYERS_LIMIT);
     EnvInt("LIVES", s.lives, 1, limits::MAX_LIVES);
     EnvInt("MISSIONS", s.missions, 0, limits::MAX_MISSIONS);
+    EnvInt("MAX_INSTANCES", s.maxInstances, 1, limits::MAX_INSTANCES);
     Sanitize(s);
 }
 
@@ -179,7 +180,8 @@ void PrintUsage() {
         << "  SERVER_NAME, DIFFICULTY (easy|medium|hard|custom), ENEMY_SHIPS (nur custom),\n"
         << "  TRADE_STATIONS (1-" << limits::MAX_TRADE_STATIONS << "), SHIPYARDS (1-" << limits::MAX_SHIPYARDS
         << "), MOON_COLOR (grey|orange|blue), MAX_PLAYERS (1-" << limits::MAX_PLAYERS_LIMIT << "), LIVES (1-" << limits::MAX_LIVES << "),\n"
-        << "  MISSIONS (0-" << limits::MAX_MISSIONS << ", Mini-Missionen gleichzeitig)\n"
+        << "  MISSIONS (0-" << limits::MAX_MISSIONS << ", Mini-Missionen gleichzeitig),\n"
+        << "  MAX_INSTANCES (1-" << limits::MAX_INSTANCES << ", SG-Teams gleichzeitig auf Einsatzkarten)\n"
         << "Verwaltungsseite: ADMIN_USER und ADMIN_PASSWORD (mind. 10 Zeichen) müssen gesetzt sein.\n";
 }
 
@@ -278,6 +280,7 @@ void PrintSettings(const GameSettings& s) {
               << "), dazu bis zu " << limits::MAX_SPECTATORS << " Zuschauer\n"
               << "   Leben pro Spieler: " << s.lives << " (höchstens " << limits::MAX_LIVES << ")\n"
               << "   Mini-Missionen  : " << s.missions << " gleichzeitig (höchstens " << limits::MAX_MISSIONS << ")\n"
+              << "   Einsatzkarten   : " << s.maxInstances << " gleichzeitig (höchstens " << limits::MAX_INSTANCES << ")\n"
               << "   Neue Konten     : " << (s.allowRegistration ? "erlaubt" : "nicht erlaubt") << "\n";
 }
 

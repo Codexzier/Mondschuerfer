@@ -25,6 +25,9 @@
 //   - Ereignisse (Töne, Explosionen, Meldungen, Ziel erreicht) an das Spiel
 //     weitergeben.
 //   - Die aktive Karte des Servers (MapData) in die Spiegelwelt setzen.
+//   - Einsatzkarte des eigenen SG-Teams (InstanceStart/InstanceEnd): die
+//     Spiegelwelt wird für den Einsatz die Welt der Instanz und danach
+//     wieder die Mondkarte.
 //   - Chat: Nachrichten und "tippt gerade" schicken, empfangene Zeilen
 //     weitergeben (das Chatfenster selbst ist src/Chat.hpp).
 //   - Karten hochladen (Karteneditor, UploadMap).
@@ -102,6 +105,8 @@ public:
     void SendTeamAction(net::TeamActionType action, int param = 0);
     const net::TeamsMsg& Teams() const;   // Stand vom Server (nur in der Rolle SG-Team)
     bool TakeTeamResult();                // true einmalig, wenn ein eigener Einsatz gerade zu Ende ging
+    // Freigegebene Einsatzkarten (Ziele im Command Center, net::TeamEntry::target)
+    const std::vector<GameMap>& MissionMaps() const;
 
     // --- Spielwelt ---------------------------------------------------------------
     bool WorldReady() const;              // Welcome empfangen, Welt aufgebaut

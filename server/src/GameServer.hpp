@@ -20,6 +20,10 @@
 //   - SG-Teams (FPS-Modus): Rollenwahl, Teams im Command Center, Anwahl des
 //     Stargates; die Figuren rechnet die Welt (shared/Trooper.cpp) wie die
 //     Schiffe, der Client sagt seine eigene Figur nur voraus.
+//   - Einsatzkarten (Instanzen): Wählt ein Team eine freigegebene
+//     Einsatzkarte als Ziel, bekommt es eine eigene Welt (World::NewInstance),
+//     die in jedem Schritt mitgerechnet wird (höchstens
+//     GameSettings::maxInstances gleichzeitig).
 //   - Veröffentlicht jede Sekunde einen Statusbericht für die Webseite und
 //     übernimmt dort geänderte Einstellungen (SharedState).
 //
@@ -32,7 +36,8 @@
 //     -> Pakete verarbeiten (Anmeldung, Eingaben in Warteschlangen legen ...)
 //   alle 33,3 ms ein Schritt (Step):
 //     Einstellungen von der Webseite anwenden -> je Spieler eine Eingabe aus
-//     der Warteschlange nehmen -> World::Update -> Ereignisse verteilen ->
+//     der Warteschlange nehmen -> World::Update (Mondwelt und alle
+//     Instanzen) -> Ereignisse verteilen ->
 //     Snapshots/Lagerstätten/Listen senden -> ggf. speichern
 //
 // Benchmark (RunBenchmark): dieselbe Step()-Funktion, aber ohne Netzwerk.
@@ -155,6 +160,7 @@ private:
 
         // --- SG-Team (siehe HandleTeamAction) ---
         bool roleChosen = false;            // Rollenwahl nach der Anmeldung erledigt (bis dahin ist das Schiff versteckt)
+        int sentMissionMaps = -1;           // Stand der Einsatzkarten (missionMapsRev_), den der Client schon hat
 
         // --- Chat (siehe HandleChat) ---
         bool chatting = false;              // Chat-Eingabe offen (Sprechblase am Schiff, ApplyInputs)
@@ -202,6 +208,20 @@ private:
         std::vector<int> members;   // Spieler-IDs, Gründer zuerst
         std::vector<int> ready;     // Spieler-IDs, die "Bereit" gesetzt haben
         float dialT = -1.0f;        // Anwahl: Sekunden seit dem Start, -1 = keine
+        std::string target;         // Ziel: "" = Mondkarte, sonst Einsatzkarte (ServerMap::file)
+    };
+
+    // Einsatzkarte eines SG-Teams: eigene Welt (World::NewInstance), nur das
+    // Team und KI-Gegner. Die Spieler bleiben in world_ (Konto, Schiff
+    // versteckt wie im Command Center); in der Instanz steht eine Kopie mit
+    // derselben ID und der Figur. Ist jemand zurück (oder gescheitert),
+    // nimmt LeaveInstance sein Ergebnis mit in world_. Ohne Spieler endet die
+    // Instanz.
+    struct Instance {
+        int team = 0;               // SG-Nummer
+        std::string file;           // Kartendatei (ServerMap::file)
+        std::string name;           // Kartenname (Protokoll)
+        std::unique_ptr<World> world;
     };
 
     // --- Zeit -------------------------------------------------------------------
@@ -245,6 +265,21 @@ private:
     SgTeam* FindTeam(int number);
     bool TeamBusy(const SgTeam& t) const;   // Anwahl läuft oder jemand ist im Einsatz
     void LeaveTeam(int playerId);
+    // --- Einsatzkarten (Instanzen) ---
+    std::vector<const ServerMap*> MissionMaps() const;   // freigegeben, Reihenfolge wie net::MissionMapsMsg
+    void ForgetTarget(const std::string& file);          // Karte gesperrt/gelöscht: Teams zielen wieder auf die Mondkarte
+    bool StartInstance(SgTeam& t);                       // false: geht nicht (das Team bekommt eine Meldung)
+    // Alle Instanzwelten rechnen, ihre Ereignisse verteilen, Rückkehrer
+    // zurück in world_ holen, leere Instanzen beenden
+    void UpdateInstances();
+    void DistributeInstanceEvents(Instance& in);
+    // Spieler verlässt die Instanz: Scoreboard und Ergebnis in world_,
+    // notify = InstanceEnd und Lagerstätten der Mondkarte schicken
+    void LeaveInstance(Instance& in, int playerId, bool notify);
+    void EndAllInstances();                              // Neuaufbau der Welt: alle Einsätze enden ohne Wertung
+    Instance* InstanceOf(int playerId);
+    const Instance* InstanceOf(int playerId) const;
+    const World& WorldOf(int playerId) const;            // Instanzwelt oder world_
 
     // --- Netzwerk -------------------------------------------------------------------
     void ServiceNetwork(uint32_t timeoutMs);
@@ -338,6 +373,8 @@ private:
     std::vector<Deco> baseDecos_;       // Zufalls-Deko der Welt (für den Wechsel zurück zur Standardkarte)
     std::vector<SgTeam> teams_;
     bool teamsChanged_ = false;         // Teamliste neu schicken (SendTeams)
+    std::vector<Instance> instances_;   // laufende Einsätze auf Einsatzkarten
+    int missionMapsRev_ = 0;            // zählt hoch, wenn sich die freigegebenen Einsatzkarten ändern
     std::string mapNotice_;             // für den Status (ServerStatus::mapNotice)
     int mapNoticeSeq_ = 0;
     bool mapNoticeError_ = false;

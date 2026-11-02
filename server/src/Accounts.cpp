@@ -429,6 +429,7 @@ bool Accounts::Load(std::string& error) {
 
     // --- server.txt: Salz, Seed, abgelieferte Ressourcen ----------------------
     bool haveSalt = false;
+    std::vector<std::string> released;   // freigegebene Einsatzkarten (unten gegen die vorhandenen Karten geprüft)
     ReadResult rr = ReadLines(PathOf(SERVER_FILE), lines, error);
     if (rr == ReadResult::Error) return false;
     for (const auto& line : lines) {
@@ -445,6 +446,12 @@ bool Accounts::Load(std::string& error) {
             SetTotalDelivered(v);
         } else if (key == "activeMap") {
             activeMap_ = value;   // wird unten gegen die vorhandenen Karten geprüft
+        } else if (key == "releasedMaps") {
+            for (size_t a = 0; a <= value.size();) {
+                const size_t b = std::min(value.find(',', a), value.size());
+                if (b > a) released.push_back(value.substr(a, b - a));
+                a = b + 1;
+            }
         }
     }
     if (!haveSalt) crypto::RandomBytes(realmSalt_.data(), realmSalt_.size());
@@ -599,6 +606,7 @@ bool Accounts::Load(std::string& error) {
         std::cerr << "Warnung: aktive Karte \"" << activeMap_ << "\" ist eine Einsatzkarte, verwende die Standardkarte\n";
         activeMap_.clear();
     }
+    for (const std::string& f : released) SetMapReleased(f, true);   // fehlende Karten: einfach weglassen
 
     // --- logs/: Lastprotokoll --------------------------------------------------------------
     fs::create_directories(dir / LOGS_DIR, ec);
@@ -745,6 +753,11 @@ void Accounts::SaveServerData() {
     if (hasWorldSeed_) out += "worldSeed=" + std::to_string(worldSeed_) + "\n";
     out += "totalDelivered=" + std::to_string(totalDelivered_) + "\n";
     if (!activeMap_.empty()) out += "activeMap=" + activeMap_ + "\n";
+    // Freigegebene Einsatzkarten, durch Komma getrennt (Dateinamen enthalten keins, MapFileStem)
+    std::string released;
+    for (const ServerMap& sm : maps_)
+        if (sm.released) released += (released.empty() ? "" : ",") + sm.file;
+    if (!released.empty()) out += "releasedMaps=" + released + "\n";
     QueueWrite(PathOf(SERVER_FILE), std::move(out), false, "Serverdaten");
 }
 
@@ -776,6 +789,7 @@ bool Accounts::LoadSettings(GameSettings& inOut) const {
         else if (key == "maxPlayers") ParseInt(value, inOut.maxPlayers, 1, limits::MAX_PLAYERS_LIMIT);
         else if (key == "lives") ParseInt(value, inOut.lives, 1, limits::MAX_LIVES);
         else if (key == "missions") ParseInt(value, inOut.missions, 0, limits::MAX_MISSIONS);
+        else if (key == "maxInstances") ParseInt(value, inOut.maxInstances, 1, limits::MAX_INSTANCES);
         else if (key == "registration") inOut.allowRegistration = value != "0";
     }
     Sanitize(inOut);
@@ -796,6 +810,7 @@ void Accounts::SaveSettings(const GameSettings& s) {
     out += "maxPlayers=" + std::to_string(s.maxPlayers) + "\n";
     out += "lives=" + std::to_string(s.lives) + "\n";
     out += "missions=" + std::to_string(s.missions) + "\n";
+    out += "maxInstances=" + std::to_string(s.maxInstances) + "\n";
     out += std::string("registration=") + (s.allowRegistration ? "1" : "0") + "\n";
     QueueWrite(PathOf(SETTINGS_FILE), std::move(out), false, "Einstellungen");
 }
@@ -914,6 +929,15 @@ bool Accounts::RemoveMap(const std::string& file) {
     maps_.erase(it);
     if (!dir_.empty()) QueueWrite(MapPath(file), std::string(), true, "Karte");
     return true;
+}
+
+bool Accounts::SetMapReleased(const std::string& file, bool released) {
+    for (ServerMap& sm : maps_)
+        if (sm.file == file) {
+            sm.released = released;
+            return true;
+        }
+    return false;
 }
 
 std::vector<std::string> Accounts::MapUploaders() const {

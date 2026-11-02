@@ -296,6 +296,7 @@ void WriteSettings(Writer& w, const GameSettings& s) {
     w.U8(static_cast<uint8_t>(s.maxPlayers));
     w.U8(static_cast<uint8_t>(s.lives));
     w.U8(static_cast<uint8_t>(s.missions));
+    w.U8(static_cast<uint8_t>(s.maxInstances));
     w.U8(static_cast<uint8_t>(std::min<size_t>(s.ships.size(), 255)));
     for (size_t i = 0; i < s.ships.size() && i < 255; ++i) {
         const ShipType& t = s.ships[i];
@@ -322,6 +323,7 @@ void ReadSettings(Reader& r, GameSettings& s) {
     s.maxPlayers = r.U8();
     s.lives = r.U8();
     s.missions = r.U8();
+    s.maxInstances = r.U8();
     const uint8_t ships = r.U8();
     s.ships.clear();
     for (uint8_t i = 0; i < ships && r.ok(); ++i) {
@@ -606,7 +608,7 @@ std::vector<uint8_t> Encode(const TeamActionMsg& m) {
 
 bool Decode(Reader& r, TeamActionMsg& m) {
     const uint8_t a = r.U8();
-    if (a > static_cast<uint8_t>(TeamActionType::Abort)) return false;
+    if (a > static_cast<uint8_t>(TeamActionType::Target)) return false;
     m.action = static_cast<TeamActionType>(a);
     m.param = r.U8();
     return r.ok();
@@ -1418,6 +1420,7 @@ std::vector<uint8_t> Encode(const TeamsMsg& m) {
         const TeamEntry& t = m.teams[i];
         w.U8(t.number);
         w.U8(t.state);
+        w.U8(t.target);
         w.F32(t.dialT);
         const size_t n = std::min<size_t>(t.members.size(), cfg::SG_TEAM_MAX);
         w.U8(static_cast<uint8_t>(n));
@@ -1449,6 +1452,7 @@ bool Decode(Reader& r, TeamsMsg& m) {
         t.number = r.U8();
         t.state = r.U8();
         if (t.state > 2) return false;
+        t.target = r.U8();
         t.dialT = r.F32();
         const uint8_t n = r.U8();
         if (n > cfg::SG_TEAM_MAX) return false;
@@ -1474,6 +1478,54 @@ bool Decode(Reader& r, TeamsMsg& m) {
         m.points = r.I32();
         m.seconds = r.F32();
     }
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const MissionMapsMsg& m) {
+    Writer w;
+    Start(MsgType::MissionMaps, w);
+    const size_t n = std::min<size_t>(m.maps.size(), MAX_MISSION_MAPS);
+    w.U8(static_cast<uint8_t>(n));
+    for (size_t i = 0; i < n; ++i) WriteMap(w, m.maps[i]);
+    return w.buf;
+}
+
+bool Decode(Reader& r, MissionMapsMsg& m) {
+    const uint8_t n = r.U8();
+    if (n > MAX_MISSION_MAPS) return false;
+    m.maps.clear();
+    for (uint8_t i = 0; i < n && r.ok(); ++i) {
+        GameMap map;
+        if (!ReadMap(r, map)) return false;
+        m.maps.push_back(std::move(map));
+    }
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const InstanceStartMsg& m) {
+    Writer w;
+    Start(MsgType::InstanceStart, w);
+    w.U32(m.tick);
+    w.U32(m.seed);
+    WriteMap(w, m.map);
+    return w.buf;
+}
+
+bool Decode(Reader& r, InstanceStartMsg& m) {
+    m.tick = r.U32();
+    m.seed = r.U32();
+    return ReadMap(r, m.map) && m.map.kind == MapKind::Mission;
+}
+
+std::vector<uint8_t> Encode(const InstanceEndMsg& m) {
+    Writer w;
+    Start(MsgType::InstanceEnd, w);
+    w.U32(m.tick);
+    return w.buf;
+}
+
+bool Decode(Reader& r, InstanceEndMsg& m) {
+    m.tick = r.U32();
     return r.ok();
 }
 

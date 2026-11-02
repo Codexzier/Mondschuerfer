@@ -1301,7 +1301,9 @@ void MultiplayerScreen::DrawPlaying() {
     const bool ego = OwnTrooper() != nullptr;
     tiltshift::SetEgoView(ego);
     rlSetClipPlanes(ego ? 0.02 : 0.5, ego ? 1000.0 : 2500.0);
-    tiltshift::Begin(Color{14, 17, 26, 255});   // Kameraeffekt (TiltShift.hpp)
+    const Color bg = w.ClearColor();   // Weltraum bzw. der Himmel einer Einsatzkarte
+    ClearBackground(bg);
+    tiltshift::Begin(bg);              // Kameraeffekt (TiltShift.hpp)
     BeginMode3D(cam_);
     w.Draw(cam_);
     if (!ego) controls_.DrawTarget3D(elapsed_);   // Mausziel (nur wenn eins gesetzt ist)
@@ -1383,7 +1385,7 @@ void MultiplayerScreen::DrawPlaying() {
 void MultiplayerScreen::DrawCommand() {
     tiltshift::SetEgoView(false);
     rlSetClipPlanes(0.5, 2500.0);
-    const OnlineCommand c = command_.DrawOnline(net_.Teams(), net_.MyPlayerId(), net_.TakeTeamResult());
+    const OnlineCommand c = command_.DrawOnline(net_.Teams(), net_.MissionMaps(), net_.MyPlayerId(), net_.TakeTeamResult());
     switch (c.kind) {
         case OnlineCommand::Kind::None: break;
         case OnlineCommand::Kind::Create: net_.SendTeamAction(net::TeamActionType::Create); break;
@@ -1391,6 +1393,7 @@ void MultiplayerScreen::DrawCommand() {
         case OnlineCommand::Kind::Leave: net_.SendTeamAction(net::TeamActionType::Leave); break;
         case OnlineCommand::Kind::Ready: net_.SendTeamAction(net::TeamActionType::Ready, c.param); break;
         case OnlineCommand::Kind::Dial: net_.SendTeamAction(net::TeamActionType::Dial); break;
+        case OnlineCommand::Kind::Target: net_.SendTeamAction(net::TeamActionType::Target, c.param); break;
         case OnlineCommand::Kind::Pilot: ChooseRole(0); break;
         case OnlineCommand::Kind::Menu:
             net_.Disconnect();   // Leave: der Server speichert sofort

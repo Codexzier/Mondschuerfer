@@ -325,6 +325,7 @@ void WriteSettings(JsonWriter& w, const GameSettings& g) {
     w.Key("maxPlayers").Int(g.maxPlayers);
     w.Key("lives").Int(g.lives);
     w.Key("missions").Int(g.missions);
+    w.Key("maxInstances").Int(g.maxInstances);
     w.Key("allowRegistration").Bool(g.allowRegistration);
     w.EndObject();
 }
@@ -434,6 +435,8 @@ std::string BuildStatusJson(const ServerStatus& s) {
         w.Key("author").String(m.author);
         w.Key("pieces").Int(m.pieces);
         w.Key("loops").Int(m.loops);
+        w.Key("mission").Bool(m.mission);
+        w.Key("released").Bool(m.released);
         w.EndObject();
     }
     w.EndArray();
@@ -467,6 +470,7 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("maxPlayersLimit").Int(limits::MAX_PLAYERS_LIMIT);
     w.Key("maxLives").Int(limits::MAX_LIVES);
     w.Key("maxMissions").Int(limits::MAX_MISSIONS);
+    w.Key("maxInstancesLimit").Int(limits::MAX_INSTANCES);
     w.Key("maxShipTypes").Int(limits::MAX_SHIP_TYPES);
     w.Key("maxShipName").Int(limits::MAX_SHIP_NAME);
     w.Key("minShipShield").Int(limits::MIN_SHIP_SHIELD);
@@ -889,7 +893,7 @@ bool ParseIntInRange(const std::string& text, int minValue, int maxValue, int& o
 bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& next, std::string& error) {
     static const char* const kKnown[] = {"serverName", "difficulty", "enemyShips", "tradeStations",
                                          "shipyards",  "moon",       "maxPlayers", "lives", "missions",
-                                         "allowRegistration"};
+                                         "maxInstances", "allowRegistration"};
     for (const auto& kv : fields) {
         const bool known = std::any_of(std::begin(kKnown), std::end(kKnown), [&](const char* k) { return kv.first == k; });
         if (!known) {
@@ -967,6 +971,12 @@ bool ApplyForm(const std::map<std::string, std::string>& fields, GameSettings& n
     if (const std::string* v = field("missions")) {
         if (!ParseIntInRange(*v, 0, limits::MAX_MISSIONS, next.missions)) {
             error = "Mini-Missionen: bitte eine ganze Zahl von 0 bis " + std::to_string(limits::MAX_MISSIONS) + ".";
+            return false;
+        }
+    }
+    if (const std::string* v = field("maxInstances")) {
+        if (!ParseIntInRange(*v, 1, limits::MAX_INSTANCES, next.maxInstances)) {
+            error = "Einsatzkarten gleichzeitig: bitte eine ganze Zahl von 1 bis " + std::to_string(limits::MAX_INSTANCES) + ".";
             return false;
         }
     }
@@ -1103,7 +1113,7 @@ bool SameSettings(const GameSettings& a, const GameSettings& b) {
     return a.serverName == b.serverName && a.difficulty == b.difficulty && a.enemyShips == b.enemyShips &&
            a.tradeStations == b.tradeStations && a.shipyards == b.shipyards && a.moon == b.moon &&
            a.maxPlayers == b.maxPlayers && a.lives == b.lives && a.missions == b.missions &&
-           a.allowRegistration == b.allowRegistration;
+           a.maxInstances == b.maxInstances && a.allowRegistration == b.allowRegistration;
 }
 
 // Erfolgsantwort für beide Einstellungs-Routen.
@@ -1426,7 +1436,8 @@ public:
 
     // --- POST /api/maps ------------------------------------------------------------
     // Bereich "Karten": action = activate | delete (file = Karte, bei activate
-    // "" = Standardkarte) oder allow | deny (name = Spieler). Der Spiel-Thread
+    // "" = Standardkarte), release | withhold (file = Einsatzkarte für die
+    // SG-Teams freigeben bzw. sperren) oder allow | deny (name = Spieler). Der Spiel-Thread
     // führt den Auftrag im nächsten Schritt aus (TakeMapCommands); ob es
     // geklappt hat (z. B. ob es das Konto gibt), steht danach als mapNotice im Status.
     void HandleMaps(const httplib::Request& req, httplib::Response& res) {
@@ -1452,6 +1463,15 @@ public:
                                            [&](const MapStatus& m) { return m.file == cmd.arg; });
             if (!known && !(cmd.arg.empty() && cmd.kind == MapCommand::Kind::Activate)) {
                 SendJsonError(res, 400, "Diese Karte gibt es nicht (mehr).");
+                return;
+            }
+        } else if (action == "release" || action == "withhold") {
+            cmd.kind = action == "release" ? MapCommand::Kind::Release : MapCommand::Kind::Withhold;
+            cmd.arg = fields.count("file") ? fields["file"] : std::string();
+            const bool mission = std::any_of(status.maps.begin(), status.maps.end(),
+                                             [&](const MapStatus& m) { return m.file == cmd.arg && m.mission; });
+            if (!mission) {
+                SendJsonError(res, 400, "Diese Einsatzkarte gibt es nicht (mehr).");
                 return;
             }
         } else if (action == "allow" || action == "deny") {

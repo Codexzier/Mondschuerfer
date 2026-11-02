@@ -359,8 +359,12 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
   behältst du.
 - Was alle zusammen abliefern, lässt die Handelsstationen wachsen.
 - **SG-Teams:** Im Command Center gründest du ein Team (SG1, SG2 …, bis zu 4 Spieler) oder trittst
-  einem bei. Alle melden *Bereit*, der Gründer wählt das Tor an; das Team kommt nacheinander durch
-  dasselbe Stargate auf die Mondkarte (Einsatzkarten gibt es im Mehrspieler noch nicht). Die Kameraden
+  einem bei. Der Gründer wählt das **Ziel** (*Mondkarte (gemeinsam)* oder eine Einsatzkarte, die der
+  Betreiber freigegeben hat; ändert er es, melden sich alle neu bereit). Alle melden *Bereit*, der
+  Gründer wählt das Tor an; das Team kommt nacheinander durch dasselbe Stargate auf die Mondkarte bzw.
+  auf seine Einsatzkarte – eine eigene Welt nur für dieses Team (keine Schiffe, die Kristalle werden
+  nach der Probe nur grün, auf dem Friedhof Zombies). Die Einsatzkarten kommen mit *An Server senden*
+  aus dem Karteneditor auf den Server und werden auf der Verwaltungsseite freigegeben. Die Kameraden
   sind die Mitspieler (keine NPC-Kameraden), die Gegner Bodenpiraten. Die 5 Proben zählen für das
   ganze Team; nach dem Einsatz ist das Team wieder zusammen im Command Center. Allein geht es mit
   *Tor anwählen (allein)*. Zum SG-Team wechselst du angedockt an einer Handelsstation, zurück ins

@@ -329,6 +329,8 @@ struct NetClient::Impl {
     std::string myName;
     net::ModelIds models{};            // Variantennummer (Netz) -> Modell-ID
     std::vector<Deco> baseDecos;       // Zufalls-Deko aus BuildMirror (für den Wechsel zurück zur Standardkarte)
+    net::MapDataMsg lastMap;           // aktive Karte des Servers (nach einer Einsatzkarte wieder darüberlegen)
+    bool inInstance = false;           // Spiegelwelt zeigt gerade die Einsatzkarte des Teams (InstanceStart)
 
     // --- Listen ---------------------------------------------------------------------
     std::vector<net::PlayerEntry> players;
@@ -389,6 +391,7 @@ struct NetClient::Impl {
     // --- SG-Teams ---------------------------------------------------------------------
     net::TeamsMsg teams;
     bool teamResult = false;           // für TakeTeamResult()
+    net::MissionMapsMsg missionMaps;   // freigegebene Einsatzkarten (Ziele im Command Center)
 
     // --- Fremde Schiffe: Interpolation ------------------------------------------------------
     struct Frame {
@@ -433,7 +436,11 @@ struct NetClient::Impl {
     void HandleSettings(const net::SettingsMsg& m);
     void HandleMapUploadResult(const net::MapUploadResultMsg& m);
     void HandleMapData(const net::MapDataMsg& m);
+    void ApplyMapData(const net::MapDataMsg& m);
     void HandleTeams(const net::TeamsMsg& m);
+    void HandleInstanceStart(const net::InstanceStartMsg& m);
+    void HandleInstanceEnd(const net::InstanceEndMsg& m);
+    void SwitchedWorld(uint32_t tick, const PlayerState& me);
 
     void SyncTime(double serverTime);
     // Serverzeit in Sekunden aus dem Schrittzähler, gezählt ab dem ersten
@@ -525,6 +532,9 @@ void NetClient::Impl::ResetSession() {
     bullets.clear();
     teams = net::TeamsMsg{};
     teamResult = false;
+    missionMaps = net::MissionMapsMsg{};
+    lastMap = net::MapDataMsg{};
+    inInstance = false;
 }
 
 // Vorhersage komplett verwerfen (neue Verbindung, neue Welt): auch die
@@ -800,6 +810,21 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
             if (net::Decode(r, m)) HandleTeams(m);
             break;
         }
+        case net::MsgType::MissionMaps: {
+            net::MissionMapsMsg m;
+            if (net::Decode(r, m)) missionMaps = std::move(m);
+            break;
+        }
+        case net::MsgType::InstanceStart: {
+            net::InstanceStartMsg m;
+            if (net::Decode(r, m)) HandleInstanceStart(m);
+            break;
+        }
+        case net::MsgType::InstanceEnd: {
+            net::InstanceEndMsg m;
+            if (net::Decode(r, m)) HandleInstanceEnd(m);
+            break;
+        }
         case net::MsgType::ChatLine: {
             net::ChatLineMsg m;
             if (net::Decode(r, m) && state == NetState::Playing) {
@@ -907,9 +932,14 @@ void NetClient::Impl::HandleMapUploadResult(const net::MapUploadResultMsg& m) {
 // die Karte wechselt. Erst die Zufalls-Deko aus BuildMirror zurückholen, dann
 // die Karte darüberlegen (World::ApplyMap); die Standardkarte ist nur die
 // Zufalls-Deko. Die Rover kommen jeweils aus der Deko (SpawnRovers, das macht
-// ApplyMap selbst).
+// ApplyMap selbst). Auf einer Einsatzkarte erst nach der Rückkehr (HandleInstanceEnd).
 void NetClient::Impl::HandleMapData(const net::MapDataMsg& m) {
     if (!worldReady) return;
+    lastMap = m;
+    if (!inInstance) ApplyMapData(m);
+}
+
+void NetClient::Impl::ApplyMapData(const net::MapDataMsg& m) {
     world.decos = baseDecos;
     world.monorails.clear();
     if (m.custom) world.ApplyMap(m.map);
@@ -927,6 +957,71 @@ void NetClient::Impl::HandleTeams(const net::TeamsMsg& m) {
     if (m.fresh) teamResult = true;
 }
 
+// Das Team geht auf eine Einsatzkarte: Die Spiegelwelt wird die Welt der
+// Instanz, gebaut wie auf dem Server (World::NewInstance mit Seed und Karte:
+// dieselben Tore und Hindernisse). Schiffe gibt es dort keine; Me() und
+// ships[0] bleiben Platzhalter wie in ResetPlaceholderWorld. Die Kristalle
+// kommen gleich danach vom Server (Deposits).
+void NetClient::Impl::HandleInstanceStart(const net::InstanceStartMsg& m) {
+    if (!worldReady || state != NetState::Playing) return;
+    const PlayerState me = world.Me();
+    const GameSettings settings = world.settings;
+    const float keepDrawRange = world.drawRange;
+    world.NewInstance(m.map, m.seed);
+    world.isMirror = true;
+    world.settings = settings;
+    world.drawRange = keepDrawRange;
+    world.deposits.clear();
+    inInstance = true;
+    SwitchedWorld(m.tick, me);
+}
+
+// Zurück von der Einsatzkarte: die Mondkarte wieder aufbauen wie bei
+// HandleWelcome (gleicher Seed und Einstellungen wie der Server) und die
+// aktive Karte darüberlegen.
+void NetClient::Impl::HandleInstanceEnd(const net::InstanceEndMsg& m) {
+    if (!worldReady || !inInstance) return;
+    const PlayerState me = world.Me();
+    const GameSettings settings = world.settings;
+    const float keepDrawRange = world.drawRange;
+    world.BuildMirror(welcome.worldSeed, settings);
+    world.BuildStargates();
+    baseDecos = world.decos;
+    world.drawRange = keepDrawRange;
+    world.totalDelivered = totalDelivered;
+    world.lastStage = world.StationStage();
+    world.stageAnim = 0.0f;
+    inInstance = false;
+    ApplyMapData(lastMap);
+    SwitchedWorld(m.tick, me);
+}
+
+// Nach dem Wechsel der Spiegelwelt: der eigene Spieler wie vorher (ohne
+// Schiff und Figur, die nächsten Snapshots bringen sie), ships[0] als
+// Platzhalter, ältere Snapshots (bis tick) verwerfen, Vorhersage und
+// Interpolation neu beginnen.
+void NetClient::Impl::SwitchedWorld(uint32_t tick, const PlayerState& me) {
+    world.players.resize(1);
+    world.players[0] = me;
+    world.players[0].shipId = -1;
+    world.players[0].trooperId = -1;
+    Ship dummy;
+    dummy.id = -1;
+    dummy.model = models.player;
+    dummy.hidden = true;
+    dummy.dead = true;
+    if (world.ships.empty()) world.ships.push_back(dummy);
+    else world.ships[0] = dummy;
+    world.ships.resize(1);
+    world.troopers.clear();
+    welcomeTick = tick;
+    frames.clear();
+    bullets.clear();
+    ResetPrediction();
+    blocksDirty = true;
+    worldRebuilt = true;
+}
+
 // Begrüßung: Anmeldung/Zuschauen hat geklappt, oder der Server hat die Welt
 // neu aufgebaut (geänderte Einstellungen). In beiden Fällen bauen wir die
 // Kulisse mit Seed und Einstellungen des Servers auf. Weil World::BuildMirror
@@ -938,6 +1033,7 @@ void NetClient::Impl::HandleWelcome(const net::WelcomeMsg& m) {
     const float keepDrawRange = world.drawRange;   // gehört der Anzeige (Zuschauer: ganze Karte)
 
     welcome = m;
+    inInstance = false;   // ein (neues) Welcome beginnt immer auf der Mondkarte
     world.BuildMirror(m.worldSeed, m.settings);
     world.BuildStargates();   // Tore der Zufallskarte (eine eigene Karte folgt mit MapData)
     baseDecos = world.decos;
@@ -2126,6 +2222,7 @@ void NetClient::SendTeamAction(net::TeamActionType action, int param) {
 }
 
 const net::TeamsMsg& NetClient::Teams() const { return impl_->teams; }
+const std::vector<GameMap>& NetClient::MissionMaps() const { return impl_->missionMaps.maps; }
 
 bool NetClient::TakeTeamResult() {
     const bool r = impl_->teamResult;

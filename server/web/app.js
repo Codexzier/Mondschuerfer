@@ -438,7 +438,7 @@
     // =========================================================================
     const form = () => $('settings-form');
     const FIELDS = ['serverName', 'difficulty', 'enemyShips', 'tradeStations', 'shipyards', 'moon', 'maxPlayers', 'lives', 'missions',
-        'allowRegistration'];
+        'maxInstances', 'allowRegistration'];
 
     // Aktuelle Eingaben als Objekt (gleicher Aufbau wie "settings" im JSON)
     function readForm() {
@@ -453,6 +453,7 @@
             maxPlayers: Number($('f-maxPlayers').value),
             lives: Number($('f-lives').value),
             missions: Number($('f-missions').value),
+            maxInstances: Number($('f-maxInstances').value),
             allowRegistration: $('f-allowRegistration').checked,
         };
     }
@@ -472,6 +473,7 @@
         $('f-maxPlayers').value = s.maxPlayers;
         $('f-lives').value = s.lives;
         $('f-missions').value = s.missions;
+        $('f-maxInstances').value = s.maxInstances;
         $('f-allowRegistration').checked = s.allowRegistration !== false;
         updateEnemyField();
         updateNameCounter();
@@ -513,6 +515,8 @@
         setText('f-lives-help', `1 bis ${limits.maxLives}`);
         $('f-missions').max = limits.maxMissions;
         setText('f-missions-help', `0 bis ${limits.maxMissions}, 0 = keine Missionen`);
+        $('f-maxInstances').max = limits.maxInstancesLimit;
+        setText('f-maxInstances-help', `1 bis ${limits.maxInstancesLimit}, je SG-Team auf einer Einsatzkarte eine eigene Welt`);
     }
 
     function showDefaults(def) {
@@ -525,6 +529,7 @@
         setText('d-maxPlayers', String(def.maxPlayers));
         setText('d-lives', String(def.lives));
         setText('d-missions', String(def.missions));
+        setText('d-maxInstances', String(def.maxInstances));
         setText('d-allowRegistration', def.allowRegistration === false ? 'aus' : 'an');
     }
 
@@ -599,6 +604,7 @@
             ['f-maxPlayers', 'Maximale Spieler'],
             ['f-lives', 'Leben pro Spieler'],
             ['f-missions', 'Mini-Missionen gleichzeitig'],
+            ['f-maxInstances', 'Einsatzkarten gleichzeitig'],
         ];
         for (const [id, label] of numbers) {
             const input = $(id);
@@ -693,6 +699,7 @@
         body.set('maxPlayers', String(s.maxPlayers));
         body.set('lives', String(s.lives));
         body.set('missions', String(s.missions));
+        body.set('maxInstances', String(s.maxInstances));
         body.set('allowRegistration', s.allowRegistration ? '1' : '0');
         await postSettings('/api/settings', body);
     }
@@ -705,7 +712,7 @@
             'Alle Spielparameter auf die Standardwerte aus docker-compose.yml zurücksetzen?',
             `Standard: ${DIFFICULTY_NAMES[def.difficulty] || '–'} (${def.enemyShips} feindliche Schiffe), ` +
                 `${def.tradeStations} Handelsstation(en), ${def.shipyards} Werft(en), Mond ${MOON_NAMES[def.moon] || '–'}, ` +
-                `max. ${def.maxPlayers} Spieler, ${def.lives} Leben, ${def.missions} Mini-Missionen, ` +
+                `max. ${def.maxPlayers} Spieler, ${def.lives} Leben, ${def.missions} Mini-Missionen, ${def.maxInstances} Einsatzkarten gleichzeitig, ` +
                 `neue Konten ${def.allowRegistration === false ? 'nicht erlaubt' : 'erlaubt'}.`,
         ];
         if (def.tradeStations !== cur.tradeStations || def.shipyards !== cur.shipyards || def.moon !== cur.moon) {
@@ -986,9 +993,17 @@
         tr.appendChild(cell('Hochgeladen von', '', m.author || '–'));
         tr.appendChild(cell('Teile', 'num', m.file ? nf0.format(m.pieces || 0) : '–'));
         tr.appendChild(cell('Monorail-Kreise', 'num', m.file ? String(m.loops || 0) : '–'));
-        tr.appendChild(cell('Status', '', active ? el('span', 'chip chip-fly', 'aktiv') : ''));
+        // Einsatzkarten (SG-Teams) sind keine Mondkarte: freigeben statt aktivieren
+        const status = m.mission ? el('span', m.released ? 'chip chip-fly' : 'chip chip-wait',
+            m.released ? 'Einsatzkarte · freigegeben' : 'Einsatzkarte · gesperrt') : active ? el('span', 'chip chip-fly', 'aktiv') : '';
+        tr.appendChild(cell('Status', '', status));
         const actions = el('div', 'actions');
-        if (!active) actions.appendChild(mapButton('Aktivieren', 'btn', () => postMaps({ action: 'activate', file: m.file })));
+        if (m.mission) {
+            actions.appendChild(mapButton(m.released ? 'Sperren' : 'Freigeben', 'btn',
+                () => postMaps({ action: m.released ? 'withhold' : 'release', file: m.file })));
+        } else if (!active) {
+            actions.appendChild(mapButton('Aktivieren', 'btn', () => postMaps({ action: 'activate', file: m.file })));
+        }
         if (m.file) actions.appendChild(mapButton('Löschen', 'btn btn-ghost', () => onMapDelete(m, active)));
         tr.appendChild(cell('Aktion', '', actions));
         return tr;
