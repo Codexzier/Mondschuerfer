@@ -75,7 +75,9 @@ namespace net {
 //             Bodengeschosse, gelbe Kristalle, Welcome::lastRole, Rolle in PlayerEntry).
 // Version 12: Einsatzkarten im Mehrspieler (InstanceStart, InstanceEnd, MissionMaps,
 //             TeamAction Target, TeamEntry::target, GameSettings::maxInstances).
-constexpr uint16_t PROTOCOL_VERSION = 12;
+// Version 13: Scoreboard aller Spieler, EventKind::TeamHome, GameSettings fpsMode,
+//             yellowShare, sampleGoal, groundPirates und friendlyFire.
+constexpr uint16_t PROTOCOL_VERSION = 13;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -139,6 +141,7 @@ enum class MsgType : uint8_t {
     InstanceStart = 114,
     InstanceEnd = 115,
     MissionMaps = 116,
+    Scoreboard = 117,
 };
 
 enum class ErrorCode : uint8_t {
@@ -554,6 +557,7 @@ enum class EventKind : uint8_t {
     Goal = 4,         // Spieler hat das Ziel erreicht (an alle)
     StationGrow = 5,  // Handelsstationen wachsen (an alle)
     Respawned = 6,    // eigenes neues Schiff
+    TeamHome = 7,     // ein SG-Team ist zurück (Teamname, Punkte; an alle)
 };
 
 struct NetEvent {
@@ -565,8 +569,9 @@ struct NetEvent {
     float size = 1;
     Color color = WHITE;
     uint8_t count = 0;
-    std::string text;             // Notice: Meldung, Goal: Spielername
+    std::string text;             // Notice: Meldung, Goal: Spielername, TeamHome: Teamname
     int32_t playerId = -1;        // Goal
+    int32_t points = 0;           // TeamHome: Punkte des Einsatzes (alle Mitglieder zusammen)
     float seconds = 0;            // Goal: gebrauchte Zeit
     uint16_t round = 1;           // Goal
     uint8_t stage = 0;            // StationGrow
@@ -681,6 +686,23 @@ struct MissionMapsMsg {
     std::vector<GameMap> maps;    // ohne author
 };
 
+// Scoreboard aller Spieler des Servers (Command Center): Summe ihrer
+// Einsätze, nach Punkten sortiert, die besten MAX_SCOREBOARD. An alle
+// Spieler in der Rolle SG-Team, sobald sich etwas ändert.
+constexpr int MAX_SCOREBOARD = 20;
+struct ScoreEntry {
+    int32_t playerId = -1;        // gerade angemeldet: Spieler-ID, sonst -1
+    std::string name;
+    int32_t points = 0;
+    int32_t samples = 0;          // zurückgebrachte Proben
+    int32_t pirates = 0;          // ausgeschaltete Bodenpiraten
+    int32_t kills = 0;            // als Pilot abgeschossene Schiffe
+    int32_t returns = 0;          // Rückkehren durch das Stargate
+};
+struct ScoreboardMsg {
+    std::vector<ScoreEntry> entries;
+};
+
 // Das SG-Team geht auf eine Einsatzkarte: eigene Welt nur für das Team
 // (World::NewInstance mit Seed und Karte). Snapshots bis einschließlich tick
 // gehören noch zur Mondkarte (wie beim Welcome).
@@ -727,6 +749,7 @@ std::vector<uint8_t> Encode(const TeamsMsg& m);
 std::vector<uint8_t> Encode(const MissionMapsMsg& m);
 std::vector<uint8_t> Encode(const InstanceStartMsg& m);
 std::vector<uint8_t> Encode(const InstanceEndMsg& m);
+std::vector<uint8_t> Encode(const ScoreboardMsg& m);
 
 bool Decode(Reader& r, RegisterMsg& m);
 bool Decode(Reader& r, LoginStartMsg& m);
@@ -754,6 +777,7 @@ bool Decode(Reader& r, TeamsMsg& m);
 bool Decode(Reader& r, MissionMapsMsg& m);
 bool Decode(Reader& r, InstanceStartMsg& m);
 bool Decode(Reader& r, InstanceEndMsg& m);
+bool Decode(Reader& r, ScoreboardMsg& m);
 
 // ---------------------------------------------------------------------------
 // Modellvarianten: über das Netz werden kleine Nummern statt Modell-IDs geschickt

@@ -1039,7 +1039,7 @@ private:
     // bzw. Controller-A; ESC führt zurück ins Hauptmenü (ohne zu speichern).
     // Bedienbar erst zwei Frames nach dem Öffnen (der Klick aus dem Menü).
     void DrawRoles() {
-        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, false);
+        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, false, world_.SampleGoal());
         if (pick == 0) {
             world_.SetRole(world_.Me(), PlayerRole::Pilot);
             controls_.Reset();

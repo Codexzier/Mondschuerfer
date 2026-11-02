@@ -187,7 +187,7 @@ ohne Treffer wieder auf. Fällst du, verlierst du deine getragenen Proben und st
 5 Sekunden am Ankunftstor wieder auf, solange noch ein Kamerad steht. Fällt das ganze Team, ist
 der Einsatz gescheitert.
 
-**Rückkehr:** Mit 5 Proben gehst du zu einem Stargate (näher als 12 m, auch ein Kamerad dort
+**Rückkehr:** Mit 5 Proben (im Mehrspieler stellt der Betreiber die Zahl ein) gehst du zu einem Stargate (näher als 12 m, auch ein Kamerad dort
 genügt). Es wird angewählt und öffnet sich nach 3 Sekunden; die Treppe hinauf und hindurch, und
 das Team ist zurück im Command Center. Punkte: 100 je Probe, 25 je ausgeschaltetem Bodenpiraten
 und 200 für die Rückkehr (ein gescheiterter Einsatz zählt nur die Piraten). *Pause → Einsatz
@@ -209,7 +209,7 @@ abbrechen* zählt als gescheitert, *Speichern & zum Hauptmenü* verwirft einen l
 |---|---|
 | ESC / P (Controller: Menü-Taste) | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt), zu Fuß zusätzlich *Einsatz abbrechen*. Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bzw. deine Figur bekommt nur keine Steuerbefehle. |
 | ESC / F im Stationsfenster (Controller: B / Y) | Abdocken |
-| Tab | im Anmeldefenster zwischen Name und Passwort wechseln |
+| Tab | im Anmeldefenster zwischen Name und Passwort wechseln; im Command Center rechts zwischen *SG-Teams* und *Scoreboard* (Controller: RB) |
 | Zuschauer: Mausrad / Ziehen / R / ESC | Zoom / Karte verschieben / ganze Karte / Zuschauen beenden (Controller: rechter Stick / A halten und linken Stick bewegen / – / B) |
 
 ---
@@ -340,7 +340,8 @@ dabei selbst voraus, damit sich die Steuerung direkt anfühlt).
        Ziffern, `_` und `-`; jeden Namen gibt es pro Server nur einmal (Groß/Klein egal).
        Passwort: mindestens 6 Zeichen.
      - **Anmelden** bei jedem weiteren Mal – du spielst mit deinem letzten Stand weiter.
-4. **Rolle wählen:** Pilot oder SG-Team (vorausgewählt ist die zuletzt gespielte Rolle).
+4. **Rolle wählen:** Pilot oder SG-Team (vorausgewählt ist die zuletzt gespielte Rolle). Hat der
+   Server den FPS-Modus ausgeschaltet, geht es gleich als Pilot weiter.
 5. **Abmelden:** ESC → *Abmelden & zum Hauptmenü*. Der Server speichert deinen Fortschritt.
 
 Das Passwort verlässt deinen Rechner nicht: Das Spiel berechnet daraus einen Schlüssel, und nur
@@ -365,13 +366,20 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
   auf seine Einsatzkarte – eine eigene Welt nur für dieses Team (keine Schiffe, die Kristalle werden
   nach der Probe nur grün, auf dem Friedhof Zombies). Die Einsatzkarten kommen mit *An Server senden*
   aus dem Karteneditor auf den Server und werden auf der Verwaltungsseite freigegeben. Die Kameraden
-  sind die Mitspieler (keine NPC-Kameraden), die Gegner Bodenpiraten. Die 5 Proben zählen für das
+  sind die Mitspieler (keine NPC-Kameraden), die Gegner Bodenpiraten. Die Proben (Standard 5) zählen für das
   ganze Team; nach dem Einsatz ist das Team wieder zusammen im Command Center. Allein geht es mit
   *Tor anwählen (allein)*. Zum SG-Team wechselst du angedockt an einer Handelsstation, zurück ins
   Schiff im Command Center. Piloten sehen die Teams (auch auf der Minikarte) und die gelben Kristalle.
+- **Scoreboard:** Im Command Center zeigt der Reiter *Scoreboard* alle Spieler des Servers nach
+  Punkten (Summe ihrer Einsätze), dazu Proben, Bodenpiraten, als Pilot abgeschossene Schiffe und
+  Rückkehren. Der Server speichert es im Konto. Ist ein Team zurück, sehen alle die Meldung mit
+  seinen Punkten.
+- **Friendly Fire:** Figuren anderer Teams triffst du nur, wenn der Betreiber es einschaltet; das
+  eigene Team nie.
 - Die **Pause** hält die Welt nicht an.
 - Die Anzahl der Piraten, Stationen, die Mondfarbe und die maximale Spielerzahl stellt der
-  Betreiber des Servers ein.
+  Betreiber des Servers ein, ebenso den FPS-Modus, den Anteil gelber Kristalle, das Proben-Ziel,
+  die Bodenpiraten je Team und Friendly Fire.
 
 ### Einen Server betreiben
 

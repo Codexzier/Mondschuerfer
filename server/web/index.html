@@ -325,6 +325,40 @@
                 </div>
 
                 <div class="field">
+                    <label class="check" for="f-fpsMode">
+                        <input id="f-fpsMode" name="fpsMode" type="checkbox">
+                        <span>FPS-Modus (SG-Teams)</span>
+                    </label>
+                    <div class="field-help">Aus: nur Piloten, laufende Einsätze enden ohne Wertung. <span class="default-hint" id="d-fpsMode"></span></div>
+                </div>
+
+                <div class="field">
+                    <label for="f-yellowShare">Anteil gelber Kristalle (%)</label>
+                    <input id="f-yellowShare" name="yellowShare" type="number" min="0" max="100" step="1" inputmode="numeric">
+                    <div class="field-help"><span>0 bis 100, gilt für neu entstehende Kristalle der Mondkarte</span> <span class="default-hint" id="d-yellowShare"></span></div>
+                </div>
+
+                <div class="field">
+                    <label for="f-sampleGoal">Proben-Ziel</label>
+                    <input id="f-sampleGoal" name="sampleGoal" type="number" min="1" max="20" step="1" inputmode="numeric">
+                    <div class="field-help"><span id="f-sampleGoal-help">1 bis 20 Proben je Team für die Rückkehr</span> <span class="default-hint" id="d-sampleGoal"></span></div>
+                </div>
+
+                <div class="field">
+                    <label for="f-groundPirates">Bodenpiraten je Team</label>
+                    <input id="f-groundPirates" name="groundPirates" type="number" min="0" max="6" step="1" inputmode="numeric">
+                    <div class="field-help"><span id="f-groundPirates-help">0 bis 6 Gruppen</span> <span class="default-hint" id="d-groundPirates"></span></div>
+                </div>
+
+                <div class="field">
+                    <label class="check" for="f-friendlyFire">
+                        <input id="f-friendlyFire" name="friendlyFire" type="checkbox">
+                        <span>Friendly Fire</span>
+                    </label>
+                    <div class="field-help">An: SG-Teams können einander treffen (das eigene Team nie). <span class="default-hint" id="d-friendlyFire"></span></div>
+                </div>
+
+                <div class="field">
                     <label class="check" for="f-allowRegistration">
                         <input id="f-allowRegistration" name="allowRegistration" type="checkbox">
                         <span>Neue Konten erlauben</span>

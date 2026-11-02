@@ -75,6 +75,8 @@ constexpr int MAX_PLAYERS_LIMIT = 64;
 constexpr int MAX_LIVES = 100;          // Obergrenze für "Leben pro Spieler" (im Netzwerk ein Byte)
 constexpr int MAX_MISSIONS = 10;        // Obergrenze für "Mini-Missionen gleichzeitig" (0 = keine Missionen)
 constexpr int MAX_INSTANCES = 16;       // Obergrenze für "Einsatzkarten gleichzeitig" (je Einsatz rechnet der Server eine eigene Welt)
+constexpr int MAX_SAMPLE_GOAL = 20;     // Obergrenze für "Proben-Ziel" (Proben für die Heimkehr eines SG-Teams)
+constexpr int MAX_GROUND_PIRATES = 6;   // Obergrenze für "Bodenpiraten je Team" (Gruppen)
 constexpr int MAX_SPECTATORS = 16;      // Zuschauer zusätzlich zu den Spielern (fest, nicht einstellbar)
 constexpr int MAX_SERVER_NAME = 40;     // in BYTES (UTF-8): ein "ü" zählt doppelt
 // Schiffstypen (Bereich "Schiffe" der Webseite). Höchstens 8 Typen: Startschiff
@@ -131,6 +133,12 @@ struct GameSettings {
     int lives = cfg::START_LIVES;   // Leben pro Spieler (1..limits::MAX_LIVES)
     int missions = cfg::MISSION_SLOTS;   // Mini-Missionen gleichzeitig auf der Karte (0..limits::MAX_MISSIONS)
     int maxInstances = 4;      // SG-Teams gleichzeitig auf einer Einsatzkarte (je eine eigene Welt, 1..limits::MAX_INSTANCES)
+    // FPS-Modus (SG-Teams): aus = nur Piloten, die Rollenwahl entfällt.
+    bool fpsMode = true;
+    int yellowShare = static_cast<int>(cfg::YELLOW_SHARE * 100.0f);   // Anteil gelber Kristalle in Prozent (0..100)
+    int sampleGoal = cfg::SAMPLE_GOAL;              // Proben für die Heimkehr (1..limits::MAX_SAMPLE_GOAL)
+    int groundPirates = cfg::GROUND_PIRATE_GROUPS;  // Bodenpiraten-Gruppen je SG-Team (0..limits::MAX_GROUND_PIRATES)
+    bool friendlyFire = false;   // Treffer zwischen Figuren verschiedener SG-Teams
     std::vector<ShipType> ships = DefaultShipTypes();   // Index = Schiffstyp (PlayerState::shipType), 1..limits::MAX_SHIP_TYPES
     // Nur Server (Verwaltungsseite): Dürfen sich neue Konten anmelden? Wird
     // nicht an die Clients geschickt; der Server lehnt "Konto anlegen" dann

@@ -406,6 +406,16 @@ struct SgRecord {
     float seconds = 0.0f;        // Dauer
 };
 
+// Summe aller Einsätze eines Spielers (Scoreboard aller Spieler im
+// Mehrspieler, gespeichert im Konto auf dem Server).
+struct SgTotals {
+    int points = 0;
+    int samples = 0;             // zurückgebrachte Proben
+    int pirates = 0;             // ausgeschaltete Bodenpiraten
+    int returns = 0;             // Rückkehren durch das Stargate
+    int downs = 0;               // so oft die eigene Figur gefallen ist
+};
+
 // Monorail-Strecke zwischen zwei Stationen (gerade, von Ende a nach Ende b).
 // Auf jeder Strecke pendelt ein Zug (RailTrainPos).
 struct StationRail {
@@ -616,6 +626,7 @@ struct PlayerState {
     float sgTime = 0.0f;         // Dauer des laufenden Einsatzes
     int sgEnded = 0;             // Einsatz gerade zu Ende: 1 zurückgekehrt, 2 gescheitert (das Command Center zeigt es und setzt es zurück)
     std::vector<SgRecord> sgLog; // eigene Einsätze, älteste zuerst (Scoreboard)
+    SgTotals sgTotal;            // alle Einsätze zusammen (EndSgMission, DamageTrooper)
     // Mehrspieler: Team aus mehreren Spielern (GameServer). Im Einzelspieler
     // bleibt sgTeam 0, das Team ist dann nur der Spieler mit seinen Kameraden.
     int sgTeam = 0;              // Nummer des Teams (SG1, SG2 ...), 0 = allein
@@ -740,6 +751,11 @@ public:
     static bool SameTeam(const PlayerState& a, const PlayerState& b) { return a.id == b.id || (a.sgTeam != 0 && a.sgTeam == b.sgTeam); }
     // Proben, die das Team des Spielers gerade trägt (alle Spielerfiguren des Teams)
     int TeamSamples(const PlayerState& ps) const;
+    // Proben für die Rückkehr (settings.sampleGoal; auf einer Einsatzkarte
+    // höchstens so viele, wie sie Kristallplätze hat)
+    int SampleGoal() const;
+    // Spieler einer Figur: ihr eigener oder der ihres Anführers (Kamerad), sonst nullptr
+    PlayerState* PlayerOfTrooper(const Trooper* t);
     // Einsatz beenden: Die Figuren des Teams verschwinden, der Spieler ist
     // wieder im Command Center (sgEnded). success = durch das Stargate
     // zurückgekehrt. record = false: kein Eintrag im Scoreboard (Speichern

@@ -161,6 +161,7 @@ private:
         // --- SG-Team (siehe HandleTeamAction) ---
         bool roleChosen = false;            // Rollenwahl nach der Anmeldung erledigt (bis dahin ist das Schiff versteckt)
         int sentMissionMaps = -1;           // Stand der Einsatzkarten (missionMapsRev_), den der Client schon hat
+        int sentScoreboard = -1;            // Stand des Scoreboards (scoreboardRev_), den der Client schon hat
 
         // --- Chat (siehe HandleChat) ---
         bool chatting = false;              // Chat-Eingabe offen (Sprechblase am Schiff, ApplyInputs)
@@ -209,6 +210,10 @@ private:
         std::vector<int> ready;     // Spieler-IDs, die "Bereit" gesetzt haben
         float dialT = -1.0f;        // Anwahl: Sekunden seit dem Start, -1 = keine
         std::string target;         // Ziel: "" = Mondkarte, sonst Einsatzkarte (ServerMap::file)
+        // Einsatz läuft: Ergebnisse der schon Zurückgekehrten (RecordMissions)
+        int homePoints = 0;
+        bool homeSuccess = false;   // mindestens einer kam durch das Stargate zurück
+        bool homePending = false;   // es gibt Ergebnisse, TeamHome steht noch aus
     };
 
     // Einsatzkarte eines SG-Teams: eigene Welt (World::NewInstance), nur das
@@ -261,6 +266,10 @@ private:
     // Teamliste an alle im Command Center schicken (bei Änderung und 1/s)
     void UpdateTeams();
     void SendTeams();
+    // Beendete Einsätze (PlayerState::sgEnded) speichern; ist ein Team ganz
+    // zurück, erfahren es alle (EventKind::TeamHome)
+    void RecordMissions();
+    void EndFpsMode();   // FPS-Modus ausgeschaltet: Einsätze enden ohne Wertung, alle SG-Teams zurück ins Schiff
     SgTeam* TeamOf(int playerId);
     SgTeam* FindTeam(int number);
     bool TeamBusy(const SgTeam& t) const;   // Anwahl läuft oder jemand ist im Einsatz
@@ -330,6 +339,7 @@ private:
     net::PlayersMsg MakePlayers() const;
     net::HighscoresMsg MakeHighscores() const;
     net::TeamsMsg MakeTeams(const PlayerState& ps) const;
+    net::ScoreboardMsg MakeScoreboard() const;
 
     // --- Zählen und Schutzmaßnahmen ---------------------------------------------------
     int PlayersOnline() const;
@@ -375,6 +385,8 @@ private:
     bool teamsChanged_ = false;         // Teamliste neu schicken (SendTeams)
     std::vector<Instance> instances_;   // laufende Einsätze auf Einsatzkarten
     int missionMapsRev_ = 0;            // zählt hoch, wenn sich die freigegebenen Einsatzkarten ändern
+    std::vector<uint8_t> scoreboard_;   // zuletzt gebautes Scoreboard (fertige Nachricht)
+    int scoreboardRev_ = 0;             // zählt hoch, wenn es sich ändert
     std::string mapNotice_;             // für den Status (ServerStatus::mapNotice)
     int mapNoticeSeq_ = 0;
     bool mapNoticeError_ = false;

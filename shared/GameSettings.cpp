@@ -114,6 +114,9 @@ void Sanitize(GameSettings& s) {
     s.lives = std::clamp(s.lives, 1, limits::MAX_LIVES);
     s.missions = std::clamp(s.missions, 0, limits::MAX_MISSIONS);
     s.maxInstances = std::clamp(s.maxInstances, 1, limits::MAX_INSTANCES);
+    s.yellowShare = std::clamp(s.yellowShare, 0, 100);
+    s.sampleGoal = std::clamp(s.sampleGoal, 1, limits::MAX_SAMPLE_GOAL);
+    s.groundPirates = std::clamp(s.groundPirates, 0, limits::MAX_GROUND_PIRATES);
 
     s.serverName = CleanText(s.serverName, limits::MAX_SERVER_NAME);
     if (s.serverName.empty()) s.serverName = "Mondschürfer-Server";

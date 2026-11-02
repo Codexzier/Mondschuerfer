@@ -297,6 +297,11 @@ void WriteSettings(Writer& w, const GameSettings& s) {
     w.U8(static_cast<uint8_t>(s.lives));
     w.U8(static_cast<uint8_t>(s.missions));
     w.U8(static_cast<uint8_t>(s.maxInstances));
+    w.U8(s.fpsMode ? 1 : 0);
+    w.U8(static_cast<uint8_t>(s.yellowShare));
+    w.U8(static_cast<uint8_t>(s.sampleGoal));
+    w.U8(static_cast<uint8_t>(s.groundPirates));
+    w.U8(s.friendlyFire ? 1 : 0);
     w.U8(static_cast<uint8_t>(std::min<size_t>(s.ships.size(), 255)));
     for (size_t i = 0; i < s.ships.size() && i < 255; ++i) {
         const ShipType& t = s.ships[i];
@@ -324,6 +329,11 @@ void ReadSettings(Reader& r, GameSettings& s) {
     s.lives = r.U8();
     s.missions = r.U8();
     s.maxInstances = r.U8();
+    s.fpsMode = r.U8() != 0;
+    s.yellowShare = r.U8();
+    s.sampleGoal = r.U8();
+    s.groundPirates = r.U8();
+    s.friendlyFire = r.U8() != 0;
     const uint8_t ships = r.U8();
     s.ships.clear();
     for (uint8_t i = 0; i < ships && r.ok(); ++i) {
@@ -1192,6 +1202,10 @@ std::vector<uint8_t> Encode(const EventsMsg& m) {
                 break;
             case EventKind::Respawned:
                 break;
+            case EventKind::TeamHome:
+                w.Str(e.text);
+                w.I32(e.points);
+                break;
         }
     }
     return w.buf;
@@ -1205,7 +1219,7 @@ bool Decode(Reader& r, EventsMsg& m) {
     for (uint16_t i = 0; i < n && r.ok(); ++i) {
         NetEvent e;
         const uint8_t kind = r.U8();
-        if (kind > static_cast<uint8_t>(EventKind::Respawned)) return false;
+        if (kind > static_cast<uint8_t>(EventKind::TeamHome)) return false;
         e.kind = static_cast<EventKind>(kind);
         switch (e.kind) {
             case EventKind::Sound: {
@@ -1246,6 +1260,10 @@ bool Decode(Reader& r, EventsMsg& m) {
                 e.stage = r.U8();
                 break;
             case EventKind::Respawned:
+                break;
+            case EventKind::TeamHome:
+                e.text = r.Str();
+                e.points = r.I32();
                 break;
         }
         m.events.push_back(e);
@@ -1526,6 +1544,42 @@ std::vector<uint8_t> Encode(const InstanceEndMsg& m) {
 
 bool Decode(Reader& r, InstanceEndMsg& m) {
     m.tick = r.U32();
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const ScoreboardMsg& m) {
+    Writer w;
+    Start(MsgType::Scoreboard, w);
+    const size_t n = std::min<size_t>(m.entries.size(), MAX_SCOREBOARD);
+    w.U8(static_cast<uint8_t>(n));
+    for (size_t i = 0; i < n; ++i) {
+        const ScoreEntry& e = m.entries[i];
+        w.I32(e.playerId);
+        w.Str(e.name);
+        w.I32(e.points);
+        w.I32(e.samples);
+        w.I32(e.pirates);
+        w.I32(e.kills);
+        w.I32(e.returns);
+    }
+    return w.buf;
+}
+
+bool Decode(Reader& r, ScoreboardMsg& m) {
+    const uint8_t n = r.U8();
+    if (n > MAX_SCOREBOARD) return false;
+    m.entries.clear();
+    for (uint8_t i = 0; i < n && r.ok(); ++i) {
+        ScoreEntry e;
+        e.playerId = r.I32();
+        e.name = r.Str();
+        e.points = r.I32();
+        e.samples = r.I32();
+        e.pirates = r.I32();
+        e.kills = r.I32();
+        e.returns = r.I32();
+        m.entries.push_back(e);
+    }
     return r.ok();
 }
 

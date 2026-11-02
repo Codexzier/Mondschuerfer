@@ -574,12 +574,13 @@ void MultiplayerScreen::Update(float frameDt) {
         const Ship& p = w.Player();
         if (!p.dead && !p.hidden) hadShip_ = true;
 
-        // Rollenwahl: Testablauf mit Autopilot nimmt gleich "Pilot". Kommt
-        // der Spieler nach einem Verbindungsabbruch zurück und ist noch zu Fuß
-        // unterwegs, gilt die Rolle schon (der Server kennt sie).
+        // Rollenwahl: Testablauf mit Autopilot nimmt gleich "Pilot", ebenso
+        // ein Server ohne FPS-Modus. Kommt der Spieler nach einem
+        // Verbindungsabbruch zurück und ist noch zu Fuß unterwegs, gilt die
+        // Rolle schon (der Server kennt sie).
         if (roleChoice_) {
             ++roleFrames_;
-            if (opt_.autopilot) ChooseRole(0);
+            if (opt_.autopilot || !w.settings.fpsMode) ChooseRole(0);
             else if (OwnTrooper()) roleChoice_ = false;
         }
         // Command Center: beim Betreten zurücksetzen, dann jedes Frame die Uhr
@@ -1312,7 +1313,7 @@ void MultiplayerScreen::DrawPlaying() {
 
     // Rollenwahl nach der Anmeldung über dem Bild (ESC meldet ab)
     if (roleChoice_) {
-        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, true);
+        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, true, w.settings.sampleGoal);
         if (pick >= 0) {
             ChooseRole(pick);
         } else if (roleFrames_ > 1 && BackPressed()) {
@@ -1348,7 +1349,7 @@ void MultiplayerScreen::DrawPlaying() {
     if (w.Me().dockedAt >= 0 && goalAnimT_ < 0.0f && undockSentT_ < 0.0f && !paused_) {
         // Beim Tippen im Chat (und im Frame, in dem Enter/ESC ihn geöffnet
         // oder geschlossen hat) ist das Fenster nur Anzeige.
-        DockRequest req = DrawDockPanel(w, dockFrames_ > 1 && !opt_.autopilot && !chat_.Busy(), true);
+        DockRequest req = DrawDockPanel(w, dockFrames_ > 1 && !opt_.autopilot && !chat_.Busy(), w.settings.fpsMode);
         if (req.toTeam) ChooseRole(1);   // an der Handelsstation: ins Command Center
         if (req.repair) net_.SendDockAction(net::DockActionType::Repair);
         if (req.buy >= 0) net_.SendDockAction(net::DockActionType::BuyUpgrade, req.buy);
@@ -1385,7 +1386,8 @@ void MultiplayerScreen::DrawPlaying() {
 void MultiplayerScreen::DrawCommand() {
     tiltshift::SetEgoView(false);
     rlSetClipPlanes(0.5, 2500.0);
-    const OnlineCommand c = command_.DrawOnline(net_.Teams(), net_.MissionMaps(), net_.MyPlayerId(), net_.TakeTeamResult());
+    const OnlineCommand c = command_.DrawOnline(net_.Teams(), net_.Scoreboard(), net_.MissionMaps(), net_.MyPlayerId(),
+                                                net_.GetWorld().settings.sampleGoal, net_.TakeTeamResult());
     switch (c.kind) {
         case OnlineCommand::Kind::None: break;
         case OnlineCommand::Kind::Create: net_.SendTeamAction(net::TeamActionType::Create); break;

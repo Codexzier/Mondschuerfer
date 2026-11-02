@@ -183,6 +183,10 @@ Der ganze Ablauf als Sequenzdiagramm. `--->` heißt zuverlässig, `~~~>` unzuver
         |------------------- DockAction (nur angedockt) ------------------>|  Abdocken/Reparieren/Kaufen
         |------------------- ChatTyping(offen/zu), Chat(Text) ------------>|  Text prüfen, Flutbremse
         |<------------------ ChatLine(Name, Text) an alle Spieler ---------|  Sprechblase: SnapShip-Bit 16
+        |------------------- TeamAction (Rolle, Team, Ziel, Anwahl) ------>|  SG-Teams (Command Center)
+        |<------------------ Teams (bei Änderung, 1/s), MissionMaps -------|  Teamliste, Einsatzkarten
+        |<------------------ Scoreboard (bei Änderung) --------------------|  alle Spieler nach Punkten
+        |<------------------ InstanceStart / InstanceEnd ------------------|  Einsatzkarte des Teams
         |                                                                  |
         |------------------- Leave --------------------------------------->|  speichern, entfernen, trennen
 ```
@@ -702,6 +706,7 @@ dessen Liste. Am Ende des Schritts schickt `SendEvents` jedem Client **eine** `E
 | `Goal` | immer (Name, Zeit, Runde) | ja |
 | `StationGrow` | immer, wenn die Handelsstationen eine Ausbaustufe weiter sind | ja |
 | `Respawned` | er hat ein neues Schiff bekommen | nein |
+| `TeamHome` | ein SG-Team ist ganz zurück und mindestens einer kam durch das Stargate (Teamname, Punkte) | ja |
 
 Im Spiel baut `NetClient` daraus wieder dieselben Dinge wie im Einzelspieler: `SoundEvent`s für
 `Audio::PlayAt` (Lautstärke nach Entfernung, links/rechts), Partikel über `World::Explosion` und
