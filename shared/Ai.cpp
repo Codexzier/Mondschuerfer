@@ -457,7 +457,7 @@ void World::UpdateConvoy(Ship& s, float dt) {
 }
 
 // ===========================================================================
-// Figuren zu Fuß (FPS-Modus): Kameraden und Bodenpiraten
+// Figuren zu Fuß (FPS-Modus): Kameraden, Bodenpiraten und Zombies
 //
 // Auch hier "drückt die KI nur Tasten": Sie füllt Trooper::input, danach
 // läuft dieselbe Physik wie für den Spieler (World::UpdateTroopers).
@@ -466,53 +466,201 @@ void World::UpdateConvoy(Ship& s, float dt) {
 //            großem Abstand. Attack –
 //            Gegner in Sichtweite: dreht sich zu ihm und schießt, läuft dabei
 //            aber weiter mit (seitwärts oder rückwärts).
-//   Pirat:   Patrol – streift um seinen gelben Kristall (home) und wartet an
-//            jedem Punkt kurz. Attack – Gegner in Sichtweite: hält 45 bis 80 %
-//            der Sichtweite Abstand, macht Seitwärtsschritte und schießt. Retreat – unter
-//            GROUND_PIRATE_RETREAT des Schilds läuft er 6 s vom Gegner weg;
-//            danach greift er wieder an oder flieht erneut, bis sich der
-//            Schild aufgeladen hat.
+//   Pirat:   kämpft wie ein Soldat aus der Deckung (Vorbild Half-Life):
+//            Patrol – streift um seinen gelben Kristall (home) und wartet an
+//            jedem Punkt kurz. Sieht er einen Gegner oder hört er Schüsse
+//            (HearShot), alarmiert er seine Gruppe (AlertGroup): Die anderen
+//            sehen nach (Search), einer geht flankieren (Flank).
+//            Attack – hält 45 bis 80 % der Sichtweite Abstand, macht
+//            Seitwärtsschritte und schießt. Wird er getroffen oder fliegt ein
+//            Geschoss knapp vorbei (NoticeShooter), oder ist das Magazin leer,
+//            läuft er hinter ein Hindernis (FindCover) –
+//            Cover – versteckt sich, lädt nach (nur dort), schaut seitlich
+//            hervor, schießt eine Salve und geht zurück. Ist der Gegner außer
+//            Reichweite oder lange nicht zu sehen, geht es –
+//            Advance – zur nächsten Deckung näher am Gegner, aber immer nur
+//            einer der Gruppe; die anderen geben solange Deckungsfeuer.
+//            Retreat – unter GROUND_PIRATE_RETREAT des Schilds zu einer
+//            Deckung weit weg vom Gegner (sonst einfach weg); dort lädt sich
+//            der Schild auf, ab GROUND_PIRATE_RETURN (spätestens nach 15 s)
+//            kommt er zurück.
+//            Search – Ziel verloren: zur letzten bekannten Position, dort
+//            umsehen, dann wieder auf Streife.
 //   Zombie:  ein Pirat mit Trooper::zombie (Einsatzkarte mit dem Thema
-//            Friedhof). Streift wie ein Pirat, im Angriff läuft er langsam
-//            geradewegs auf sein Ziel zu (ZOMBIE_CHASE) und schlägt aus der
-//            Nähe zu (ZOMBIE_REACH, alle ZOMBIE_HIT_INTERVAL Sekunden). Er
-//            schießt nicht und flieht nie.
+//            Friedhof). Schläft zuerst (Trooper::awake) und streift langsam
+//            umher. Wach wird er, wenn eine Figur näher als
+//            ZOMBIE_NOTICE_CELLS kommt, bis ZOMBIE_SPRINT_CELLS sprintet, bis
+//            ZOMBIE_SHOT_CELLS schießt oder ihn trifft. Ein jagender Zombie
+//            weckt alle bis ZOMBIE_CHAIN_CELLS um sich und gibt ihnen sein
+//            Ziel (so läuft die Nachricht als Kette weiter). Er umzingelt das
+//            Ziel mit den anderen (jeder kommt von seiner Seite) und stürmt
+//            ab ZOMBIE_RUSH_CELLS, schlägt aus der Nähe zu (ZOMBIE_REACH, alle
+//            ZOMBIE_HIT_INTERVAL Sekunden). Er schießt nicht und flieht nie;
+//            ohne Ziel schläft er nach ZOMBIE_SLEEP wieder ein.
 // Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis zur Sichtweite
 // (TROOPER_SIGHT_CELLS Rasterfelder der Karte, für alle KI-Figuren gleich) mit
 // freier Sichtlinie (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
 // Visier (DamageTrooper) und behält ihn bis zur anderthalbfachen Sichtweite.
-// Zielen: Die Blickrichtung dreht mit begrenztem Tempo zum Ziel (das wirkt
-// wie eine Reaktionszeit); geschossen wird erst, wenn sie fast passt und die
-// Sicht frei ist. Die Streuung kommt in FireTrooperBullet dazu.
+// Zielen: Die Blickrichtung dreht mit begrenztem Tempo zum Ziel. Ein Pirat
+// schießt nach einem neuen Ziel erst nach einer Reaktionszeit (AI_REACT_*),
+// dann in Salven (AI_BURST_*). Die Streuung (FireTrooperBullet, Faktor
+// Trooper::aimSpread) sinkt, je länger er das Ziel sieht, und steigt mit der
+// Entfernung und dem Tempo des Ziels.
 // Hängt die Figur an einem Hindernis fest, springt sie und weicht eine
 // Sekunde seitlich aus.
 // ===========================================================================
+
+// Getroffen oder knapp verfehlt (DamageTrooper, UpdateBullets). Kamerad und
+// Pirat nehmen den Schützen ins Visier, wenn sie gerade kein sichtbares Ziel
+// haben; der Pirat merkt sich außerdem, wo er steht und dass er unter
+// Beschuss ist (sucht dann Deckung), ein schlafender Zombie wacht auf.
+void World::NoticeShooter(Trooper& t, int shooterId) {
+    if (t.playerId >= 0 || t.down) return;
+    const Trooper* s = FindTrooper(shooterId);
+    if (!s || s->faction == t.faction) return;
+    if (t.targetId < 0 || !t.seesTarget) {
+        if (t.targetId != shooterId && t.kind == TrooperKind::Pirate) {
+            t.reactT = Rand(cfg::AI_REACT_MIN, cfg::AI_REACT_MAX);
+            t.aimT = 0.0f;
+        }
+        t.targetId = shooterId;
+        t.thinkT = 0.0f;
+    }
+    if (t.kind != TrooperKind::Pirate) return;
+    t.underFireT = 0.0f;
+    t.lastSeen = s->pos;
+    t.lastSeenT = 0.0f;
+    t.awake = true;
+}
+
+// Ein Schuss: Bodengegner der anderen Seite in Hörweite (AI_HEAR_CELLS,
+// Zombies ZOMBIE_SHOT_CELLS) wissen jetzt, wo geschossen wurde. Wer gerade
+// keinen Gegner sieht, sieht dort nach; ein Pirat auf Streife alarmiert
+// dabei seine Gruppe, ein schlafender Zombie wacht auf.
+void World::HearShot(const Trooper& shooter) {
+    const float cell = instance ? mapgrid::MISSION_CELL : mapgrid::CELL;
+    for (Trooper& o : troopers) {
+        if (o.playerId >= 0 || o.down || o.kind != TrooperKind::Pirate || o.faction == shooter.faction) continue;
+        if (Dist2D(o.pos, shooter.pos) > (o.zombie ? cfg::ZOMBIE_SHOT_CELLS : cfg::AI_HEAR_CELLS) * cell) continue;
+        o.awake = true;
+        if (o.targetId >= 0 && o.seesTarget) continue;   // ist schon im Kampf
+        o.lastSeen = shooter.pos;
+        o.lastSeenT = 0.0f;
+        if (o.ai == TrooperAiState::Patrol || o.ai == TrooperAiState::Search) {
+            const bool fresh = o.ai == TrooperAiState::Patrol;
+            o.ai = TrooperAiState::Search;
+            o.goal = shooter.pos;
+            o.waitT = 0.0f;
+            if (fresh) AlertGroup(o, shooter.pos, -1);
+        }
+    }
+}
+
+// Gruppe alarmieren: Alle Piraten der Gruppe bis AI_ALERT_CELLS kennen jetzt
+// die Position des Gegners; wer noch auf Streife ist, sieht nach (Search).
+// Flankiert noch keiner, geht der, der am weitesten weg ist (nicht der
+// Melder), seitlich um den Gegner herum: zu einem Punkt gut eine halbe
+// Sichtweite neben ihm (Flank).
+void World::AlertGroup(const Trooper& t, Vector3 where, int targetId) {
+    if (t.zombie || t.group < 0) return;
+    const float cell = instance ? mapgrid::MISSION_CELL : mapgrid::CELL;
+    const float sight = cfg::TROOPER_SIGHT_CELLS * cell;
+    Trooper* flanker = nullptr;
+    bool flanking = false;
+    float farD = -1.0f;
+    for (Trooper& o : troopers) {
+        if (o.id == t.id || o.playerId >= 0 || o.down || o.kind != TrooperKind::Pirate || o.group != t.group) continue;
+        if (o.ai == TrooperAiState::Flank) flanking = true;
+        if (Dist2D(o.pos, t.pos) > cfg::AI_ALERT_CELLS * cell) continue;
+        o.lastSeen = where;
+        o.lastSeenT = 0.0f;
+        if (o.ai != TrooperAiState::Patrol && o.ai != TrooperAiState::Search) continue;
+        o.ai = TrooperAiState::Search;
+        o.goal = where;
+        o.waitT = 0.0f;
+        const float d = Dist2D(o.pos, where);
+        if (targetId >= 0 && d > farD) {
+            farD = d;
+            flanker = &o;
+        }
+    }
+    if (flanking || !flanker) return;
+    Vector3 u = Vector3Subtract(flanker->pos, where);
+    u.y = 0.0f;
+    const float l = Vector3Length(u);
+    u = l > 1e-3f ? Vector3Scale(u, 1.0f / l) : Vector3{0.0f, 0.0f, 1.0f};
+    const Vector3 n{-u.z, 0.0f, u.x};
+    const float first = Rand(0.0f, 1.0f) < 0.5f ? -1.0f : 1.0f, lim = fieldHalf - (instance ? 0.5f : 2.0f);
+    for (float side : {first, -first}) {
+        const Vector3 f = Vector3Add(where, Vector3Add(Vector3Scale(n, side * sight * 0.7f), Vector3Scale(u, sight * 0.2f)));
+        if (fabsf(f.x) > lim || fabsf(f.z) > lim || TrooperBlocked({f.x, 0.1f, f.z})) continue;
+        flanker->ai = TrooperAiState::Flank;
+        flanker->goal = {f.x, 0.0f, f.z};
+        flanker->coverT = 12.0f;   // spätestens dann greift er an
+        return;
+    }
+}
+
 void World::UpdateTrooperAi(Trooper& t, float dt) {
     TrooperInput& in = t.input;
     const bool pirate = t.kind == TrooperKind::Pirate;
-    const float sight = cfg::TROOPER_SIGHT_CELLS * (instance ? mapgrid::MISSION_CELL : mapgrid::CELL);
+    const bool soldier = pirate && !t.zombie;   // Bodenpirat mit Waffe
+    const float cell = instance ? mapgrid::MISSION_CELL : mapgrid::CELL;
+    const float sight = cfg::TROOPER_SIGHT_CELLS * cell;
     in.forward = in.strafe = 0.0f;
     in.fire = in.jump = in.sprint = in.reload = in.sample = false;
+    t.underFireT += dt;
+    t.lastSeenT += dt;
+    t.coverCd -= dt;
+    t.reactT -= dt;
+    t.burstT -= dt;
+    if (soldier && t.burst <= 0) t.burst = RandInt(cfg::AI_BURST_MIN, cfg::AI_BURST_MAX);
 
     // --- Ziel suchen ---------------------------------------------------------------
     t.thinkT -= dt;
     if (t.thinkT <= 0.0f) {
         t.thinkT = Rand(0.3f, 0.5f);
+        const int before = t.targetId;
         const Trooper* cur = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
-        if (cur && (cur->down || Dist2D(cur->pos, t.pos) > sight * 1.5f)) cur = nullptr;
+        const float keep = t.zombie ? sight * 3.0f : sight * 1.5f;   // ein jagender Zombie gibt nicht so schnell auf
+        if (cur && (cur->down || Dist2D(cur->pos, t.pos) > keep)) cur = nullptr;
         int best = -1;
         float bestD = sight;
         for (const Trooper& o : troopers) {
             if (o.down || o.faction == t.faction) continue;
             const float d = Dist2D(o.pos, t.pos);
-            if (d < bestD && TrooperLineClear(TrooperEye(t), TrooperEye(o))) {
+            if (t.zombie && !t.awake) {
+                // Schlafender Zombie: zu nah, oder sprintet in der Nähe
+                const bool sprinting = Vector2Length({o.vel.x, o.vel.z}) > cfg::TROOPER_WALK * 1.15f;
+                if (d < cfg::ZOMBIE_NOTICE_CELLS * cell || (sprinting && d < cfg::ZOMBIE_SPRINT_CELLS * cell)) {
+                    t.awake = true;
+                    best = o.id;
+                    bestD = d;
+                }
+                continue;
+            }
+            if (d < bestD && ((t.zombie && d < cfg::ZOMBIE_NOTICE_CELLS * cell) || TrooperLineClear(TrooperEye(t), TrooperEye(o)))) {
                 best = o.id;
                 bestD = d;
             }
         }
-        t.targetId = best >= 0 ? best : cur ? cur->id : -1;
+        if (!t.zombie || t.awake) t.targetId = best >= 0 ? best : cur ? cur->id : -1;
         const Trooper* tg = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
         t.seesTarget = tg && TrooperLineClear(TrooperEye(t), TrooperEye(*tg));
+        if (soldier && tg && t.targetId != before) {
+            t.reactT = Rand(cfg::AI_REACT_MIN, cfg::AI_REACT_MAX);
+            t.aimT = 0.0f;
+        }
+        // Kette: Ein jagender Zombie weckt die schlafenden um sich und gibt
+        // ihnen sein Ziel; die wecken bei ihrer nächsten Suche die nächsten.
+        if (t.zombie && tg)
+            for (Trooper& o : troopers)
+                if (o.zombie && o.playerId < 0 && !o.down && !o.awake && Dist2D(o.pos, t.pos) < cfg::ZOMBIE_CHAIN_CELLS * cell) {
+                    o.awake = true;
+                    o.targetId = tg->id;
+                    o.lastSeen = tg->pos;
+                    o.lastSeenT = 0.0f;
+                }
     }
     const Trooper* target = t.targetId >= 0 ? FindTrooper(t.targetId) : nullptr;
     if (target && target->down) {
@@ -520,21 +668,110 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
         t.targetId = -1;
         t.seesTarget = false;
     }
+    if (target && (t.seesTarget || t.zombie)) {   // Zombies wittern ihr Ziel
+        t.lastSeen = target->pos;
+        t.lastSeenT = 0.0f;
+    }
+    if (target && t.seesTarget) t.aimT += dt;
+    else t.aimT = std::max(0.0f, t.aimT - dt);
+    const float d = target ? Dist2D(target->pos, t.pos) : 1e9f;
+    const Vector3 threat = target ? target->pos : t.lastSeen;
+
+    // Läuft gerade ein anderer der Gruppe zur nächsten Deckung vor?
+    auto groupAdvancing = [&]() {
+        for (const Trooper& o : troopers)
+            if (o.id != t.id && o.playerId < 0 && !o.down && o.kind == TrooperKind::Pirate && o.group == t.group &&
+                o.ai == TrooperAiState::Advance)
+                return true;
+        return false;
+    };
+    // Deckung suchen (FindCover); höchstens alle 1,5 s ein Versuch
+    auto takeCover = [&](int mode, TrooperAiState st) {
+        Vector3 c;
+        if (t.coverCd > 0.0f) return false;
+        t.coverCd = 1.5f;
+        if (!FindCover(t, threat, mode, c)) return false;
+        t.cover = c;
+        t.hasCover = true;
+        t.ai = st;
+        t.peeking = false;
+        t.coverT = st == TrooperAiState::Advance ? 6.0f : Rand(0.5f, 1.0f);
+        return true;
+    };
 
     // --- Zustand ------------------------------------------------------------------
-    if (pirate) {
+    if (soldier) {
+        const bool low = t.hp < t.maxHp * cfg::GROUND_PIRATE_RETREAT;
+        const float range = sight * 0.85f;
         if (t.ai == TrooperAiState::Retreat) {
             t.waitT -= dt;
-            if (t.waitT <= 0.0f) t.ai = TrooperAiState::Patrol;
-        } else if (target && !t.zombie && t.hp < t.maxHp * cfg::GROUND_PIRATE_RETREAT) {
+            if (t.hp >= t.maxHp * cfg::GROUND_PIRATE_RETURN || t.waitT <= 0.0f) {
+                // erholt: zurück zur letzten bekannten Position
+                t.ai = t.lastSeenT < 30.0f ? TrooperAiState::Search : TrooperAiState::Patrol;
+                t.goal = t.ai == TrooperAiState::Search ? t.lastSeen : t.pos;
+                t.waitT = 0.0f;
+            } else if (t.hasCover && Dist2D(t.cover, t.pos) < 0.4f && t.underFireT < 0.3f) {
+                takeCover(2, TrooperAiState::Retreat);   // Versteck aufgeflogen: weiter weg
+            }
+        } else if (low && (target || t.underFireT < 3.0f)) {
             t.ai = TrooperAiState::Retreat;
-            t.waitT = 6.0f;
+            t.waitT = 15.0f;
+            t.coverCd = 0.0f;
+            if (!takeCover(2, TrooperAiState::Retreat)) t.hasCover = false;   // ohne Deckung: einfach weg (unten)
+        } else if (t.ai == TrooperAiState::Flank) {
+            // flankieren, auch ohne eigenes Ziel (die Gruppe hat es gemeldet)
+            t.coverT -= dt;
+            if (Dist2D(t.goal, t.pos) < 0.8f || t.coverT <= 0.0f || (target && t.seesTarget && d < sight * 0.7f && t.coverT < 9.0f)) {
+                t.ai = target ? TrooperAiState::Attack : TrooperAiState::Search;
+                t.goal = t.lastSeen;
+                t.waitT = 0.0f;
+            }
         } else if (target) {
+            if (t.ai == TrooperAiState::Patrol || t.ai == TrooperAiState::Search) {
+                AlertGroup(t, target->pos, target->id);
+                t.ai = TrooperAiState::Attack;
+            }
+            if (t.ai == TrooperAiState::Advance) {
+                t.coverT -= dt;
+                if (Dist2D(t.cover, t.pos) < 0.4f || t.coverT <= 0.0f) {
+                    t.ai = TrooperAiState::Cover;
+                    t.peeking = false;
+                    t.coverT = Rand(0.3f, 0.7f);
+                }
+            } else if (t.ai == TrooperAiState::Cover) {
+                if ((d > range || t.lastSeenT > 4.0f) && !groupAdvancing() && takeCover(1, TrooperAiState::Advance)) {
+                } else if (t.lastSeenT > 6.0f) {
+                    t.ai = TrooperAiState::Attack;   // von hier aus nicht zu sehen und keine bessere Deckung: direkt hin
+                    t.coverCd = 3.0f;
+                } else if (!t.peeking && t.seesTarget && t.underFireT < 0.3f && Dist2D(t.cover, t.pos) < 0.4f) {
+                    takeCover(0, TrooperAiState::Cover);   // Deckung aufgeflogen
+                }
+            } else if (t.ai == TrooperAiState::Attack) {
+                if ((t.underFireT < 0.5f || t.mag == 0) && takeCover(0, TrooperAiState::Cover)) {
+                } else if ((d > range || (!t.seesTarget && t.lastSeenT > 2.0f)) && !groupAdvancing()) {
+                    takeCover(1, TrooperAiState::Advance);
+                }
+            }
+        } else if (t.ai != TrooperAiState::Patrol && t.ai != TrooperAiState::Search) {
+            // Ziel verloren: an der letzten bekannten Position nachsehen
+            t.ai = t.lastSeenT < 30.0f ? TrooperAiState::Search : TrooperAiState::Patrol;
+            t.goal = t.ai == TrooperAiState::Search ? t.lastSeen : t.pos;
+            t.waitT = t.ai == TrooperAiState::Search ? 0.0f : Rand(1.0f, 2.0f);
+        }
+        if (t.ai != TrooperAiState::Cover) t.peeking = false;
+        if (t.ai != TrooperAiState::Cover && t.ai != TrooperAiState::Advance && t.ai != TrooperAiState::Retreat) t.hasCover = false;
+    } else if (pirate) {
+        if (target) {
             t.ai = TrooperAiState::Attack;
-        } else if (t.ai == TrooperAiState::Attack) {
+        } else if (t.awake && t.lastSeenT > cfg::ZOMBIE_SLEEP) {
+            t.awake = false;   // nichts mehr gefunden: schläft wieder ein
             t.ai = TrooperAiState::Patrol;
             t.goal = t.pos;
-            t.waitT = Rand(1.0f, 2.0f);
+            t.waitT = Rand(1.0f, 3.0f);
+        } else if (t.awake && t.ai != TrooperAiState::Search) {
+            t.ai = TrooperAiState::Search;
+            t.goal = t.lastSeen;
+            t.waitT = 0.0f;
         }
     } else {
         t.ai = target ? TrooperAiState::Attack : TrooperAiState::Follow;
@@ -544,23 +781,34 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
     Vector3 move{0.0f, 0.0f, 0.0f};
     float faceYaw = in.yaw, facePitch = 0.0f;
     auto toward = [&](Vector3 p) {
-        Vector3 d = Vector3Subtract(p, t.pos);
-        d.y = 0.0f;
-        const float l = Vector3Length(d);
-        return l > 1e-3f ? Vector3Scale(d, 1.0f / l) : Vector3{0.0f, 0.0f, 0.0f};
+        Vector3 v = Vector3Subtract(p, t.pos);
+        v.y = 0.0f;
+        const float l = Vector3Length(v);
+        return l > 1e-3f ? Vector3Scale(v, 1.0f / l) : Vector3{0.0f, 0.0f, 0.0f};
     };
+    // zu einem Punkt laufen (sprint: ab 1,5 m Abstand) bzw. dort stehen bleiben
+    auto runTo = [&](Vector3 p, bool sprint) {
+        const float dp = Dist2D(p, t.pos);
+        if (dp < 0.25f) return true;
+        move = Vector3Scale(toward(p), std::min(1.0f, dp / 0.6f));
+        faceYaw = YawTowards(t.pos, p);
+        in.sprint = sprint && dp > 1.5f;
+        return false;
+    };
+    bool fighting = false;   // zum Ziel schauen und schießen
     if (!pirate) {
         if (const Trooper* leader = FindTrooper(t.leaderId); leader && !leader->down) {
             const Vector3 slot = MateSlot(*leader, t.slot);
-            const float d = Dist2D(slot, t.pos);
-            if (d > 0.5f) {
-                move = Vector3Scale(toward(slot), std::min(1.0f, d / 1.5f));
+            const float ds = Dist2D(slot, t.pos);
+            if (ds > 0.5f) {
+                move = Vector3Scale(toward(slot), std::min(1.0f, ds / 1.5f));
                 faceYaw = YawTowards(t.pos, slot);
-                in.sprint = d > 6.0f && !target;
+                in.sprint = ds > 6.0f && !target;
             } else {
                 faceYaw = leader->yaw;
             }
         }
+        fighting = target != nullptr;
     } else if (t.ai == TrooperAiState::Patrol) {
         if (Dist2D(t.goal, t.pos) < 0.8f) {
             t.waitT -= dt;
@@ -570,18 +818,92 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
                 t.waitT = Rand(1.5f, 4.0f);
             }
         } else {
-            move = Vector3Scale(toward(t.goal), 0.3f);
+            move = Vector3Scale(toward(t.goal), t.zombie && !t.awake ? 0.2f : 0.3f);
             faceYaw = YawTowards(t.pos, t.goal);
         }
+        if (soldier && t.mag < cfg::TROOPER_MAG) in.reload = true;
+    } else if (t.ai == TrooperAiState::Search) {
+        if (Dist2D(t.goal, t.pos) > 0.8f && t.lastSeenT < 20.0f) {   // nach 20 s ohne Neuigkeit: aufgeben
+            move = Vector3Scale(toward(t.goal), t.zombie ? cfg::ZOMBIE_CHASE : 0.6f);
+            faceYaw = YawTowards(t.pos, t.goal);
+        } else {
+            // angekommen: sich umsehen, dann (Pirat) wieder auf Streife
+            t.waitT += dt;
+            faceYaw = YawTowards(t.home, t.pos) + sinf(t.waitT * 1.3f) * 1.4f;
+            if (soldier && t.waitT > 3.0f) {
+                t.ai = TrooperAiState::Patrol;
+                t.goal = t.pos;
+                t.waitT = Rand(1.0f, 2.0f);
+            }
+        }
+        if (soldier && t.mag < cfg::TROOPER_MAG) in.reload = true;
     } else if (t.ai == TrooperAiState::Retreat) {
-        const Vector3 away = target ? Vector3Negate(toward(target->pos)) : toward(t.home);
-        move = away;
-        faceYaw = YawTowards(t.pos, Vector3Add(t.pos, away));
-        in.sprint = true;
+        if (t.hasCover) {
+            if (runTo(t.cover, true)) faceYaw = YawTowards(t.pos, threat);
+            if (Dist2D(t.cover, t.pos) < 0.4f && t.mag < cfg::TROOPER_MAG) in.reload = true;
+        } else if (t.waitT > 9.0f) {   // ohne Deckung: die ersten 6 s weg vom Gegner
+            const Vector3 away = Vector3Negate(toward(threat));
+            move = away;
+            faceYaw = YawTowards(t.pos, Vector3Add(t.pos, away));
+            in.sprint = true;
+        } else {
+            faceYaw = YawTowards(t.pos, threat);
+            if (t.mag < cfg::TROOPER_MAG) in.reload = true;
+        }
+    } else if (t.ai == TrooperAiState::Flank) {
+        runTo(t.goal, true);
+    } else if (t.ai == TrooperAiState::Advance) {
+        runTo(t.cover, true);
+    } else if (t.ai == TrooperAiState::Cover && target) {
+        const float dc = Dist2D(t.cover, t.pos);
+        const bool advancing = groupAdvancing();   // dann öfter hervorschauen (Deckungsfeuer)
+        t.coverT -= dt;
+        if (!t.peeking) {
+            // zur Deckung laufen bzw. dort bleiben, nachladen nur hier
+            if (runTo(t.cover, true) || dc < 1.0f) faceYaw = YawTowards(t.pos, threat);
+            if (dc < 0.4f && t.mag < cfg::TROOPER_MAG / 2) in.reload = true;
+            if (dc > 0.4f && t.coverT < -4.0f) t.cover = t.pos;   // kommt nicht hin: hier bleiben
+            fighting = t.seesTarget && dc < 0.4f;                  // Deckung hilft nicht mehr: zurückschießen
+            if (t.coverT <= 0.0f && dc < 0.4f && t.reloadT <= 0.0f && t.mag > 0) {
+                t.peeking = true;
+                t.coverT = 3.0f;   // höchstens so lange hervorschauen
+                t.strafeDir = Rand(0.0f, 1.0f) < 0.5f ? -1.0f : 1.0f;
+                t.strafeT = 1.0f;
+                t.burst = RandInt(cfg::AI_BURST_MIN, cfg::AI_BURST_MAX);
+                t.burstT = 0.0f;
+            }
+        } else {
+            // seitlich hervorschauen, bis die Sicht frei ist, dann stehen und eine Salve schießen
+            t.seesTarget = TrooperLineClear(TrooperEye(t), TrooperEye(*target));
+            if (!t.seesTarget) {
+                t.strafeT -= dt;
+                if (t.strafeT <= 0.0f) {
+                    t.strafeDir = -t.strafeDir;   // dort geht es nicht: zur anderen Seite
+                    t.strafeT = 2.0f;
+                }
+                const Vector3 dir = toward(threat);
+                move = Vector3Scale(Vector3{-dir.z, 0.0f, dir.x}, 0.6f * t.strafeDir);
+            }
+            fighting = true;
+            if (t.coverT <= 0.0f || t.burstT > 0.0f || t.mag == 0) {
+                t.peeking = false;   // Salve vorbei: zurück in Deckung
+                t.coverT = Rand(0.8f, 1.6f) * (advancing ? 0.4f : 1.0f);
+            }
+        }
     } else if (target && t.zombie) {
-        const float d = Dist2D(target->pos, t.pos);
-        if (d > cfg::ZOMBIE_REACH * 0.8f) move = Vector3Scale(toward(target->pos), cfg::ZOMBIE_CHASE);
-        faceYaw = YawTowards(t.pos, target->pos);
+        // Umzingeln: Jeder kommt von seiner Seite (Winkel nach id, höchstens
+        // gut 50° von der eigenen Richtung gedreht) bis ZOMBIE_RUSH_CELLS an
+        // das Ziel heran und stürmt dann mit vollem Tempo los.
+        const float rush = cfg::ZOMBIE_RUSH_CELLS * cell;
+        Vector3 aim = target->pos;
+        if (d > rush) {
+            const float a0 = atan2f(t.pos.z - target->pos.z, t.pos.x - target->pos.x);
+            const float slot = fmodf(static_cast<float>(t.id) * 2.39996f, 2.0f * PI);
+            const float a = a0 + std::clamp(AngleDiff(a0, slot), -0.9f, 0.9f);
+            aim = {target->pos.x + cosf(a) * rush * 0.8f, 0.0f, target->pos.z + sinf(a) * rush * 0.8f};
+        }
+        if (d > cfg::ZOMBIE_REACH * 0.8f) move = Vector3Scale(toward(aim), d > rush ? cfg::ZOMBIE_CHASE : 1.0f);
+        faceYaw = YawTowards(t.pos, d > rush ? aim : target->pos);
         // Schlag: wie ein Treffer durch ein Geschoss des Zombies (DamageTrooper)
         if (d < cfg::ZOMBIE_REACH && t.fireCd <= 0.0f && fabsf(target->pos.y - t.pos.y) < 0.4f) {
             if (Trooper* victim = FindTrooper(t.targetId)) {
@@ -596,8 +918,8 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
             t.fireCd = cfg::ZOMBIE_HIT_INTERVAL;
         }
     } else if (target) {
+        // Attack: Abstand halten, Seitwärtsschritte, schießen
         const Vector3 dir = toward(target->pos);
-        const float d = Dist2D(target->pos, t.pos);
         if (!t.seesTarget || d > sight * 0.8f) move = dir;
         else if (d < sight * 0.45f) move = Vector3Negate(dir);
         t.strafeT -= dt;
@@ -606,11 +928,14 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
             t.strafeDir = Rand(0.0f, 1.0f) < 0.5f ? -1.0f : 1.0f;
         }
         if (t.seesTarget) move = Vector3Add(move, Vector3Scale(Vector3{-dir.z, 0.0f, dir.x}, 0.7f * t.strafeDir));
+        if (t.mag == 0) in.reload = true;   // keine Deckung gefunden: dann eben hier
+        fighting = t.ai == TrooperAiState::Attack;
     }
     // Im Kampf zum Ziel schauen (auf die Brust) und schießen, wenn die
-    // Blickrichtung fast passt
+    // Blickrichtung fast passt. Pirat: erst nach der Reaktionszeit, in
+    // Salven, mit Streuung je nach Sichtdauer, Entfernung und Tempo des Ziels.
     float aimYaw = faceYaw, aimPitch = 0.0f;
-    const bool fighting = target && t.ai == TrooperAiState::Attack && !t.zombie;   // Zombies schießen nicht
+    fighting = fighting && target && !t.zombie;   // Zombies schießen nicht
     if (fighting) {
         const Vector3 eye = TrooperEye(t);
         const Vector3 chest{target->pos.x, target->pos.y + cfg::TROOPER_HEIGHT * 0.6f, target->pos.z};
@@ -618,11 +943,18 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
         aimPitch = atan2f(chest.y - eye.y, std::max(0.1f, Dist2D(eye, chest)));
         faceYaw = aimYaw;
         facePitch = aimPitch;
+        if (soldier) {
+            const float k = std::min(1.0f, t.aimT / cfg::AI_AIM_TIME);
+            const float run = std::min(1.0f, Vector2Length({target->vel.x, target->vel.z}) / cfg::TROOPER_SPRINT);
+            t.aimSpread = Lerp(cfg::AI_SPREAD_FIRST, cfg::AI_SPREAD_BEST, k) * (1.0f + 0.5f * d / sight) * (1.0f + 0.8f * run);
+        }
     }
     const float turn = (pirate ? 3.5f : 5.0f) * dt;
     in.yaw += std::clamp(AngleDiff(in.yaw, faceYaw), -turn, turn);
     in.pitch += std::clamp(facePitch - in.pitch, -turn, turn);
-    if (fighting && t.seesTarget && fabsf(AngleDiff(in.yaw, aimYaw)) < 0.12f && fabsf(aimPitch - in.pitch) < 0.15f) in.fire = true;
+    const bool ready = !soldier || (t.reactT <= 0.0f && t.burstT <= 0.0f && t.mag > 0);
+    if (fighting && ready && t.seesTarget && fabsf(AngleDiff(in.yaw, aimYaw)) < 0.12f && fabsf(aimPitch - in.pitch) < 0.15f)
+        in.fire = true;
 
     // --- Festgelaufen? Springen und seitlich ausweichen ------------------------------
     const float speed = Vector2Length({t.vel.x, t.vel.z});

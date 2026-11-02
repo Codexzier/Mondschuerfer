@@ -99,7 +99,7 @@ private:
     // ROW_PIXEL .. ROW_STONES sind die Grafikeffekte (EffectLevel usw.).
     enum Row {
         ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA,
-        ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_STONES, ROW_TRACKS, ROW_TANK, ROW_BACK
+        ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_STONES, ROW_TRACKS, ROW_TANK, ROW_BARS, ROW_BACK
     };
     static constexpr int kEffectRows = ROW_STONES - ROW_PIXEL + 1;
 
@@ -117,6 +117,9 @@ private:
 
     // Tank-Steuerung des Controllers an/aus, ebenfalls sofort gespeichert.
     void SetTankSteeringOn(bool on);
+
+    // HP-Balken über Gegnern zu Fuß an/aus (Hud.cpp), ebenfalls sofort gespeichert.
+    void SetEnemyBarsOn(bool on);
 
     // Tilt-Shift-Stärke 0..1 (10-%-Schritte, 0 = aus); save wie bei SetVolume.
     void SetTiltShift(float v, bool save);

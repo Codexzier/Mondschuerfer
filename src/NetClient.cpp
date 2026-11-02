@@ -1897,6 +1897,7 @@ void NetClient::Impl::UpdateRemoteShips() {
         t.onGround = b.onGround;
         t.down = b.down;
         t.downT = b.downT;
+        t.hp = t.maxHp * static_cast<float>(b.hp) / 255.0f;   // nur der Anteil zählt (HP-Balken)
         const Vector3 pb{b.x, b.y, b.z};
         if (a && Vector2Distance({a->x, a->z}, {b.x, b.z}) < REMOTE_TELEPORT) {
             const float k = std::min(alpha, 1.0f);

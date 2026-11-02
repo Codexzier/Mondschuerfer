@@ -77,7 +77,8 @@ namespace net {
 //             TeamAction Target, TeamEntry::target, GameSettings::maxInstances).
 // Version 13: Scoreboard aller Spieler, EventKind::TeamHome, GameSettings fpsMode,
 //             yellowShare, sampleGoal, groundPirates und friendlyFire.
-constexpr uint16_t PROTOCOL_VERSION = 13;
+// Version 14: SnapTrooper::hp (HP-Balken über Gegnern), Sfx::DryFire.
+constexpr uint16_t PROTOCOL_VERSION = 14;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -493,6 +494,7 @@ struct SnapTrooper {
     float x = 0, y = 0, z = 0;
     float yaw = 0, pitch = 0;
     float hitFlash = 0;
+    uint8_t hp = 255;             // Schild als Anteil (255 = voll), für den HP-Balken
     bool onGround = true;
     bool down = false;
     bool zombie = false;

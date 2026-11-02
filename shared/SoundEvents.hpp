@@ -58,6 +58,8 @@ enum class Sfx {
     LowShield,
     // Menüs
     UiMove, UiConfirm, UiBack, PauseOpen, PauseClose,
+    // Trupp zu Fuß
+    DryFire,   // Abzug während des Nachladens
     Count
 };
 

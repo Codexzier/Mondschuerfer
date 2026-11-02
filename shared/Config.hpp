@@ -329,11 +329,13 @@ constexpr float MP_SPAWN_DISTANCE = 24.0f;    // Abstand des neuen Schiffs zur H
 // Die Figur ist ein Drittel so groß wie ein Mensch in Weltgröße (sonst wirken
 // Gebäude und Stargates neben ihr winzig).
 constexpr float MOON_GRAVITY = 1.62f;         // Schwerkraft des Mondes (m/s²): Sprünge tragen weit
+constexpr float EARTH_GRAVITY = 9.81f;        // 1 G auf den Einsatzkarten (ein Stück eines Planeten)
 constexpr float TROOPER_WALK = 2.4f;          // Gehen
 constexpr float TROOPER_SPRINT = 4.2f;        // Sprinten (nur vorwärts)
 constexpr float TROOPER_ACCEL = 30.0f;        // so schnell folgt das Tempo am Boden der Eingabe (m/s²)
 constexpr float TROOPER_AIR_CONTROL = 0.25f;  // Anteil davon in der Luft
 constexpr float TROOPER_JUMP = 1.27f;         // Absprung nach oben: knapp 0,5 m hoch (fast Figurengröße), gut 1,5 s in der Luft
+constexpr float TROOPER_JUMP_EARTH = 2.4f;    // ... bei 1 G: knapp 0,3 m hoch, 0,5 s in der Luft
 constexpr float TROOPER_RADIUS = 0.13f;       // Kollision mit Felsen und Stationsteilen
 constexpr float TROOPER_HEIGHT = 0.6f;        // Teile, die höher anfangen, gehen über den Kopf hinweg
 constexpr float TROOPER_EYE = 0.55f;          // Augenhöhe (Ego-Kamera)
@@ -369,16 +371,38 @@ constexpr float GROUND_PIRATE_SPREAD = 0.05f;
 constexpr float GROUND_PIRATE_SPAWN_DIST = 60.0f;   // neue Gruppen mindestens so weit vom Team entfernt
 constexpr float GROUND_PIRATE_RESPAWN = 40.0f;      // ist eine Gruppe ganz ausgeschaltet, kommt danach eine neue
 constexpr float GROUND_PIRATE_RETREAT = 0.35f;      // unter diesem Anteil des Schilds ziehen sie sich zurück
+constexpr float GROUND_PIRATE_RETURN = 0.9f;        // ... und kommen mit so viel Schild wieder (spätestens nach 15 s)
+// Kampfverhalten der Bodengegner (Ai.cpp). Abstände in Rasterfeldern wie
+// TROOPER_SIGHT_CELLS.
+constexpr int AI_HEAR_CELLS = 10;             // so weit hören KI-Gegner Schüsse
+constexpr int AI_ALERT_CELLS = 12;            // so weit alarmiert ein Pirat seine Gruppe
+constexpr float AI_REACT_MIN = 0.5f;          // Reaktionszeit bei einem neuen Ziel (s) ...
+constexpr float AI_REACT_MAX = 0.9f;          // ... bis
+constexpr int AI_BURST_MIN = 3;               // Schuss je Salve ...
+constexpr int AI_BURST_MAX = 5;               // ... bis
+constexpr float AI_BURST_PAUSE_MIN = 0.6f;    // Pause zwischen zwei Salven (s) ...
+constexpr float AI_BURST_PAUSE_MAX = 1.2f;    // ... bis
+constexpr float AI_AIM_TIME = 3.0f;           // nach so langer Sicht auf das Ziel schießt er am genauesten
+constexpr float AI_SPREAD_FIRST = 2.0f;       // Streuung beim ersten Blick (Vielfaches von GROUND_PIRATE_SPREAD) ...
+constexpr float AI_SPREAD_BEST = 0.7f;        // ... und nach AI_AIM_TIME
 // Zombies: die Gegner auf Einsatzkarten mit dem Thema Friedhof (statt der
 // Bodenpiraten, gleiche Gruppen und Startplätze). Langsamer als eine gehende
 // Figur, mehr Schild, schlagen aus der Nähe zu statt zu schießen.
-constexpr int ZOMBIE_MIN = 3;                 // Figuren je Gruppe ...
-constexpr int ZOMBIE_MAX = 5;                 // ... bis
+constexpr int ZOMBIE_MIN = 5;                 // Figuren je Gruppe ...
+constexpr int ZOMBIE_MAX = 8;                 // ... bis
+constexpr int ZOMBIE_GROUP_FACTOR = 2;        // so viel mal mehr Gruppen als Bodenpiraten (GameSettings::groundPirates)
 constexpr float ZOMBIE_HP = 80.0f;
 constexpr float ZOMBIE_DAMAGE = 15.0f;        // je Schlag
 constexpr float ZOMBIE_HIT_INTERVAL = 1.2f;   // Sekunden zwischen zwei Schlägen
 constexpr float ZOMBIE_REACH = 0.55f;         // so nah (m, waagerecht) muss der Zombie an seinem Ziel sein
 constexpr float ZOMBIE_CHASE = 0.7f;          // Tempo im Angriff als Anteil von TROOPER_WALK
+// Zombies schlafen, bis sich etwas regt (Rasterfelder wie TROOPER_SIGHT_CELLS):
+constexpr int ZOMBIE_NOTICE_CELLS = 3;        // eine Figur kommt so nah ...
+constexpr int ZOMBIE_SPRINT_CELLS = 8;        // ... oder sprintet so nah vorbei ...
+constexpr int ZOMBIE_SHOT_CELLS = 12;         // ... oder schießt so nah (oder trifft ihn)
+constexpr int ZOMBIE_CHAIN_CELLS = 6;         // ein jagender Zombie weckt alle anderen bis hierhin (Kette)
+constexpr int ZOMBIE_RUSH_CELLS = 3;          // ab hier stürmt er mit vollem Tempo auf sein Ziel zu
+constexpr float ZOMBIE_SLEEP = 15.0f;         // ohne Ziel schläft er nach so vielen Sekunden wieder ein
 // Gelbe Kristalle (FPS-Modus): Erst nimmt ein Trupp zu Fuß eine Probe, dann
 // sind sie wieder grün und abbaubar. Bisher nur im Einzelspieler (nicht in
 // der Simulation und nicht im Mehrspieler).

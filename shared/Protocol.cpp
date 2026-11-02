@@ -886,6 +886,7 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U16(QAngle(t.yaw));
         w.I8(ClampRound<int8_t>(t.pitch * 80.0f, -127.0f, 127.0f));   // ±1,45 rad genügt grob
         w.U8(QUnit(t.hitFlash));
+        w.U8(t.hp);
         // Bitfeld: 1 am Boden, 2 gefallen, 4 Zombie, 8 im Kampf
         uint8_t flags = 0;
         if (t.onGround) flags |= 1;
@@ -1088,6 +1089,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         t.yaw = DAngle(r.U16());
         t.pitch = static_cast<float>(r.I8()) / 80.0f;
         t.hitFlash = DUnit(r.U8());
+        t.hp = r.U8();
         const uint8_t flags = r.U8();
         t.onGround = (flags & 1) != 0;
         t.down = (flags & 2) != 0;

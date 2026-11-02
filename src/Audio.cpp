@@ -144,6 +144,9 @@ const SfxDef kSfx[] = {
     {Sfx::UiBack, {"interface/back_002"}, 0.80f, 0.0f, 0.10f},
     {Sfx::PauseOpen, {"interface/open_002"}, 0.75f, 0.0f, 0.10f},
     {Sfx::PauseClose, {"interface/close_003"}, 0.75f, 0.0f, 0.10f},
+
+    // Trupp zu Fuß
+    {Sfx::DryFire, {"interface/click_002"}, 0.70f, 0.0f, 0.05f},
 };
 // Prüfung beim Übersetzen: Kommt in Sfx ein Eintrag dazu, ohne dass hier eine
 // Zeile ergänzt wird, bricht der Build ab (statt später falsche Töne zu spielen).

@@ -2531,6 +2531,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
             st.yaw = t.yaw;
             st.pitch = t.pitch;
             st.hitFlash = t.hitFlash;
+            st.hp = static_cast<uint8_t>(std::clamp(t.hp / std::max(1.0f, t.maxHp), 0.0f, 1.0f) * 255.0f + 0.5f);
             st.onGround = t.onGround;
             st.down = t.down;
             st.zombie = t.zombie;
