@@ -48,8 +48,9 @@
 //      b) Basic-Auth korrekt?    -> weiter zu 3. (POST ohne Content-Length -> 411)
 //      c) sonst                  -> 401 (Browser zeigt Anmeldedialog),
 //                                   falsche Daten zählen als Fehlversuch.
-//   3. Routing auf genau elf feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten, Sperren,
-//      Verlauf) und die Tagesdateien des Lastprotokolls (/api/logs/last-JJJJ-MM-TT.csv).
+//   3. Routing auf genau dreizehn feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten,
+//      Events, Rollen, Sperren, Verlauf) und die Tagesdateien des Lastprotokolls
+//      (/api/logs/last-JJJJ-MM-TT.csv).
 //      Alles andere ergibt 404. Es gibt KEIN allgemeines Ausliefern eines
 //      Ordners, daher kann niemand mit "/../" andere Dateien lesen.
 //   4. Jede Antwort bekommt Sicherheits-Header (set_default_headers).
@@ -452,6 +453,55 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("mapNotice").String(s.mapNotice);
     w.Key("mapNoticeSeq").Int(s.mapNoticeSeq);
     w.Key("mapNoticeError").Bool(s.mapNoticeError);
+
+    w.Key("events").BeginArray();
+    for (const MapEvent& e : s.events) {
+        w.BeginObject();
+        w.Key("id").Int(e.id);
+        w.Key("name").String(e.name);
+        w.Key("from").String(e.from);
+        w.Key("to").String(e.to);
+        w.Key("maps").BeginArray();
+        for (const std::string& f : e.maps) w.String(f);
+        w.EndArray();
+        w.Key("locked").BeginArray();
+        for (const std::string& f : e.locked) w.String(f);
+        w.EndArray();
+        w.Key("by").String(e.by);
+        w.Key("created").Int(static_cast<long long>(e.created));
+        w.EndObject();
+    }
+    w.EndArray();
+    w.Key("today").String(s.today);
+    w.Key("missionToday").BeginArray();
+    for (const std::string& f : s.missionToday) w.String(f);
+    w.EndArray();
+    w.Key("maxEventMaps").Int(MAX_EVENT_MAPS);
+    w.Key("eventNotice").String(s.eventNotice);
+    w.Key("eventNoticeSeq").Int(s.eventNoticeSeq);
+    w.Key("eventNoticeError").Bool(s.eventNoticeError);
+
+    w.Key("roleTypes").BeginArray();
+    for (const AccountRoleInfo& r : ACCOUNT_ROLES) {
+        w.BeginObject();
+        w.Key("key").String(r.key);
+        w.Key("label").String(r.label);
+        w.EndObject();
+    }
+    w.EndArray();
+    w.Key("roles").BeginArray();
+    for (const RoleStatus& r : s.roles) {
+        w.BeginObject();
+        w.Key("name").String(r.name);
+        w.Key("roles").BeginArray();
+        for (const std::string& k : r.roles) w.String(k);
+        w.EndArray();
+        w.EndObject();
+    }
+    w.EndArray();
+    w.Key("roleNotice").String(s.roleNotice);
+    w.Key("roleNoticeSeq").Int(s.roleNoticeSeq);
+    w.Key("roleNoticeError").Bool(s.roleNoticeError);
 
     w.Key("bans").BeginArray();
     for (const BanStatus& b : s.bans) {
@@ -1325,6 +1375,23 @@ bool IsBanReason(const std::string& text) {
     return true;
 }
 
+// Name eines Events: 1..MAX_EVENT_NAME Zeichen, die das Spiel anzeigen kann
+// (wie der Grund einer Sperre).
+bool IsEventName(const std::string& name) {
+    return !name.empty() && IsBanReason(name) && Utf8CodePoints(name) <= static_cast<size_t>(MAX_EVENT_NAME);
+}
+
+// "a,b,c" -> {"a", "b", "c"} (leere Teile fallen weg)
+std::vector<std::string> SplitCommaList(const std::string& value) {
+    std::vector<std::string> out;
+    for (size_t a = 0; a <= value.size();) {
+        const size_t b = std::min(value.find(',', a), value.size());
+        if (b > a) out.push_back(TrimSpaces(value.substr(a, b - a)));
+        a = b + 1;
+    }
+    return out;
+}
+
 class WebContext {
 public:
     WebContext(const WebConfig& cfg, SharedState* shared)
@@ -1631,6 +1698,150 @@ public:
         res.set_content(w.Result(), kJsonType);
     }
 
+    // --- POST /api/events ------------------------------------------------------------
+    // Bereich "Events": action = save (id: 0 = neues Event, name, from, to als
+    // JJJJ-MM-TT, maps und locked: Einsatzkarten durch Komma getrennt) oder
+    // delete (id). Wie bei den Karten führt der Spiel-Thread den Auftrag im
+    // nächsten Schritt aus (TakeEventCommands); das Ergebnis steht danach als
+    // eventNotice im Status.
+    void HandleEvents(const httplib::Request& req, httplib::Response& res) {
+        if (!CheckSameOriginPost(req, res)) return;
+        if (LowerAscii(req.get_header_value("Content-Type")).rfind("application/x-www-form-urlencoded", 0) != 0) {
+            SendJsonError(res, 400, "Formulardaten (application/x-www-form-urlencoded) erwartet.");
+            return;
+        }
+        ServerStatus status;
+        if (!ReadStatus(status, res)) return;
+        std::map<std::string, std::string> fields;
+        std::string error;
+        if (!ParseFormBody(req.body, fields, error)) {
+            SendJsonError(res, 400, error);
+            return;
+        }
+        auto text = [&](const char* key) { return TrimSpaces(fields.count(key) ? fields[key] : std::string()); };
+        const std::string action = text("action");
+        EventCommand cmd;
+        MapEvent& e = cmd.event;
+        if (!ParseIntInRange(text("id"), 0, 1000000000, e.id)) {
+            SendJsonError(res, 400, "Unbekanntes Event.");
+            return;
+        }
+        const bool known = std::any_of(status.events.begin(), status.events.end(), [&](const MapEvent& o) { return o.id == e.id; });
+        if (e.id != 0 && !known) {
+            SendJsonError(res, 400, "Dieses Event gibt es nicht (mehr).");
+            return;
+        }
+        if (action == "delete") {
+            cmd.kind = EventCommand::Kind::Delete;
+            if (e.id == 0) {
+                SendJsonError(res, 400, "Unbekanntes Event.");
+                return;
+            }
+        } else if (action == "save") {
+            cmd.kind = EventCommand::Kind::Save;
+            e.name = text("name");
+            e.from = text("from");
+            e.to = text("to");
+            e.maps = SplitCommaList(text("maps"));
+            e.locked = SplitCommaList(text("locked"));
+            if (!IsEventName(e.name)) {
+                SendJsonError(res, 400, "Bitte einen Namen eingeben (höchstens " + std::to_string(MAX_EVENT_NAME) +
+                                            " Zeichen, nur Zeichen, die das Spiel anzeigen kann).");
+                return;
+            }
+            if (!ValidEventDay(e.from) || !ValidEventDay(e.to)) {
+                SendJsonError(res, 400, "Bitte gültige Tage angeben (von und bis).");
+                return;
+            }
+            if (e.to < e.from) {
+                SendJsonError(res, 400, "Der letzte Tag liegt vor dem ersten.");
+                return;
+            }
+            if (e.maps.empty() && e.locked.empty()) {
+                SendJsonError(res, 400, "Bitte mindestens eine Karte wählen oder sperren.");
+                return;
+            }
+            if (e.maps.size() > static_cast<size_t>(MAX_EVENT_MAPS) || e.locked.size() > static_cast<size_t>(MAX_EVENT_MAPS)) {
+                SendJsonError(res, 400, "Höchstens " + std::to_string(MAX_EVENT_MAPS) + " Karten je Liste.");
+                return;
+            }
+            for (const std::vector<std::string>* list : {&e.maps, &e.locked})
+                for (size_t i = 0; i < list->size(); ++i) {
+                    const std::string& f = (*list)[i];
+                    const bool mission = std::any_of(status.maps.begin(), status.maps.end(),
+                                                     [&](const MapStatus& m) { return m.file == f && m.mission; });
+                    if (!mission) {
+                        SendJsonError(res, 400, "Eine der Karten gibt es nicht (mehr) oder sie ist keine Einsatzkarte.");
+                        return;
+                    }
+                    if (std::find(list->begin(), list->begin() + static_cast<long>(i), f) != list->begin() + static_cast<long>(i) ||
+                        (list == &e.locked && std::find(e.maps.begin(), e.maps.end(), f) != e.maps.end())) {
+                        SendJsonError(res, 400, "Eine Karte kann nicht zugleich wählbar und gesperrt sein.");
+                        return;
+                    }
+                }
+        } else {
+            SendJsonError(res, 400, "Unbekannte Aktion.");
+            return;
+        }
+        bool queued = false;
+        if (!WithShared(res, [&](SharedState& s) { queued = s.RequestEventCommand(cmd); })) return;
+        if (!queued) {
+            SendJsonError(res, 503, "Der Server ist gerade beschäftigt. Bitte gleich noch einmal versuchen.");
+            return;
+        }
+        JsonWriter w;
+        w.BeginObject().Key("ok").Bool(true).Key("message").String("Wird übernommen …").EndObject();
+        res.status = 200;
+        res.set_content(w.Result(), kJsonType);
+    }
+
+    // --- POST /api/roles -------------------------------------------------------------
+    // Bereich "Rollen": action = grant | revoke, name = Spieler, role = Schlüssel
+    // (AccountRoleInfo::key). Ob es das Konto gibt, meldet der Spiel-Thread als
+    // roleNotice im Status.
+    void HandleRoles(const httplib::Request& req, httplib::Response& res) {
+        if (!CheckSameOriginPost(req, res)) return;
+        if (LowerAscii(req.get_header_value("Content-Type")).rfind("application/x-www-form-urlencoded", 0) != 0) {
+            SendJsonError(res, 400, "Formulardaten (application/x-www-form-urlencoded) erwartet.");
+            return;
+        }
+        std::map<std::string, std::string> fields;
+        std::string error;
+        if (!ParseFormBody(req.body, fields, error)) {
+            SendJsonError(res, 400, error);
+            return;
+        }
+        auto text = [&](const char* key) { return TrimSpaces(fields.count(key) ? fields[key] : std::string()); };
+        const std::string action = text("action");
+        RoleCommand cmd;
+        cmd.grant = action == "grant";
+        cmd.name = text("name");
+        cmd.role = text("role");
+        if (action != "grant" && action != "revoke") {
+            SendJsonError(res, 400, "Unbekannte Aktion.");
+            return;
+        }
+        if (!IsPlayerName(cmd.name)) {
+            SendJsonError(res, 400, "Ungültiger Spielername (3–16 Zeichen: Buchstaben, Ziffern, _ und -).");
+            return;
+        }
+        if (!FindAccountRole(cmd.role)) {
+            SendJsonError(res, 400, "Diese Rolle gibt es nicht.");
+            return;
+        }
+        bool queued = false;
+        if (!WithShared(res, [&](SharedState& s) { queued = s.RequestRoleCommand(cmd); })) return;
+        if (!queued) {
+            SendJsonError(res, 503, "Der Server ist gerade beschäftigt. Bitte gleich noch einmal versuchen.");
+            return;
+        }
+        JsonWriter w;
+        w.BeginObject().Key("ok").Bool(true).Key("message").String("Wird übernommen …").EndObject();
+        res.status = 200;
+        res.set_content(w.Result(), kJsonType);
+    }
+
     // --- POST /api/settings/reset -----------------------------------------------
     // Zurück auf die Werte aus docker-compose.yml (Umgebungsvariablen). Welche
     // das sind, weiß nur der Spiel-Thread; er veröffentlicht sie in status.defaults.
@@ -1921,6 +2132,8 @@ void ConfigureServer(httplib::Server& svr, const std::shared_ptr<WebContext>& ct
     svr.Post(R"(/api/ships)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleShips(req, res); });
     svr.Post(R"(/api/maps)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleMaps(req, res); });
     svr.Post(R"(/api/bans)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleBans(req, res); });
+    svr.Post(R"(/api/events)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleEvents(req, res); });
+    svr.Post(R"(/api/roles)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleRoles(req, res); });
     svr.Get(R"(/api/history)", [ctx](const httplib::Request&, httplib::Response& res) { ctx->HandleHistory(res); });
     // Tagesdateien des Lastprotokolls: Der Name steht fest im Muster (nur Ziffern).
     svr.Get(R"(/api/logs/(last-\d{4}-\d{2}-\d{2}\.csv))", [ctx](const httplib::Request& req, httplib::Response& res) {

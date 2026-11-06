@@ -14,12 +14,14 @@
 //     Zustands (PublishStatus). Die Webseite liest nur diese Kopie.
 //   - Die Webseite legt geänderte Einstellungen hier ab (RequestSettings,
 //     Schiffe getrennt mit RequestShips, Karten mit RequestMapCommand, Sperren
-//     mit RequestBanCommand); der Spiel-Thread holt sie zu Beginn des nächsten
+//     mit RequestBanCommand, Events mit RequestEventCommand, Rollen mit
+//     RequestRoleCommand); der Spiel-Thread holt sie zu Beginn des nächsten
 //     Schritts ab und wendet sie an (TakeSettingsRequest, TakeShipsRequest,
-//     TakeMapCommands, TakeBanCommands).
+//     TakeMapCommands, TakeBanCommands, TakeEventCommands, TakeRoleCommands).
 // So greift der Web-Thread nie direkt auf die Spielwelt zu.
 // ---------------------------------------------------------------------------
 #include "GameSettings.hpp"
+#include "MapEvents.hpp"
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -68,6 +70,28 @@ struct MapCommand {
     enum class Kind { Activate, Delete, Allow, Deny, Release, Withhold };
     Kind kind = Kind::Activate;
     std::string arg;                // Activate/Delete/Release/Withhold: Datei ("" = Standardkarte), Allow/Deny: Spielername
+};
+
+// Auftrag der Webseite für den Bereich "Events". Der Web-Thread hat Name,
+// Tage und Karten schon geprüft; ob es die Karten (noch) gibt, prüft der
+// Spiel-Thread.
+struct EventCommand {
+    enum class Kind { Save, Delete };
+    Kind kind = Kind::Save;
+    MapEvent event;                 // Save: event.id 0 = neues Event; Delete: nur event.id
+};
+
+// Ein Konto mit Rollen (Bereich "Rollen" der Webseite)
+struct RoleStatus {
+    std::string name;
+    std::vector<std::string> roles; // Schlüssel (AccountRoleInfo::key)
+};
+
+// Auftrag der Webseite für den Bereich "Rollen"
+struct RoleCommand {
+    bool grant = true;              // false: Rolle entziehen
+    std::string name;               // Spielername (vom Web-Thread geprüft)
+    std::string role;               // Schlüssel (AccountRoleInfo::key)
 };
 
 // Eine Sperre (Bereich "Sperren" der Webseite), Kopie von Ban aus Accounts.hpp
@@ -123,6 +147,16 @@ struct ServerStatus {
     std::string mapNotice;          // Ergebnis des letzten Karten-Auftrags (z. B. "Konto nicht gefunden")
     int mapNoticeSeq = 0;           // zählt bei jeder neuen Meldung hoch
     bool mapNoticeError = false;    // Meldung ist ein Fehler (rot anzeigen)
+    std::vector<MapEvent> events;   // alle Events, nach Beginn sortiert
+    std::string today;              // heutiger Tag des Servers (JJJJ-MM-TT, Ortszeit)
+    std::vector<std::string> missionToday;   // heute im Command Center wählbare Einsatzkarten (Dateien)
+    std::string eventNotice;        // wie mapNotice, für den Bereich "Events"
+    int eventNoticeSeq = 0;
+    bool eventNoticeError = false;
+    std::vector<RoleStatus> roles;  // Konten mit Rollen, nach Name sortiert
+    std::string roleNotice;         // wie mapNotice, für den Bereich "Rollen"
+    int roleNoticeSeq = 0;
+    bool roleNoticeError = false;
     std::vector<BanStatus> bans;
     std::string banNotice;          // wie mapNotice, für den Bereich "Sperren"
     int banNoticeSeq = 0;
@@ -176,6 +210,24 @@ public:
         return true;
     }
 
+    // Holt alle Aufträge für den Bereich "Events" (älteste zuerst).
+    bool TakeEventCommands(std::vector<EventCommand>& out) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (eventCommands_.empty()) return false;
+        out.swap(eventCommands_);
+        eventCommands_.clear();
+        return true;
+    }
+
+    // Holt alle Aufträge für den Bereich "Rollen" (älteste zuerst).
+    bool TakeRoleCommands(std::vector<RoleCommand>& out) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (roleCommands_.empty()) return false;
+        out.swap(roleCommands_);
+        roleCommands_.clear();
+        return true;
+    }
+
     // --- Web-Thread -------------------------------------------------------------
     bool GetStatus(ServerStatus& out) const {
         std::lock_guard<std::mutex> lock(m_);
@@ -216,6 +268,22 @@ public:
         return true;
     }
 
+    // false, wenn schon zu viele Aufträge warten (der Spiel-Thread hängt)
+    bool RequestEventCommand(const EventCommand& c) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (eventCommands_.size() >= 32) return false;
+        eventCommands_.push_back(c);
+        return true;
+    }
+
+    // false, wenn schon zu viele Aufträge warten (der Spiel-Thread hängt)
+    bool RequestRoleCommand(const RoleCommand& c) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (roleCommands_.size() >= 32) return false;
+        roleCommands_.push_back(c);
+        return true;
+    }
+
 private:
     mutable std::mutex m_;
     ServerStatus status_;
@@ -227,4 +295,6 @@ private:
     bool pendingShips_ = false;
     std::vector<MapCommand> mapCommands_;
     std::vector<BanCommand> banCommands_;
+    std::vector<EventCommand> eventCommands_;
+    std::vector<RoleCommand> roleCommands_;
 };

@@ -50,6 +50,7 @@ constexpr const char* SERVER_FILE = "server.txt";
 constexpr const char* SETTINGS_FILE = "settings.txt";
 constexpr const char* SHIPS_FILE = "ships.txt";
 constexpr const char* BANS_FILE = "bans.txt";
+constexpr const char* EVENTS_FILE = "events.txt";
 constexpr const char* LOGS_DIR = "logs";
 constexpr const char* MAPS_DIR = "karten";
 constexpr const char* MAP_EXT = ".karte";
@@ -312,6 +313,65 @@ bool ParseBanLine(const std::string& line, Ban& b) {
     return true;
 }
 
+// "a,b,c" -> {"a", "b", "c"} (leere Teile fallen weg)
+std::vector<std::string> SplitList(const std::string& value) {
+    std::vector<std::string> out;
+    for (size_t a = 0; a <= value.size();) {
+        const size_t b = std::min(value.find(',', a), value.size());
+        if (b > a) out.push_back(value.substr(a, b - a));
+        a = b + 1;
+    }
+    return out;
+}
+
+std::string JoinList(const std::vector<std::string>& list) {
+    std::string out;
+    for (const std::string& v : list) out += (out.empty() ? "" : ",") + v;
+    return out;
+}
+
+// Name eines Events: wird im Spiel angezeigt, also nur Zeichen der Schrift
+// (net::ValidChatText), höchstens MAX_EVENT_NAME Zeichen.
+bool ValidEventName(const std::string& name) {
+    size_t chars = 0;
+    for (unsigned char c : name)
+        if ((c & 0xC0) != 0x80) ++chars;   // Folgebytes von UTF-8 nicht mitzählen
+    return chars <= static_cast<size_t>(MAX_EVENT_NAME) && net::ValidChatText(name);
+}
+
+// Eine Zeile aus events.txt, Aufbau siehe SaveEvents. false = beschädigt.
+// Ob die Karten noch da sind, prüft Load danach.
+bool ParseEventLine(const std::string& line, MapEvent& e) {
+    if (line.rfind("event=", 0) != 0) return false;
+    std::string part[8];
+    size_t start = 6;
+    int n = 0;
+    while (n < 7) {
+        const size_t bar = line.find('|', start);
+        if (bar == std::string::npos) return false;
+        part[n++] = line.substr(start, bar - start);
+        start = bar + 1;
+    }
+    part[7] = line.substr(start);   // Name am Ende: darf selbst "|" enthalten
+    long long id = 0, created = 0;
+    if (!ParseI64(part[0], id) || id <= 0 || id > 1000000000LL || !ParseI64(part[6], created) || created < 0) return false;
+    if (!ValidEventDay(part[1]) || !ValidEventDay(part[2]) || part[2] < part[1] || !ValidEventName(part[7])) return false;
+    e.id = static_cast<int>(id);
+    e.from = part[1];
+    e.to = part[2];
+    e.maps = SplitList(part[3]);
+    e.locked = SplitList(part[4]);
+    e.by = part[5];
+    e.created = created;
+    e.name = part[7];
+    return true;
+}
+
+bool EventLess(const MapEvent& a, const MapEvent& b) {
+    if (a.from != b.from) return a.from < b.from;
+    return a.id < b.id;
+}
+
 } // namespace
 
 // ===========================================================================
@@ -474,6 +534,10 @@ bool Accounts::Load(std::string& error) {
             else if (k == "lastLogin" && ParseI64(v, i)) a.lastLogin = i;
             else if (k == "totalLogin" && ParseDouble(v, d)) a.totalLoginSeconds = ClampSeconds(d);
             else if (k == "maps") a.mapUpload = v == "1";
+            else if (k == "roles") {
+                for (const std::string& key : SplitList(v))   // unbekannte Rollen (neuere Version) fallen weg
+                    if (const AccountRoleInfo* r = FindAccountRole(key)) a.roles |= r->bit;
+            }
             else if (k == "balance" && ParseI64(v, i)) p.balance = std::max(0LL, i);
             else if (k == "delivered" && ParseI64(v, i)) p.delivered = std::max(0LL, i);
             else if (k == "cargo") ParseInt(v, p.cargo, 0, 1000000);
@@ -590,7 +654,6 @@ bool Accounts::Load(std::string& error) {
     }
     for (const auto& entry : fs::directory_iterator(mapDir, ec)) {
         if (!entry.is_regular_file(ec) || entry.path().extension() != MAP_EXT) continue;
-        if (static_cast<int>(maps_.size()) >= MAX_MAPS) break;
         std::ifstream in(entry.path(), std::ios::binary);
         std::ostringstream text;
         text << in.rdbuf();
@@ -612,6 +675,31 @@ bool Accounts::Load(std::string& error) {
         activeMap_.clear();
     }
     for (const std::string& f : released) SetMapReleased(f, true);   // fehlende Karten: einfach weglassen
+
+    // --- events.txt: Einsatzkarten für einzelne Tage -------------------------------------
+    rr = ReadLines(PathOf(EVENTS_FILE), lines, error);
+    if (rr == ReadResult::Error) return false;
+    skipped = 0;
+    for (const auto& line : lines) {
+        if (IsCommentOrEmpty(line)) continue;
+        MapEvent e;
+        if (!ParseEventLine(line, e) || events_.size() >= MAX_EVENTS || FindEvent(e.id)) { ++skipped; continue; }
+        // Nur Einsatzkarten, die es noch gibt (gelöschte fallen einfach weg)
+        for (std::vector<std::string>* list : {&e.maps, &e.locked}) {
+            list->erase(std::remove_if(list->begin(), list->end(), [&](const std::string& f) {
+                            const ServerMap* sm = FindMap(f);
+                            return !sm || sm->map.kind != MapKind::Mission;
+                        }), list->end());
+            if (list->size() > static_cast<size_t>(MAX_EVENT_MAPS)) list->resize(MAX_EVENT_MAPS);
+        }
+        nextEventId_ = std::max(nextEventId_, e.id + 1);
+        events_.push_back(std::move(e));
+    }
+    if (skipped > 0) {
+        std::cerr << "Warnung: " << skipped << " beschädigte Zeile(n) in " << EVENTS_FILE << " übersprungen\n";
+        BackupDamagedFile(PathOf(EVENTS_FILE));
+    }
+    std::sort(events_.begin(), events_.end(), EventLess);
 
     // --- logs/: Lastprotokoll --------------------------------------------------------------
     fs::create_directories(dir / LOGS_DIR, ec);
@@ -689,6 +777,12 @@ void Accounts::SaveAccounts() {
         out += " lastLogin=" + std::to_string(a.lastLogin);
         out += " totalLogin=" + NumText(a.totalLoginSeconds);
         if (a.mapUpload) out += " maps=1";
+        if (a.roles != 0) {
+            std::vector<std::string> keys;
+            for (const AccountRoleInfo& r : ACCOUNT_ROLES)
+                if (a.roles & r.bit) keys.push_back(r.key);
+            out += " roles=" + JoinList(keys);
+        }
         out += " balance=" + std::to_string(p.balance);
         out += " delivered=" + std::to_string(p.delivered);
         out += " upgrades=";
@@ -910,26 +1004,14 @@ const ServerMap* Accounts::FindMap(const std::string& file) const {
     return nullptr;
 }
 
-bool Accounts::StoreMap(const GameMap& m, std::string& file, std::string& error) {
+void Accounts::StoreMap(const GameMap& m, std::string& file) {
     // Besitzer im Dateinamen: Zwei Spieler dürfen Karten mit gleichem Namen
     // haben, ohne sich gegenseitig zu überschreiben.
     file = ToLowerAscii(m.author) + "-" + MapFileStem(m.name);
     ServerMap* existing = nullptr;
-    int own = 0;
-    for (ServerMap& sm : maps_) {
+    for (ServerMap& sm : maps_)
         if (sm.file == file) existing = &sm;
-        if (ToLowerAscii(sm.map.author) == ToLowerAscii(m.author)) ++own;
-    }
     if (!existing) {
-        if (own >= MAX_MAPS_PER_PLAYER) {
-            error = "Du hast schon " + std::to_string(MAX_MAPS_PER_PLAYER) +
-                    " Karten auf dem Server. Lade eine davon mit gleichem Namen neu hoch oder bitte den Betreiber, eine zu löschen.";
-            return false;
-        }
-        if (static_cast<int>(maps_.size()) >= MAX_MAPS) {
-            error = "Auf dem Server ist kein Platz für weitere Karten (höchstens " + std::to_string(MAX_MAPS) + ").";
-            return false;
-        }
         maps_.push_back(ServerMap{});
         existing = &maps_.back();
     }
@@ -938,7 +1020,6 @@ bool Accounts::StoreMap(const GameMap& m, std::string& file, std::string& error)
     existing->loops = static_cast<int>(FindMonorailLoops(m.pieces).size());
     std::sort(maps_.begin(), maps_.end(), [](const ServerMap& a, const ServerMap& b) { return a.map.name < b.map.name; });
     if (!dir_.empty()) QueueWrite(MapPath(file), MapToText(m), false, "Karte");
-    return true;
 }
 
 bool Accounts::RemoveMap(const std::string& file) {
@@ -963,6 +1044,70 @@ std::vector<std::string> Accounts::MapUploaders() const {
     for (const auto& entry : accounts_)   // std::map: schon nach (kleingeschriebenem) Namen sortiert
         if (entry.second.mapUpload) out.push_back(entry.second.name);
     return out;
+}
+
+std::vector<const Account*> Accounts::AccountsWithRoles() const {
+    std::vector<const Account*> out;
+    for (const auto& entry : accounts_)
+        if (entry.second.roles != 0) out.push_back(&entry.second);
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+const MapEvent* Accounts::FindEvent(int id) const {
+    for (const MapEvent& e : events_)
+        if (e.id == id) return &e;
+    return nullptr;
+}
+
+bool Accounts::SetEvent(MapEvent& e) {
+    if (e.id == 0) {
+        if (events_.size() >= MAX_EVENTS) return false;
+        e.id = nextEventId_++;
+        events_.push_back(e);
+    } else {
+        auto it = std::find_if(events_.begin(), events_.end(), [&](const MapEvent& o) { return o.id == e.id; });
+        if (it == events_.end()) return false;
+        *it = e;
+    }
+    std::sort(events_.begin(), events_.end(), EventLess);
+    return true;
+}
+
+bool Accounts::RemoveEvent(int id) {
+    auto it = std::find_if(events_.begin(), events_.end(), [&](const MapEvent& e) { return e.id == id; });
+    if (it == events_.end()) return false;
+    events_.erase(it);
+    return true;
+}
+
+bool Accounts::RemoveMapFromEvents(const std::string& file) {
+    bool changed = false;
+    for (MapEvent& e : events_)
+        for (std::vector<std::string>* list : {&e.maps, &e.locked}) {
+            const size_t before = list->size();
+            list->erase(std::remove(list->begin(), list->end(), file), list->end());
+            changed = changed || list->size() != before;
+        }
+    return changed;
+}
+
+// events.txt: eine Zeile je Event
+//   event=Nummer|Von|Bis|Karten|Gesperrt|Eingerichtet von|Anlage|Name
+// Von/Bis als JJJJ-MM-TT, Karten durch Komma getrennt (Dateinamen ohne
+// Endung enthalten keins, MapFileStem), Anlage als Unix-Zeit. Der Name steht
+// am Ende, weil er selbst "|" enthalten darf.
+void Accounts::SaveEvents() {
+    if (dir_.empty()) return;
+    std::string out = "# Mondschürfer – Events: Einsatzkarten für einzelne Tage (Verwaltungsseite, Bereich \"Events\").\n";
+    out += "# event=Nummer|Von|Bis (JJJJ-MM-TT)|zusätzliche Karten|gesperrte Karten|eingerichtet von|Anlage (Unix-Zeit)|Name\n";
+    for (const MapEvent& e : events_) {
+        out += "event=" + std::to_string(e.id) + "|" + e.from + "|" + e.to + "|" + JoinList(e.maps) + "|" +
+               JoinList(e.locked) + "|" + e.by + "|" + std::to_string(e.created) + "|" + e.name + "\n";
+    }
+    QueueWrite(PathOf(EVENTS_FILE), std::move(out), false, "Events");
 }
 
 // ---------------------------------------------------------------------------

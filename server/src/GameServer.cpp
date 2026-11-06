@@ -156,6 +156,19 @@ constexpr double PACKET_OVERHEAD_BYTES = 40.0;    // UDP 8 + IPv4 20 + ENet-Kopf
 
 int64_t UnixNow() { return static_cast<int64_t>(std::time(nullptr)); }
 
+// Heutiger Tag in der Ortszeit des Servers ("JJJJ-MM-TT", Events)
+std::string LocalDay(std::time_t t) {
+    std::tm tm{};
+#if defined(_WIN32)
+    tm = *std::localtime(&t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char day[16];
+    std::strftime(day, sizeof(day), "%Y-%m-%d", &tm);
+    return day;
+}
+
 uint32_t RandomSeed() {
     uint8_t b[4];
     crypto::RandomBytes(b, sizeof(b));
@@ -434,6 +447,7 @@ void GameServer::InitWorld() {
     crypto::RandomBytes(dummyKey_.data(), dummyKey_.size());
     UpdateMapData();
     ApplyMapToWorld();
+    UpdateMissionMaps();
 }
 
 // Die Hauptschleife. Kein "Busy-Waiting": enet_host_service schläft im
@@ -534,6 +548,8 @@ void GameServer::Step() {
     ApplyShipsRequest();
     ApplyMapCommands();
     ApplyBanCommands();
+    ApplyEventCommands();
+    ApplyRoleCommands();
 
     for (auto& up : clients_)
         if (up->isBot) BotThink(*up);
@@ -904,6 +920,14 @@ void GameServer::Housekeeping() {
         for (auto it = bannedLogAt_.begin(); it != bannedLogAt_.end();)
             it = now - it->second >= 60.0 ? bannedLogAt_.erase(it) : std::next(it);
         ExpireBans();
+        // Neuer Tag: andere Events gelten, also andere Ziele im Command Center
+        if (LocalDay(std::time(nullptr)) != missionDay_) {
+            const int rev = missionMapsRev_;
+            UpdateMissionMaps();
+            if (rev != missionMapsRev_)
+                Log(Fmt("Neuer Tag %s: %d Einsatzkarte(n) im Command Center wählbar", missionDay_.c_str(),
+                        static_cast<int>(missionFiles_.size())));
+        }
 
         // Für den Betreiber: Hinweise auf einen Angriff auf die Verbindungsplätze
         // (höchstens eine Meldung pro Minute, nicht eine pro Paket).
@@ -1351,7 +1375,7 @@ void GameServer::HandleLoginProof(Client& c, const net::LoginProofMsg& m) {
 }
 
 // Karte aus dem Karteneditor ("An Server senden"). Anmeldedaten wie bei
-// LoginProof prüfen, dann Berechtigung (Verwaltungsseite) und Obergrenzen
+// LoginProof prüfen, dann Berechtigung (Verwaltungsseite) und speichern
 // (Accounts::StoreMap). Angemeldet wird dabei nicht: Der Client bleibt in der
 // Lobby und trennt nach der Antwort selbst.
 void GameServer::HandleMapUpload(Client& c, const net::MapUploadMsg& m) {
@@ -1363,19 +1387,20 @@ void GameServer::HandleMapUpload(Client& c, const net::MapUploadMsg& m) {
     const size_t first = map.name.find_first_not_of(' ');   // Leerzeichen am Rand weg
     map.name = first == std::string::npos ? std::string() : map.name.substr(first, map.name.find_last_not_of(' ') - first + 1);
     map.author = acc->name;
-    std::string file, error;
+    std::string file;
     if (!acc->mapUpload) {
         res.text = "Du darfst auf diesem Server keine Karten hochladen. Der Betreiber kann es auf der Verwaltungsseite erlauben.";
     } else if (map.name.empty()) {
         res.text = "Die Karte braucht einen Namen.";
-    } else if (!accounts_.StoreMap(map, file, error)) {
-        res.text = error;
     } else {
+        accounts_.StoreMap(map, file);
         res.ok = true;
         res.text = "Karte \"" + map.name + "\" hochgeladen. Der Betreiber kann sie auf der Verwaltungsseite " +
                    (map.kind == MapKind::Mission ? "freigeben." : "aktivieren.");
-        // Neue Fassung einer freigegebenen Einsatzkarte: neue Vorschau im Command Center
-        if (const ServerMap* sm = accounts_.FindMap(file); sm && sm->released) ++missionMapsRev_;
+        // Die Kartenart kann sich geändert haben. Neue Fassung einer heute
+        // wählbaren Einsatzkarte: neue Vorschau im Command Center.
+        UpdateMissionMaps();
+        if (MissionAvailable(file)) ++missionMapsRev_;
         Log(Fmt("%s hat die Karte \"%s\" hochgeladen (%d Teile, Datei %s)", acc->name.c_str(), map.name.c_str(),
                 static_cast<int>(map.pieces.size()), file.c_str()));
         if (file == accounts_.ActiveMap()) {
@@ -1573,10 +1598,9 @@ void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
                 }
             if (!team->target.empty()) {
                 // Einsatzkarte: Platz für eine weitere Instanz? (StartInstance prüft es nach der Anwahl noch einmal)
-                const ServerMap* sm = accounts_.FindMap(team->target);
-                if (!sm || !sm->released) {
+                if (!MissionAvailable(team->target)) {
                     ForgetTarget(team->target);
-                    world_.Notify(*ps, "Diese Einsatzkarte ist nicht mehr freigegeben.", bad);
+                    world_.Notify(*ps, "Diese Einsatzkarte ist nicht mehr wählbar.", bad);
                     break;
                 }
                 if (static_cast<int>(instances_.size()) >= settings_.maxInstances) {
@@ -1613,9 +1637,8 @@ void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
             if (team->members.front() != ps->id || TeamBusy(*team)) break;
             std::string want;   // "" = Mondkarte
             if (m.param > 0) {
-                const std::vector<const ServerMap*> maps = MissionMaps();
-                if (static_cast<size_t>(m.param) > maps.size()) break;
-                want = maps[m.param - 1]->file;
+                if (static_cast<size_t>(m.param) > missionFiles_.size()) break;
+                want = missionFiles_[m.param - 1];
             }
             if (want != team->target) {
                 team->target = want;
@@ -1849,10 +1872,47 @@ void GameServer::LeaveTeam(int playerId) {
 // ===========================================================================
 std::vector<const ServerMap*> GameServer::MissionMaps() const {
     std::vector<const ServerMap*> out;
-    for (const ServerMap& sm : accounts_.Maps())
-        if (sm.released && sm.map.kind == MapKind::Mission && out.size() < static_cast<size_t>(net::MAX_MISSION_MAPS))
-            out.push_back(&sm);
+    for (const std::string& f : missionFiles_)
+        if (const ServerMap* sm = accounts_.FindMap(f)) out.push_back(sm);
     return out;
+}
+
+// Ziele im Command Center für heute (shared/MapEvents.hpp): freigegebene
+// Einsatzkarten und die Karten der heutigen Events, ohne die heute
+// gesperrten. Reihenfolge wie die Kartenliste (nach Name), höchstens
+// net::MAX_MISSION_MAPS; sind es mehr, gehen die freigegebenen vor (davon
+// gibt es höchstens so viele, siehe ApplyMapCommands). Ändert sich etwas, bekommen die Clients die neue
+// Liste (MissionMaps); Teams, deren Ziel wegfällt, zielen wieder auf die
+// Mondkarte. Laufende Einsätze gehen zu Ende.
+void GameServer::UpdateMissionMaps() {
+    missionDay_ = LocalDay(std::time(nullptr));
+    std::vector<std::string> extra, locked;
+    for (const MapEvent& e : accounts_.Events())
+        if (EventOnDay(e, missionDay_)) {
+            extra.insert(extra.end(), e.maps.begin(), e.maps.end());
+            locked.insert(locked.end(), e.locked.begin(), e.locked.end());
+        }
+    auto has = [](const std::vector<std::string>& v, const std::string& f) { return std::find(v.begin(), v.end(), f) != v.end(); };
+    auto usable = [&](const ServerMap& sm) { return sm.map.kind == MapKind::Mission && !has(locked, sm.file); };
+    long long quota = net::MAX_MISSION_MAPS;   // Plätze für Karten, die nur ein Event zulässt
+    for (const ServerMap& sm : accounts_.Maps())
+        if (sm.released && usable(sm)) --quota;
+    std::vector<std::string> files;
+    for (const ServerMap& sm : accounts_.Maps()) {
+        if (!usable(sm) || files.size() >= static_cast<size_t>(net::MAX_MISSION_MAPS)) continue;
+        if (sm.released) files.push_back(sm.file);
+        else if (has(extra, sm.file) && quota-- > 0) files.push_back(sm.file);
+    }
+    if (files == missionFiles_) return;
+    for (const std::string& f : missionFiles_)
+        if (!has(files, f)) ForgetTarget(f);
+    missionFiles_ = std::move(files);
+    ++missionMapsRev_;
+    teamsChanged_ = true;
+}
+
+bool GameServer::MissionAvailable(const std::string& file) const {
+    return std::find(missionFiles_.begin(), missionFiles_.end(), file) != missionFiles_.end();
 }
 
 void GameServer::ForgetTarget(const std::string& file) {
@@ -1876,8 +1936,8 @@ bool GameServer::StartInstance(SgTeam& t) {
             if (PlayerState* o = world_.FindPlayer(id)) world_.Notify(*o, text, Color{255, 170, 120, 255});
     };
     const ServerMap* sm = accounts_.FindMap(t.target);
-    if (!sm || !sm->released || sm->map.kind != MapKind::Mission) {
-        notifyAll("Diese Einsatzkarte ist nicht mehr freigegeben.");
+    if (!sm || !MissionAvailable(t.target) || sm->map.kind != MapKind::Mission) {
+        notifyAll("Diese Einsatzkarte ist nicht mehr wählbar.");
         ForgetTarget(t.target);
         return false;
     }
@@ -2652,13 +2712,12 @@ net::HighscoresMsg GameServer::MakeHighscores() const {
 net::TeamsMsg GameServer::MakeTeams(const PlayerState& ps) const {
     net::TeamsMsg m;
     m.moonGate = !world_.stargates.empty();
-    const std::vector<const ServerMap*> maps = MissionMaps();
     for (const SgTeam& t : teams_) {
         net::TeamEntry e;
         e.number = static_cast<uint8_t>(std::clamp(t.number, 0, 255));
         e.state = t.dialT >= 0.0f ? 1 : TeamBusy(t) ? 2 : 0;
-        for (size_t i = 0; i < maps.size() && !t.target.empty(); ++i)
-            if (maps[i]->file == t.target) e.target = static_cast<uint8_t>(i + 1);
+        for (size_t i = 0; i < missionFiles_.size() && !t.target.empty(); ++i)
+            if (missionFiles_[i] == t.target) e.target = static_cast<uint8_t>(i + 1);
         e.dialT = std::max(0.0f, t.dialT);
         for (int id : t.members) {
             const PlayerState* o = world_.FindPlayer(id);
@@ -2972,8 +3031,8 @@ void GameServer::ApplyMapCommands() {
                     accounts_.RemoveMap(cmd.arg);
                     MapNotice("Karte \"" + name + "\" gelöscht." + (wasActive ? " Es gilt wieder die Standardkarte." : ""));
                     if (mission) {   // nicht mehr im Command Center (laufende Einsätze dort gehen zu Ende)
-                        ForgetTarget(cmd.arg);
-                        ++missionMapsRev_;
+                        if (accounts_.RemoveMapFromEvents(cmd.arg)) accounts_.SaveEvents();
+                        UpdateMissionMaps();
                         accounts_.SaveServerData();
                     }
                     if (!wasActive) break;
@@ -3001,13 +3060,26 @@ void GameServer::ApplyMapCommands() {
                 const bool release = cmd.kind == MapCommand::Kind::Release;
                 const std::string name = sm->map.name;
                 if (sm->released == release) break;
+                if (release) {
+                    // So viele Ziele zeigt das Command Center höchstens (MissionMapsMsg)
+                    const auto released = std::count_if(accounts_.Maps().begin(), accounts_.Maps().end(), [](const ServerMap& o) {
+                        return o.released && o.map.kind == MapKind::Mission;
+                    });
+                    if (released >= net::MAX_MISSION_MAPS) {
+                        MapNotice(Fmt("Höchstens %d Einsatzkarten können dauerhaft freigegeben sein. Erst eine sperren "
+                                      "oder die Karte mit einem Event für einzelne Tage einrichten.", net::MAX_MISSION_MAPS),
+                                  true);
+                        break;
+                    }
+                }
                 accounts_.SetMapReleased(cmd.arg, release);
                 accounts_.SaveServerData();
-                if (!release) ForgetTarget(cmd.arg);
-                ++missionMapsRev_;
-                teamsChanged_ = true;
+                UpdateMissionMaps();
                 MapNotice("Einsatzkarte \"" + name + "\" ist " +
-                          (release ? "für die SG-Teams freigegeben." : "gesperrt. Laufende Einsätze dort gehen noch zu Ende."));
+                          (release ? "für die SG-Teams freigegeben." : "gesperrt. Laufende Einsätze dort gehen noch zu Ende.") +
+                          (release != MissionAvailable(cmd.arg)
+                               ? std::string(release ? " Heute sperrt sie ein Event." : " Heute bleibt sie über ein Event wählbar.")
+                               : std::string()));
                 break;
             }
             case MapCommand::Kind::Allow:
@@ -3055,6 +3127,88 @@ void GameServer::MapNotice(const std::string& text, bool error) {
     mapNoticeError_ = error;
     ++mapNoticeSeq_;
     Log("Karten: " + text);
+}
+
+// Bereich "Events" der Webseite. Ein Event, das heute gilt, wirkt sofort auf
+// die Ziele im Command Center (UpdateMissionMaps).
+void GameServer::ApplyEventCommands() {
+    std::vector<EventCommand> cmds;
+    if (!shared_ || !shared_->TakeEventCommands(cmds)) return;
+    for (EventCommand& cmd : cmds) {
+        MapEvent& e = cmd.event;
+        const MapEvent* old = e.id != 0 ? accounts_.FindEvent(e.id) : nullptr;
+        if (e.id != 0 && !old) {
+            EventNotice("Dieses Event gibt es nicht mehr.", true);
+            continue;
+        }
+        if (cmd.kind == EventCommand::Kind::Delete) {
+            const std::string name = old ? old->name : std::string();
+            if (!old || !accounts_.RemoveEvent(e.id)) continue;
+            accounts_.SaveEvents();
+            UpdateMissionMaps();
+            EventNotice("Event \"" + name + "\" gelöscht.");
+            continue;
+        }
+        // Nur Einsatzkarten, die es (noch) gibt
+        bool missing = false;
+        for (const std::vector<std::string>* list : {&e.maps, &e.locked})
+            for (const std::string& f : *list) {
+                const ServerMap* sm = accounts_.FindMap(f);
+                if (!sm || sm->map.kind != MapKind::Mission) missing = true;
+            }
+        if (missing) {
+            EventNotice("Eine der Karten gibt es nicht mehr oder sie ist keine Einsatzkarte.", true);
+            continue;
+        }
+        const bool isNew = !old;
+        e.by = old ? old->by : std::string("Verwaltungsseite");
+        e.created = old ? old->created : UnixNow();
+        if (!accounts_.SetEvent(e)) {
+            EventNotice(Fmt("Es gibt schon %d Events. Bitte zuerst alte löschen.", static_cast<int>(Accounts::MAX_EVENTS)), true);
+            continue;
+        }
+        accounts_.SaveEvents();
+        UpdateMissionMaps();
+        EventNotice("Event \"" + e.name + "\" " + (isNew ? "eingerichtet." : "gespeichert.") +
+                    (EventOnDay(e, missionDay_) ? " Es gilt schon heute." : ""));
+    }
+}
+
+void GameServer::EventNotice(const std::string& text, bool error) {
+    eventNotice_ = text;
+    eventNoticeError_ = error;
+    ++eventNoticeSeq_;
+    Log("Events: " + text);
+}
+
+// Bereich "Rollen" der Webseite. Die Rolle "Event Manager" nutzt später der
+// Event-Editor im Spiel; auf dem Server ändert sich dabei sonst nichts.
+void GameServer::ApplyRoleCommands() {
+    std::vector<RoleCommand> cmds;
+    if (!shared_ || !shared_->TakeRoleCommands(cmds)) return;
+    for (const RoleCommand& cmd : cmds) {
+        const AccountRoleInfo* role = FindAccountRole(cmd.role);
+        Account* acc = accounts_.Find(cmd.name);
+        if (!role) {
+            RoleNotice("Diese Rolle gibt es nicht.", true);
+            continue;
+        }
+        if (!acc) {
+            RoleNotice("Es gibt kein Konto \"" + cmd.name + "\".", true);
+            continue;
+        }
+        if (cmd.grant) acc->roles |= role->bit;
+        else acc->roles &= ~role->bit;
+        accounts_.SaveAccounts();
+        RoleNotice(acc->name + (cmd.grant ? " ist jetzt " : " ist nicht mehr ") + role->label + ".");
+    }
+}
+
+void GameServer::RoleNotice(const std::string& text, bool error) {
+    roleNotice_ = text;
+    roleNoticeError_ = error;
+    ++roleNoticeSeq_;
+    Log("Rollen: " + text);
 }
 
 // Bereich "Sperren" der Webseite. Eine neue Sperre wirkt sofort: Wer
@@ -3474,6 +3628,22 @@ void GameServer::PublishStatus() {
     st.mapNotice = mapNotice_;
     st.mapNoticeSeq = mapNoticeSeq_;
     st.mapNoticeError = mapNoticeError_;
+    st.events = accounts_.Events();
+    st.today = missionDay_;
+    st.missionToday = missionFiles_;
+    st.eventNotice = eventNotice_;
+    st.eventNoticeSeq = eventNoticeSeq_;
+    st.eventNoticeError = eventNoticeError_;
+    for (const Account* a : accounts_.AccountsWithRoles()) {
+        RoleStatus rs;
+        rs.name = a->name;
+        for (const AccountRoleInfo& r : ACCOUNT_ROLES)
+            if (a->roles & r.bit) rs.roles.push_back(r.key);
+        st.roles.push_back(rs);
+    }
+    st.roleNotice = roleNotice_;
+    st.roleNoticeSeq = roleNoticeSeq_;
+    st.roleNoticeError = roleNoticeError_;
     const int64_t unixNow = UnixNow();
     for (const Ban& b : accounts_.Bans()) {
         if (b.until > 0 && b.until <= unixNow) continue;   // abgelaufen, wird beim nächsten ExpireBans entfernt

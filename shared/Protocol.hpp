@@ -680,10 +680,10 @@ struct TeamsMsg {
     float seconds = 0;
 };
 
-// Freigegebene Einsatzkarten (Verwaltungsseite), die Ziele im Command Center
-// mit Vorschaubild. Vor dem ersten Teams und bei jeder Änderung; die
-// Reihenfolge gilt für TeamAction Target und TeamEntry::target.
-constexpr int MAX_MISSION_MAPS = 20;   // >= Accounts::MAX_MAPS
+// Heute wählbare Einsatzkarten (freigegeben oder über ein Event, Verwaltungsseite),
+// die Ziele im Command Center mit Vorschaubild. Vor dem ersten Teams und bei
+// jeder Änderung; die Reihenfolge gilt für TeamAction Target und TeamEntry::target.
+constexpr int MAX_MISSION_MAPS = 20;   // so viele auf einmal; der Server lässt nicht mehr dauerhaft freigeben
 struct MissionMapsMsg {
     std::vector<GameMap> maps;    // ohne author
 };

@@ -727,11 +727,13 @@ Container `/data` (Docker-Volume), einstellbar mit `MONDSCHUERFER_DATA` oder `--
 
 | Datei | Inhalt |
 |---|---|
-| `accounts.txt` | je Konto: Name (Original-Schreibweise), Schlüssel (hex), angelegt, letzte Anmeldung, gesamte Anmeldezeit, Fortschritt (Kontostand, Aufrüstungen, Ladung, Schild, Schiffszeit, Rundenzeit, Runde, Abschüsse, Abstürze, Ziele) |
+| `accounts.txt` | je Konto: Name (Original-Schreibweise), Schlüssel (hex), angelegt, letzte Anmeldung, gesamte Anmeldezeit, Rechte (Karten hochladen, Rollen wie `roles=event`), Fortschritt (Kontostand, Aufrüstungen, Ladung, Schild, Schiffszeit, Rundenzeit, Runde, Abschüsse, Abstürze, Ziele) |
 | `highscores.txt` | jede erreichte Zielrunde eine Zeile |
 | `server.txt` | Server-Salz, Welt-Seed, insgesamt abgelieferte Ressourcen (Ausbaustufe der Stationen) |
 | `settings.txt` | nur, wenn auf der Webseite Einstellungen gespeichert wurden |
 | `bans.txt` | gesperrte Konten und IP-Adressen (Bereich „Sperren“ der Webseite) mit Grund, Anlage und Ende |
+| `events.txt` | Events (Bereich „Events“): je Zeile Nummer, erster und letzter Tag, zusätzlich wählbare und gesperrte Einsatzkarten, wer es eingerichtet hat, Anlage, Name ([shared/MapEvents.hpp](../shared/MapEvents.hpp)) |
+| `karten/` | hochgeladene Karten, eine `.karte`-Datei je Karte (ohne Obergrenze) |
 | `logs/last-JJJJ-MM-TT.csv` | Lastprotokoll, eine Zeile je Minute (Spieler, Zuschauer, Verbindungen, Schrittzeit, CPU, RAM, Netzwerk, Lastspitze; Trennzeichen `;`, Dezimalkomma); Dateien älter als 30 Tage löscht der Server |
 | `*.defekt-…` | Kopie einer Datei, in der beim Laden kaputte Zeilen übersprungen wurden |
 
@@ -773,6 +775,8 @@ Die Webseite besteht aus drei statischen Dateien ([server/web/](../server/web/):
 | `POST /api/ships` | Schiffe des Raumschiffsverkäufers ändern oder hinzufügen (gespeichert in `ships.txt`) |
 | `POST /api/maps` | Bereich „Karten“: Karte aktivieren/löschen, Hochladen für einen Spieler erlauben/entziehen |
 | `POST /api/bans` | Bereich „Sperren“: Konto oder IP-Adresse/-Bereich sperren, entsperren, Spieler trennen |
+| `POST /api/events` | Bereich „Events“: Event einrichten, ändern oder löschen (Einsatzkarten für einzelne Tage) |
+| `POST /api/roles` | Bereich „Rollen“: einem Konto eine Rolle (Event Manager) zuweisen oder entziehen |
 | `GET /api/history` | Bereich „Verlauf“: Lastprotokoll der letzten 24 Stunden, die größten Lastspitzen, Liste der Tagesdateien |
 | `GET /api/logs/last-JJJJ-MM-TT.csv` | eine Tagesdatei des Lastprotokolls herunterladen |
 
@@ -789,7 +793,7 @@ bestimmte Gefahr:
 | nach 5 Fehlversuchen ist die IP-Adresse 60 s gesperrt (Antwort 429), jede weitere Sperre doppelt so lang, höchstens 15 min | Passwort durchprobieren |
 | POST nur mit Header `X-Requested-With: mondschuerfer` und passendem `Origin`/`Host` | **CSRF**: eine fremde Webseite, die im Browser des angemeldeten Betreibers heimlich ein Formular abschickt |
 | Sicherheits-Header: `Content-Security-Policy`, `X-Frame-Options: DENY`, `nosniff`, `Cache-Control: no-store` | eingeschleuste Skripte, Einbetten in fremde Seiten (Clickjacking), Zwischenspeichern von Daten |
-| genau elf feste Pfade und die Tagesdateien des Lastprotokolls (Name nur aus Ziffern, fest im Muster), kein allgemeines Ausliefern eines Ordners | Lesen fremder Dateien mit `/../` |
+| genau dreizehn feste Pfade und die Tagesdateien des Lastprotokolls (Name nur aus Ziffern, fest im Muster), kein allgemeines Ausliefern eines Ordners | Lesen fremder Dateien mit `/../` |
 | `docker-compose.yml` gibt Port 8080 nur auf `127.0.0.1` frei | Mitlesen im Netz: Basic Auth schickt das Passwort bei jeder Anfrage nur Base64-kodiert, und der Server spricht kein HTTPS |
 | optionaler HTTPS-Vorbau (Caddy, Profil `online`) | Zugriff über das Internet ohne Klartext-Passwort |
 

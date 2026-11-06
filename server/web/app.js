@@ -10,7 +10,9 @@
      3. Der Bereich "Schiffe" schickt die ganze Schiffsliste per POST an
         /api/ships (eigenes Speichern, unabhängig von den Spielparametern).
      4. Der Bereich "Karten" schickt jede Aktion (Karte aktivieren/löschen,
-        Hochladen erlauben/entziehen) einzeln per POST an /api/maps.
+        Hochladen erlauben/entziehen) einzeln per POST an /api/maps; die
+        Liste lässt sich nach Spieler und Kartenname filtern. Ebenso die
+        Bereiche "Events" (/api/events) und "Rollen" (/api/roles).
      5. Der Bereich "Verlauf" fragt einmal pro Minute GET /api/history ab
         (Lastprotokoll der letzten 24 Stunden) und zeichnet daraus Diagramme.
 
@@ -56,6 +58,7 @@
     const MOON_NAMES = { grey: 'Grau', orange: 'Orange-Rot', blue: 'Blau' };
     const REBUILD_TEXT = 'Die Welt wird neu aufgebaut, alle Spieler starten an einer Station neu, ihr Fortschritt bleibt erhalten.';
     const SAVE_SETTLE_MS = 6000;     // so lange nach dem Speichern auf die neuen Werte im Status warten
+    const MAPS_SHOWN = 100;          // Bereich "Karten": höchstens so viele Zeilen (mehr findet der Filter)
 
     // Zahlen deutsch formatieren (12.345 und 4,2)
     const nf0 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
@@ -84,6 +87,15 @@
         bansKey: '',           // Vergleichswert für den Bereich "Sperren"
         bansBusy: false,       // läuft gerade ein POST /api/bans?
         banNoticeSeq: null,    // wie mapNoticeSeq, für den Bereich "Sperren"
+        authorsKey: '',        // Vergleichswert für die Auswahl "Hochgeladen von"
+        eventsKey: '',         // Vergleichswert für den Bereich "Events"
+        eventChecksKey: '',    // Vergleichswert für die Kartenauswahl im Event-Formular
+        eventsBusy: false,     // läuft gerade ein POST /api/events?
+        eventNoticeSeq: null,
+        eventEditId: 0,        // gerade bearbeitetes Event (0 = neues)
+        rolesKey: '',          // Vergleichswert für den Bereich "Rollen"
+        rolesBusy: false,      // läuft gerade ein POST /api/roles?
+        roleNoticeSeq: null,
         historyTimer: 0,       // nächste Abfrage von /api/history
         historyAt: 0,          // Zeitpunkt (ms) der letzten Abfrage von /api/history
         charts: [],            // Diagramme im Bereich "Verlauf" (siehe buildChart)
@@ -245,6 +257,8 @@
         syncForm(d);
         syncShips(d);
         renderMaps(d);
+        renderEvents(d);
+        renderRoles(d);
         renderBans(d);
     }
 
@@ -1038,19 +1052,49 @@
         return tr;
     }
 
+    // Auswahl "Hochgeladen von": alle Spieler, die Karten auf dem Server haben
+    function syncAuthorFilter(maps) {
+        const authors = [...new Set(maps.map((m) => m.author || ''))].filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'de', { sensitivity: 'base' }));
+        const key = JSON.stringify(authors);
+        if (key === state.authorsKey) return;
+        state.authorsKey = key;
+        const sel = $('maps-filter-author');
+        const keep = sel.value;
+        const opts = [el('option', '', 'alle Spieler')];
+        opts[0].value = '';
+        authors.forEach((a) => { const o = el('option', '', a); o.value = a; opts.push(o); });
+        sel.replaceChildren(...opts);
+        sel.value = authors.includes(keep) ? keep : '';
+    }
+
     function renderMaps(d) {
         const maps = Array.isArray(d.maps) ? d.maps : [];
         const uploaders = Array.isArray(d.mapUploaders) ? d.mapUploaders : [];
         const active = d.activeMap || '';
-        const key = JSON.stringify([maps, uploaders, active, state.mapsBusy]);
+        syncAuthorFilter(maps);
+        const author = $('maps-filter-author').value;
+        const text = $('maps-filter-name').value.trim().toLocaleLowerCase('de');
+        const key = JSON.stringify([maps, uploaders, active, state.mapsBusy, author, text]);
         if (key !== state.mapsKey) {
             state.mapsKey = key;
             const rows = document.createDocumentFragment();
             // Die Standardkarte (Zufall aus dem Seed) steht immer oben und lässt sich nicht löschen.
-            rows.appendChild(mapRow({ file: '', name: 'Standardkarte (Zufall)' }, active === ''));
-            maps.forEach((m) => rows.appendChild(mapRow(m, m.file === active)));
+            const filtered = author !== '' || text !== '';
+            if (!filtered) rows.appendChild(mapRow({ file: '', name: 'Standardkarte (Zufall)' }, active === ''));
+            const hits = maps.filter((m) => (author === '' || m.author === author) &&
+                (text === '' || String(m.name || '').toLocaleLowerCase('de').includes(text)));
+            hits.slice(0, MAPS_SHOWN).forEach((m) => rows.appendChild(mapRow(m, m.file === active)));
             $('maps-body').replaceChildren(rows);
             setText('maps-count', maps.length === 1 ? '1 Karte hochgeladen' : `${maps.length} Karten hochgeladen`);
+            const note = $('maps-filter-note');
+            if (hits.length > MAPS_SHOWN) {
+                note.textContent = `${nf0.format(hits.length)} Karten passen, die ersten ${MAPS_SHOWN} werden gezeigt. Filter verwenden, um die übrigen zu finden.`;
+            } else if (filtered) {
+                note.textContent = hits.length === 0 ? 'Keine Karte passt zum Filter.'
+                    : `${nf0.format(hits.length)} von ${nf0.format(maps.length)} Karten passen zum Filter.`;
+            }
+            note.hidden = !(filtered || hits.length > MAPS_SHOWN);
 
             const list = document.createDocumentFragment();
             uploaders.forEach((n) => {
@@ -1130,6 +1174,285 @@
         }
         input.value = '';
         postMaps({ action: 'allow', name });
+    }
+
+    // =========================================================================
+    // Bereiche "Events" und "Rollen"
+    // Wie bei den Karten führt der Spiel-Thread jeden Auftrag im nächsten
+    // Schritt aus und meldet das Ergebnis mit dem nächsten Status
+    // (eventNotice bzw. roleNotice, ...Seq zählt bei jeder Meldung hoch).
+    // =========================================================================
+    const dayText = (day) => String(day || '').split('-').reverse().join('.');   // 2026-11-06 -> 06.11.2026
+
+    function showNote(id, text, kind) {
+        const box = $(id);
+        box.textContent = text;
+        box.className = `note ${kind === 'ok' ? 'note-ok' : 'note-error'}`;
+        box.hidden = false;
+    }
+
+    // POST an url; liefert true, wenn der Server den Auftrag angenommen hat.
+    async function postForm(url, fields, msgId) {
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'X-Requested-With': 'mondschuerfer',   // CSRF-Schutz wie bei den Spielparametern
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    Accept: 'application/json',
+                },
+                body: new URLSearchParams(fields).toString(),
+            });
+            let data = null;
+            try { data = await res.json(); } catch (e) { data = null; }
+            if (res.ok && data && data.ok) {
+                showNote(msgId, data.message || 'Wird übernommen …', 'ok');
+                setTimeout(poll, 1200);   // der Status mit dem Ergebnis kommt spätestens nach einer Sekunde
+                return true;
+            }
+            if (res.status === 401) showNote(msgId, 'Nicht angemeldet – bitte die Seite neu laden.', 'error');
+            else showNote(msgId, (data && data.error) || `Fehlgeschlagen (HTTP ${res.status}).`, 'error');
+        } catch (e) {
+            showNote(msgId, 'Fehlgeschlagen: keine Verbindung zum Server.', 'error');
+        }
+        return false;
+    }
+
+    // Neue Meldung des Spiel-Threads zeigen (nach einem Neustart zählt er wieder ab 0)
+    function noticeFromStatus(d, prefix, seqKey, msgId) {
+        const seq = Number(d[`${prefix}NoticeSeq`]) || 0;
+        if (state[seqKey] !== null && seq > state[seqKey] && d[`${prefix}Notice`]) {
+            showNote(msgId, d[`${prefix}Notice`], d[`${prefix}NoticeError`] ? 'error' : 'ok');
+        }
+        state[seqKey] = seq;
+    }
+
+    function smallButton(label, className, busy, onClick) {
+        const b = el('button', className, label);
+        b.type = 'button';
+        b.disabled = busy;
+        b.addEventListener('click', onClick);
+        return b;
+    }
+
+    function missionMaps(d) {
+        return (Array.isArray(d.maps) ? d.maps : []).filter((m) => m.mission);
+    }
+
+    // Dateinamen -> "Name A, Name B" (gelöschte Karten erscheinen nicht mehr in Events)
+    function mapNames(d, files) {
+        const byFile = new Map((Array.isArray(d.maps) ? d.maps : []).map((m) => [m.file, m.name]));
+        const names = (files || []).map((f) => byFile.get(f) || f);
+        return names.length ? names.join(', ') : '–';
+    }
+
+    function eventRow(d, e) {
+        const today = d.today || '';
+        const tr = document.createElement('tr');
+        tr.appendChild(cell('Event', 'name', e.name));
+        const range = e.from === e.to ? dayText(e.from) : `${dayText(e.from)} – ${dayText(e.to)}`;
+        const when = el('div', '', range);
+        if (today && e.from <= today && today <= e.to) when.appendChild(el('span', 'chip chip-fly', 'heute'));
+        else if (today && e.to < today) when.appendChild(el('span', 'line2', 'vorbei'));
+        else when.appendChild(el('span', 'chip chip-dock', 'geplant'));
+        tr.appendChild(cell('Zeitraum', '', when));
+        tr.appendChild(cell('Wählbar', 'list', mapNames(d, e.maps)));
+        tr.appendChild(cell('Gesperrt', 'list', mapNames(d, e.locked)));
+        tr.appendChild(cell('Eingerichtet von', '', e.by || '–'));
+        const actions = el('div', 'actions');
+        actions.appendChild(smallButton('Bearbeiten', 'btn', state.eventsBusy, () => editEvent(e)));
+        actions.appendChild(smallButton('Löschen', 'btn btn-ghost', state.eventsBusy, () => onEventDelete(e)));
+        tr.appendChild(cell('Aktion', '', actions));
+        return tr;
+    }
+
+    // Kartenauswahl im Formular: nur neu bauen, wenn sich die Einsatzkarten
+    // ändern; schon gesetzte Häkchen bleiben erhalten.
+    function syncEventChecks(d) {
+        const maps = missionMaps(d);
+        const key = JSON.stringify(maps.map((m) => [m.file, m.name, m.author, m.released]));
+        if (key === state.eventChecksKey) return;
+        state.eventChecksKey = key;
+        for (const [id, kind] of [['event-maps', 'maps'], ['event-locked', 'locked']]) {
+            const box = $(id);
+            const checked = new Set([...box.querySelectorAll('input:checked')].map((i) => i.value));
+            const items = maps.map((m) => {
+                const label = el('label', 'check');
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.value = m.file;
+                input.dataset.list = kind;
+                input.checked = checked.has(m.file);
+                label.appendChild(input);
+                const span = el('span', '', m.name);
+                span.appendChild(el('span', 'line2', `${m.author || '–'} · ${m.released ? 'freigegeben' : 'nicht freigegeben'}`));
+                label.appendChild(span);
+                return label;
+            });
+            box.replaceChildren(...items);
+        }
+        $('event-nomaps').hidden = maps.length > 0;
+        $('event-lists').hidden = maps.length === 0;
+    }
+
+    function renderEvents(d) {
+        const events = Array.isArray(d.events) ? d.events : [];
+        syncEventChecks(d);
+        const key = JSON.stringify([events, d.today, d.missionToday, missionMaps(d).map((m) => [m.file, m.name]), state.eventsBusy]);
+        if (key !== state.eventsKey) {
+            state.eventsKey = key;
+            const rows = document.createDocumentFragment();
+            events.forEach((e) => rows.appendChild(eventRow(d, e)));
+            $('events-body').replaceChildren(rows);
+            setText('events-count', events.length === 1 ? '1 Event' : `${events.length} Events`);
+            $('events-empty').hidden = events.length > 0;
+            $('events-body').closest('table').hidden = events.length === 0;
+            const today = Array.isArray(d.missionToday) ? d.missionToday : [];
+            setText('events-today', `Heute (${dayText(d.today)}) im Command Center wählbar: Mondkarte` +
+                (today.length ? `, ${mapNames(d, today)}` : ' (keine Einsatzkarte)'));
+            $('btn-event-save').disabled = state.eventsBusy;
+        }
+        noticeFromStatus(d, 'event', 'eventNoticeSeq', 'events-msg');
+    }
+
+    function checkedFiles(id) {
+        return [...$(id).querySelectorAll('input:checked')].map((i) => i.value);
+    }
+
+    // Eine Karte ist entweder wählbar oder gesperrt: das andere Häkchen weg
+    function onEventCheck(ev) {
+        const input = ev.target;
+        if (!input || input.type !== 'checkbox' || !input.checked) return;
+        const other = input.dataset.list === 'maps' ? 'event-locked' : 'event-maps';
+        $(other).querySelectorAll('input').forEach((i) => { if (i.value === input.value) i.checked = false; });
+    }
+
+    function resetEventForm() {
+        state.eventEditId = 0;
+        $('event-name').value = '';
+        $('event-from').value = '';
+        $('event-to').value = '';
+        document.querySelectorAll('#event-maps input, #event-locked input').forEach((i) => { i.checked = false; });
+        setText('event-form-title', 'Neues Event');
+        setText('btn-event-save', 'Event einrichten');
+        $('btn-event-cancel').hidden = true;
+    }
+
+    function editEvent(e) {
+        resetEventForm();
+        state.eventEditId = e.id;
+        $('event-name').value = e.name;
+        $('event-from').value = e.from;
+        $('event-to').value = e.to;
+        const maps = new Set(e.maps || []), locked = new Set(e.locked || []);
+        $('event-maps').querySelectorAll('input').forEach((i) => { i.checked = maps.has(i.value); });
+        $('event-locked').querySelectorAll('input').forEach((i) => { i.checked = locked.has(i.value); });
+        setText('event-form-title', `Event „${e.name}“ bearbeiten`);
+        setText('btn-event-save', 'Speichern');
+        $('btn-event-cancel').hidden = false;
+        $('event-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        $('event-name').focus({ preventScroll: true });
+    }
+
+    async function postEvents(fields) {
+        if (state.eventsBusy) return false;
+        state.eventsBusy = true;
+        if (state.status) renderEvents(state.status);
+        try {
+            return await postForm('/api/events', fields, 'events-msg');
+        } finally {
+            state.eventsBusy = false;
+            if (state.status) renderEvents(state.status);
+        }
+    }
+
+    async function onEventSave(ev) {
+        ev.preventDefault();
+        const name = $('event-name').value.trim();
+        const from = $('event-from').value;
+        const to = $('event-to').value || from;
+        const maps = checkedFiles('event-maps'), locked = checkedFiles('event-locked');
+        const max = Number(state.status && state.status.maxEventMaps) || 20;
+        let error = '';
+        if (!name) error = 'Bitte einen Namen für das Event eingeben.';
+        else if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) error = 'Bitte den ersten Tag angeben.';
+        else if (to < from) error = 'Der letzte Tag liegt vor dem ersten.';
+        else if (maps.length === 0 && locked.length === 0) error = 'Bitte mindestens eine Karte wählbar machen oder sperren.';
+        else if (maps.length > max || locked.length > max) error = `Höchstens ${max} Karten je Liste.`;
+        if (error) {
+            showNote('events-msg', error, 'error');
+            return;
+        }
+        const ok = await postEvents({
+            action: 'save', id: String(state.eventEditId), name, from, to, maps: maps.join(','), locked: locked.join(','),
+        });
+        if (ok) resetEventForm();
+    }
+
+    async function onEventDelete(e) {
+        const text = [`Das Event „${e.name}“ wird gelöscht.`];
+        if (state.status && e.from <= state.status.today && state.status.today <= e.to) {
+            text.push('Es gilt gerade: Die Ziele im Command Center ändern sich sofort. Laufende Einsätze gehen zu Ende.');
+        }
+        if (!(await confirmDialog('Event löschen?', text, 'Löschen'))) return;
+        if (await postEvents({ action: 'delete', id: String(e.id) }) && state.eventEditId === e.id) resetEventForm();
+    }
+
+    function renderRoles(d) {
+        const types = Array.isArray(d.roleTypes) ? d.roleTypes : [];
+        const roles = Array.isArray(d.roles) ? d.roles : [];
+        const key = JSON.stringify([types, roles, state.rolesBusy]);
+        if (key !== state.rolesKey) {
+            state.rolesKey = key;
+            const label = (k) => (types.find((t) => t.key === k) || { label: k }).label;
+            const sel = $('role-type');
+            if (sel.options.length !== types.length) {
+                sel.replaceChildren(...types.map((t) => { const o = el('option', '', t.label); o.value = t.key; return o; }));
+            }
+            const rows = document.createDocumentFragment();
+            roles.forEach((r) => {
+                const tr = document.createElement('tr');
+                tr.appendChild(cell('Spieler', 'name', r.name));
+                tr.appendChild(cell('Rollen', '', r.roles.map(label).join(', ')));
+                const actions = el('div', 'actions');
+                r.roles.forEach((k) => actions.appendChild(smallButton(types.length > 1 ? `${label(k)} entziehen` : 'Entziehen',
+                    'btn btn-ghost', state.rolesBusy, () => postRoles({ action: 'revoke', name: r.name, role: k }))));
+                tr.appendChild(cell('Aktion', '', actions));
+                rows.appendChild(tr);
+            });
+            $('roles-body').replaceChildren(rows);
+            setText('roles-count', roles.length === 1 ? '1 Konto mit Rolle' : `${roles.length} Konten mit Rollen`);
+            $('roles-empty').hidden = roles.length > 0;
+            $('roles-body').closest('table').hidden = roles.length === 0;
+            $('btn-role-add').disabled = state.rolesBusy;
+        }
+        noticeFromStatus(d, 'role', 'roleNoticeSeq', 'roles-msg');
+    }
+
+    async function postRoles(fields) {
+        if (state.rolesBusy) return false;
+        state.rolesBusy = true;
+        if (state.status) renderRoles(state.status);
+        try {
+            return await postForm('/api/roles', fields, 'roles-msg');
+        } finally {
+            state.rolesBusy = false;
+            if (state.status) renderRoles(state.status);
+        }
+    }
+
+    async function onRoleAdd(ev) {
+        ev.preventDefault();
+        const input = $('role-name');
+        const name = input.value.trim();
+        if (!/^[A-Za-z0-9_-]{3,16}$/.test(name)) {
+            showNote('roles-msg', 'Bitte einen gültigen Spielernamen eingeben (3–16 Zeichen: Buchstaben, Ziffern, _ und -).', 'error');
+            input.focus();
+            return;
+        }
+        if (await postRoles({ action: 'grant', name, role: $('role-type').value })) input.value = '';
     }
 
     // =========================================================================
@@ -1561,6 +1884,13 @@
         updateShipsUi();
 
         $('uploader-form').addEventListener('submit', onUploaderAdd);
+        const refilter = () => { if (state.status) renderMaps(state.status); };
+        $('maps-filter-author').addEventListener('change', refilter);
+        $('maps-filter-name').addEventListener('input', refilter);
+        $('event-form').addEventListener('submit', onEventSave);
+        $('event-form').addEventListener('change', onEventCheck);
+        $('btn-event-cancel').addEventListener('click', resetEventForm);
+        $('role-form').addEventListener('submit', onRoleAdd);
         $('ban-account-form').addEventListener('submit', onBanAccount);
         $('ban-ip-form').addEventListener('submit', onBanIp);
 

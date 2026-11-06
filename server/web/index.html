@@ -473,6 +473,20 @@
                 Jeder geschlossene Monorail-Kreis bekommt einen Zug. Einsatzkarten sind keine Mondkarte: Freigegebene stehen
                 den SG-Teams im Command Center als Ziel zur Wahl, jedes Team bekommt dort eine eigene Welt.
             </p>
+            <div class="field-row">
+                <div class="field">
+                    <label for="maps-filter-author">Hochgeladen von</label>
+                    <select id="maps-filter-author">
+                        <option value="">alle Spieler</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="maps-filter-name">Kartenname</label>
+                    <input id="maps-filter-name" type="search" maxlength="40" autocomplete="off" spellcheck="false"
+                           placeholder="Teil des Namens">
+                </div>
+            </div>
+            <p id="maps-filter-note" class="muted small ships-help" hidden></p>
             <div class="table-wrap">
                 <table class="data-table maps-table">
                     <thead>
@@ -507,6 +521,107 @@
                 <button type="submit" id="btn-uploader-add" class="btn btn-primary">Erlauben</button>
             </form>
             <div id="maps-msg" class="note" role="status" aria-live="polite" hidden></div>
+        </div>
+    </section>
+
+    <!-- ============================== Events ============================== -->
+    <section class="panel" id="events-panel" aria-labelledby="events-title">
+        <div class="panel-head">
+            <h2 id="events-title">Events</h2>
+            <span class="muted small" id="events-count">–</span>
+        </div>
+        <div class="settings">
+            <p class="muted small ships-help">
+                Ein Event legt für einen Tag oder einen Zeitraum fest, welche Einsatzkarten die SG-Teams im Command Center
+                wählen können: zusätzlich zu den freigegebenen, oder gesperrt, obwohl sie freigegeben sind. Die Mondkarte
+                ist immer wählbar. Gelten mehrere Events am selben Tag, zählen alle zusammen; gesperrt geht vor. Es gilt
+                das Datum des Servers, höchstens 20 Einsatzkarten auf einmal.
+            </p>
+            <p id="events-today" class="note"></p>
+            <div class="table-wrap">
+                <table class="data-table events-table">
+                    <thead>
+                    <tr>
+                        <th scope="col">Event</th>
+                        <th scope="col">Zeitraum</th>
+                        <th scope="col">Wählbar</th>
+                        <th scope="col">Gesperrt</th>
+                        <th scope="col">Eingerichtet von</th>
+                        <th scope="col">Aktion</th>
+                    </tr>
+                    </thead>
+                    <tbody id="events-body"></tbody>
+                </table>
+            </div>
+            <p id="events-empty" class="empty" hidden>Noch keine Events.</p>
+
+            <form id="event-form" class="settings" novalidate>
+                <h3 class="form-title" id="event-form-title">Neues Event</h3>
+                <div class="field-row">
+                    <div class="field">
+                        <label for="event-name">Name</label>
+                        <input id="event-name" type="text" maxlength="40" autocomplete="off" placeholder="z. B. Halloween">
+                    </div>
+                    <div class="field">
+                        <label for="event-from">Von</label>
+                        <input id="event-from" type="date">
+                    </div>
+                    <div class="field">
+                        <label for="event-to">Bis <span class="muted small">(leer = nur dieser Tag)</span></label>
+                        <input id="event-to" type="date">
+                    </div>
+                </div>
+                <p id="event-nomaps" class="empty" hidden>Noch keine Einsatzkarten hochgeladen.</p>
+                <div class="field-row" id="event-lists">
+                    <fieldset class="field">
+                        <legend>Wählbar <span class="muted small">(zusätzlich zu den freigegebenen)</span></legend>
+                        <div id="event-maps" class="check-list"></div>
+                    </fieldset>
+                    <fieldset class="field">
+                        <legend>Gesperrt <span class="muted small">(obwohl freigegeben)</span></legend>
+                        <div id="event-locked" class="check-list"></div>
+                    </fieldset>
+                </div>
+                <div class="actions">
+                    <button type="submit" id="btn-event-save" class="btn btn-primary">Event einrichten</button>
+                    <button type="button" id="btn-event-cancel" class="btn" hidden>Abbrechen</button>
+                </div>
+            </form>
+            <div id="events-msg" class="note" role="status" aria-live="polite" hidden></div>
+        </div>
+    </section>
+
+    <!-- ============================== Rollen ============================== -->
+    <section class="panel" aria-labelledby="roles-title">
+        <div class="panel-head">
+            <h2 id="roles-title">Rollen</h2>
+            <span class="muted small" id="roles-count">–</span>
+        </div>
+        <div class="settings">
+            <p class="muted small ships-help">
+                Rollen geben einzelnen Konten zusätzliche Rechte. Ein Event Manager darf Events einrichten (im Spiel,
+                sobald es dort den Event-Editor gibt; auf dieser Seite geht es für den Betreiber immer).
+            </p>
+            <div class="table-wrap">
+                <table class="data-table roles-table">
+                    <thead>
+                    <tr>
+                        <th scope="col">Spieler</th>
+                        <th scope="col">Rollen</th>
+                        <th scope="col">Aktion</th>
+                    </tr>
+                    </thead>
+                    <tbody id="roles-body"></tbody>
+                </table>
+            </div>
+            <p id="roles-empty" class="empty" hidden>Noch hat kein Konto eine Rolle.</p>
+            <form id="role-form" class="actions" novalidate>
+                <input id="role-name" type="text" maxlength="16" placeholder="Spielername" autocomplete="off"
+                       spellcheck="false" aria-label="Spielername, der die Rolle bekommt">
+                <select id="role-type" aria-label="Rolle"></select>
+                <button type="submit" id="btn-role-add" class="btn btn-primary">Zuweisen</button>
+            </form>
+            <div id="roles-msg" class="note" role="status" aria-live="polite" hidden></div>
         </div>
     </section>
 

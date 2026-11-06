@@ -138,9 +138,24 @@ Karte sehen alle Spieler sofort, ohne Neuaufbau der Welt; sie ist nur Kulisse. *
 die SG-Teams) werden statt dessen **freigegeben** oder **gesperrt**: Freigegebene stehen im Command
 Center als Ziel zur Wahl, und jedes Team bekommt dort eine eigene Welt (höchstens `MAX_INSTANCES`
 Teams gleichzeitig, auf der Webseite „Einsatzkarten gleichzeitig“). Die vier mitgelieferten
-Einsatzkarten schickt man dafür mit *An Server senden* aus dem Karteneditor. Höchstens 20 Karten, 5
-je Spieler; gespeichert in `/data/karten/`, die aktive Karte und die freigegebenen Einsatzkarten in
-`server.txt`.
+Einsatzkarten schickt man dafür mit *An Server senden* aus dem Karteneditor. Die Zahl der Karten ist
+nicht begrenzt; über der Liste lässt sie sich nach Spieler („Hochgeladen von“) und Kartenname filtern
+(gezeigt werden höchstens 100 Treffer). Dauerhaft freigeben lassen sich bis zu 20 Einsatzkarten, so
+viele zeigt das Command Center auf einmal. Gespeichert in `/data/karten/`, die aktive Karte und die
+freigegebenen Einsatzkarten in `server.txt`.
+
+Im Bereich **„Events“** richtet man Einsatzkarten für einzelne Tage ein: Name, erster und letzter Tag
+(leer = nur ein Tag), dazu die Karten, die an diesen Tagen **zusätzlich wählbar** sind, und die, die
+dann **gesperrt** sind, obwohl sie freigegeben sind. Die Mondkarte ist im Command Center immer
+wählbar. Gelten mehrere Events am selben Tag, zählen alle zusammen; gesperrt geht vor. Über der
+Liste steht, was heute wählbar ist. Ein Event, das heute gilt, wirkt sofort, sonst wechselt der
+Server um Mitternacht. Es zählt das Datum des Servers: im Docker-Container UTC (Wechsel um 1 bzw. 2 Uhr
+deutscher Zeit), außer man leiht ihm die Zeitzone (siehe [Fehlersuche](#9-fehlersuche), `/etc/localtime`).
+Gespeichert in `/data/events.txt`; wird eine Karte gelöscht, verschwindet sie auch aus den Events.
+
+Im Bereich **„Rollen“** bekommen einzelne Konten zusätzliche Rechte (Spielername und Rolle wählen,
+„Zuweisen“; „Entziehen“ nimmt sie zurück). Die erste Rolle ist **Event Manager**: Er soll Events
+später auch im Spiel einrichten dürfen. Gespeichert in `accounts.txt` (`roles=event`).
 
 ### Umgebungsvariablen
 
@@ -458,6 +473,7 @@ Alles Wichtige liegt im Docker-Volume **`mondschuerfer-data`** (im Container `/d
 | `ships.txt` | nur vorhanden, wenn auf der Webseite Schiffe gespeichert wurden |
 | `karten/` | hochgeladene Karten aus dem Karteneditor (eine `.karte`-Datei je Karte) |
 | `bans.txt` | gesperrte Konten und IP-Adressen (Bereich **Sperren** der Webseite) |
+| `events.txt` | Events: Einsatzkarten für einzelne Tage (Bereich **Events** der Webseite) |
 | `logs/` | Lastprotokoll, eine Datei `last-JJJJ-MM-TT.csv` je Tag; der Server löscht Dateien nach 30 Tagen |
 | `*.defekt-…` | Kopien von Dateien, in denen beim Laden kaputte Zeilen übersprungen wurden |
 
