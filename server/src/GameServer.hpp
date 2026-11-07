@@ -20,8 +20,9 @@
 //   - SG-Teams (FPS-Modus): Rollenwahl, Teams im Command Center, Anwahl des
 //     Stargates; die Figuren rechnet die Welt (shared/Trooper.cpp) wie die
 //     Schiffe, der Client sagt seine eigene Figur nur voraus.
-//   - Einsatzkarten (Instanzen): Wählt ein Team eine freigegebene
-//     Einsatzkarte als Ziel, bekommt es eine eigene Welt (World::NewInstance),
+//   - Einsatzkarten (Instanzen): Wählt ein Team eine heute wählbare
+//     Einsatzkarte als Ziel (freigegeben oder über ein Event, MapEvents.hpp),
+//     bekommt es eine eigene Welt (World::NewInstance),
 //     die in jedem Schritt mitgerechnet wird (höchstens
 //     GameSettings::maxInstances gleichzeitig).
 //   - Veröffentlicht jede Sekunde einen Statusbericht für die Webseite und
@@ -245,6 +246,10 @@ private:
     void MapNotice(const std::string& text, bool error = false);   // Ergebnis für die Webseite (und das Protokoll)
     void ApplyBanCommands();    // Bereich "Sperren" der Webseite: Konto/Adresse sperren, entsperren, trennen
     void BanNotice(const std::string& text, bool error = false);   // wie MapNotice
+    void ApplyEventCommands();  // Bereich "Events" der Webseite: Event speichern, löschen
+    void EventNotice(const std::string& text, bool error = false); // wie MapNotice
+    void ApplyRoleCommands();   // Bereich "Rollen" der Webseite: Rolle zuweisen, entziehen
+    void RoleNotice(const std::string& text, bool error = false);  // wie MapNotice
     void RemoveSurplusPirates();
     // Aktive Karte auch in der eigenen Welt: Stargates und Hindernisse der
     // Figuren kommen aus der Deko und müssen zu dem passen, was die Clients
@@ -275,7 +280,12 @@ private:
     bool TeamBusy(const SgTeam& t) const;   // Anwahl läuft oder jemand ist im Einsatz
     void LeaveTeam(int playerId);
     // --- Einsatzkarten (Instanzen) ---
-    std::vector<const ServerMap*> MissionMaps() const;   // freigegeben, Reihenfolge wie net::MissionMapsMsg
+    std::vector<const ServerMap*> MissionMaps() const;   // heute wählbar, Reihenfolge wie net::MissionMapsMsg
+    // Heute wählbare Einsatzkarten (missionFiles_) neu bestimmen: freigegebene
+    // und die der heutigen Events, ohne die heute gesperrten. Nach jeder
+    // Änderung an Karten oder Events und beim Tageswechsel (Housekeeping).
+    void UpdateMissionMaps();
+    bool MissionAvailable(const std::string& file) const;   // heute im Command Center wählbar?
     void ForgetTarget(const std::string& file);          // Karte gesperrt/gelöscht: Teams zielen wieder auf die Mondkarte
     bool StartInstance(SgTeam& t);                       // false: geht nicht (das Team bekommt eine Meldung)
     // Alle Instanzwelten rechnen, ihre Ereignisse verteilen, Rückkehrer
@@ -384,7 +394,9 @@ private:
     std::vector<SgTeam> teams_;
     bool teamsChanged_ = false;         // Teamliste neu schicken (SendTeams)
     std::vector<Instance> instances_;   // laufende Einsätze auf Einsatzkarten
-    int missionMapsRev_ = 0;            // zählt hoch, wenn sich die freigegebenen Einsatzkarten ändern
+    int missionMapsRev_ = 0;            // zählt hoch, wenn sich die heute wählbaren Einsatzkarten ändern
+    std::vector<std::string> missionFiles_;   // heute wählbare Einsatzkarten (Dateien), Reihenfolge wie net::MissionMapsMsg
+    std::string missionDay_;            // Tag, für den missionFiles_ gilt (JJJJ-MM-TT, Ortszeit)
     std::vector<uint8_t> scoreboard_;   // zuletzt gebautes Scoreboard (fertige Nachricht)
     int scoreboardRev_ = 0;             // zählt hoch, wenn es sich ändert
     std::string mapNotice_;             // für den Status (ServerStatus::mapNotice)
@@ -415,6 +427,12 @@ private:
     std::string banNotice_;             // für den Status (ServerStatus::banNotice)
     int banNoticeSeq_ = 0;
     bool banNoticeError_ = false;
+    std::string eventNotice_;           // für den Status (ServerStatus::eventNotice)
+    int eventNoticeSeq_ = 0;
+    bool eventNoticeError_ = false;
+    std::string roleNotice_;            // für den Status (ServerStatus::roleNotice)
+    int roleNoticeSeq_ = 0;
+    bool roleNoticeError_ = false;
     uint64_t halfOpenDropped_ = 0;      // verworfene halboffene Verbindungen (Meldung 1x pro Minute)
 
     // Messwerte für den Status (werden jede Sekunde ausgewertet und geleert)

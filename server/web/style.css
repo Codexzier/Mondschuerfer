@@ -158,6 +158,33 @@ code {
 /* Daten veraltet (Verbindung verloren): sichtbar, aber gedämpft */
 .layout.stale { opacity: 0.55; }
 
+/* Reiter unter der Kopfzeile (bleiben mit ihr oben stehen) */
+.tabs-bar { border-top: 1px solid var(--line); }
+.tabs {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 0 16px;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+}
+.tab {
+    font: inherit;
+    font-weight: 600;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    padding: 10px 16px 9px;
+    min-height: 44px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tab-page { display: grid; gap: var(--gap); min-width: 0; }
+
 .columns {
     display: grid;
     gap: var(--gap);
@@ -389,7 +416,7 @@ label, legend { font-weight: 600; font-size: 0.92rem; }
 .default-hint:not(:empty)::before { content: "Standard: "; }
 .default-hint { color: var(--muted); opacity: 0.85; }
 
-input[type="text"], input[type="search"], input[type="number"], select {
+input[type="text"], input[type="search"], input[type="number"], input[type="date"], select {
     width: 100%;
     font: inherit;
     color: var(--text);
@@ -493,6 +520,13 @@ fieldset { border: 0; padding: 0; }
 /* Kontrollkästchen mit Beschriftung daneben (Spielparameter, Sperren) */
 .check { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
 .check input[type="checkbox"] { accent-color: var(--accent); width: 18px; height: 18px; margin: 0; flex: none; }
+
+/* Bereich "Events": Auswahl der Einsatzkarten (kann lang werden) */
+.check-list { display: grid; gap: 8px; max-height: 260px; overflow-y: auto; padding: 2px; }
+.check-list .check { font-weight: 400; }
+.events-table td.name, .roles-table td.name { font-weight: 600; }
+.events-table td.list { white-space: normal; overflow-wrap: anywhere; min-width: 140px; }
+input[type="date"] { color-scheme: dark; }
 
 /* Bereich "Sperren" */
 .form-title { margin: 0; font-size: 1rem; }

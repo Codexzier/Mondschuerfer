@@ -1661,7 +1661,7 @@ void MultiplayerScreen::DrawPause() {
         optionsOpen_ = true;
         options_.Open();
         return;
-    } else if (c == abortItem) {
+    } else if (foot && c == abortItem) {   // als Pilot ist abortItem -1 wie "nichts gewählt"
         net_.SendTeamAction(net::TeamActionType::Abort);
         paused_ = false;
         g_audio.Play(Sfx::PauseClose);

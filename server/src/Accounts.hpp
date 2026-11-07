@@ -22,6 +22,9 @@
 //                   Datei <besitzer>-<stamm>.karte (Format: shared/GameMap.hpp)
 //   bans.txt        gesperrte Konten und IP-Adressen (Verwaltungsseite,
 //                   Bereich "Sperren"); nur vorhanden, wenn es Sperren gab
+//   events.txt      Events: Einsatzkarten für einzelne Tage (Bereich
+//                   "Events", shared/MapEvents.hpp); nur vorhanden, wenn es
+//                   Events gab
 //   logs/           Lastprotokoll: je Tag eine Datei last-JJJJ-MM-TT.csv mit
 //                   einer Zeile pro Minute (GameServer::RecordLoad); Dateien
 //                   älter als LOAD_LOG_DAYS werden gelöscht
@@ -51,7 +54,8 @@
 // (es zählt nur der neueste Stand). Flush() wartet, bis alles geschrieben ist.
 //
 // Abhängigkeiten: shared/Protocol.hpp (Key32, Bytes16), shared/Config.hpp
-// (Anzahl der Aufrüstungen), shared/GameSettings.hpp, shared/Crypto.hpp
+// (Anzahl der Aufrüstungen), shared/GameSettings.hpp, shared/MapEvents.hpp
+// (Events, Kontorollen), shared/Crypto.hpp
 // (Hex-Umwandlung, Zufallszahlen), std::filesystem (Ordner anlegen,
 // umbenennen, Dateirechte).
 // ---------------------------------------------------------------------------
@@ -59,6 +63,7 @@
 #include "GameMap.hpp"
 #include "GameSettings.hpp"
 #include "IpRange.hpp"
+#include "MapEvents.hpp"
 #include "Protocol.hpp"
 #include <condition_variable>
 #include <cstdint>
@@ -113,6 +118,7 @@ struct Account {
     int64_t lastLogin = 0;            // Unix-Zeit der letzten Anmeldung
     double totalLoginSeconds = 0.0;   // Summe aller Sitzungen
     bool mapUpload = false;           // darf Karten hochladen (Verwaltungsseite, Bereich "Karten")
+    uint32_t roles = 0;               // Kontorollen (AccountRoleBit, Bereich "Rollen")
     PlayerProgress progress;
 };
 
@@ -210,16 +216,15 @@ public:
     void SaveShips(const std::vector<ShipType>& ships);
 
     // --- Karten ----------------------------------------------------------------------
-    // Alle Karten werden beim Start gelesen und bleiben im Speicher (eine
-    // große Karte braucht etwa 0,5 MB); deshalb gibt es Obergrenzen.
-    static constexpr int MAX_MAPS = 20;
-    static constexpr int MAX_MAPS_PER_PLAYER = 5;
+    // Alle Karten werden beim Start gelesen und bleiben im Speicher. Die Zahl
+    // ist nicht begrenzt: Hochladen darf nur, wem der Betreiber es erlaubt.
+    // Eine Karte braucht typisch 20–100 KB, die größte mögliche etwa 0,5 MB.
     const std::vector<ServerMap>& Maps() const { return maps_; }
     const ServerMap* FindMap(const std::string& file) const;
     // Speichert eine hochgeladene Karte (m.author muss gesetzt sein). Gleicher
     // Name vom selben Spieler ersetzt die alte Fassung. Liefert den Dateinamen
-    // in file, oder false + Grund in error (Obergrenze erreicht).
-    bool StoreMap(const GameMap& m, std::string& file, std::string& error);
+    // in file.
+    void StoreMap(const GameMap& m, std::string& file);
     bool RemoveMap(const std::string& file);
     // Aktive Karte für alle Spieler ("" = Standardkarte aus dem Seed). Steht in
     // server.txt; SetActiveMap speichert NICHT automatisch (SaveServerData).
@@ -229,6 +234,23 @@ public:
     // speichert NICHT automatisch). false, wenn es die Karte nicht gibt.
     bool SetMapReleased(const std::string& file, bool released);
     std::vector<std::string> MapUploaders() const;   // Konten mit Account::mapUpload, nach Name sortiert
+    std::vector<const Account*> AccountsWithRoles() const;   // Konten mit mindestens einer Rolle, nach Name sortiert
+
+    // --- Events ------------------------------------------------------------------------
+    // Einsatzkarten für einzelne Tage (shared/MapEvents.hpp), sortiert nach
+    // Beginn. SetEvent/RemoveEvent/RemoveMapFromEvents speichern NICHT
+    // automatisch (SaveEvents).
+    static constexpr size_t MAX_EVENTS = 1000;
+    const std::vector<MapEvent>& Events() const { return events_; }
+    const MapEvent* FindEvent(int id) const;
+    // e.id == 0: neues Event, bekommt die nächste Nummer (steht danach in e.id).
+    // Sonst wird das Event mit dieser Nummer ersetzt. false, wenn MAX_EVENTS
+    // erreicht ist bzw. es die Nummer nicht gibt.
+    bool SetEvent(MapEvent& e);
+    bool RemoveEvent(int id);
+    // Karte gelöscht: aus allen Events entfernen. true, wenn sich etwas geändert hat.
+    bool RemoveMapFromEvents(const std::string& file);
+    void SaveEvents();
 
     // --- Sperren ---------------------------------------------------------------------
     // Alle Sperren stehen im Speicher; abgelaufene entfernt RemoveExpiredBans.
@@ -292,5 +314,7 @@ private:
     std::vector<ServerMap> maps_;           // nach Kartenname sortiert
     std::string activeMap_;
     std::vector<Ban> bans_;                 // Reihenfolge: älteste zuerst
+    std::vector<MapEvent> events_;          // nach Beginn sortiert
+    int nextEventId_ = 1;
     std::string loadLogDay_;                // Tag des letzten Eintrags im Lastprotokoll
 };
