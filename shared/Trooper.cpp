@@ -382,11 +382,17 @@ int World::TeamSamples(const PlayerState& ps) const {
     return n;
 }
 
-// Auf einer Einsatzkarte gibt es nur die Kristallplätze aus dem Editor (alle
+// Auf einer Einsatzkarte gibt es nur die Fundstücke bzw. Kristallplätze aus dem Editor (alle
 // in deposits, auch beprobte); mehr Proben als Plätze wären unerreichbar.
 int World::SampleGoal() const {
     if (!instance) return std::max(1, settings.sampleGoal);
     return std::clamp(settings.sampleGoal, 1, std::max(1, static_cast<int>(deposits.size())));
+}
+
+bool World::HasItems() const {
+    for (const Deposit& d : deposits)
+        if (d.item) return true;
+    return false;
 }
 
 PlayerState* World::PlayerOfTrooper(const Trooper* t) {
@@ -850,11 +856,12 @@ void World::UpdateTroopers(float dt) {
                 // Meldung an das ganze Team (Mehrspieler: die Proben zählen zusammen)
                 if (PlayerState* owner = FindPlayer(t.playerId)) {
                     const int have = TeamSamples(*owner), goal = SampleGoal();
+                    const char* what = d->item ? "Fundstück geborgen" : "Probe genommen";
                     for (PlayerState& o : players)
                         if (SameTeam(o, *owner) && o.trooperId >= 0)
                             Notify(o,
-                                   have >= goal ? Fmt("Probe genommen (%d / %d): zurück zu einem Stargate!", have, goal)
-                                                : Fmt("Probe genommen (%d / %d)", have, goal),
+                                   have >= goal ? Fmt("%s (%d / %d): zurück zu einem Stargate!", what, have, goal)
+                                                : Fmt("%s (%d / %d)", what, have, goal),
                                    Color{255, 225, 90, 255});
                 }
             }
@@ -991,7 +998,7 @@ void World::DamageTrooper(Trooper& t, const Bullet& b) {
     const Color bad{255, 110, 90, 255};
     if (t.playerId >= 0) {
         if (PlayerState* ps = FindPlayer(t.playerId)) {
-            Notify(*ps, t.samples > 0 ? Fmt("Gefallen! %d Proben verloren", t.samples) : std::string("Gefallen!"), bad);
+            Notify(*ps, t.samples > 0 ? Fmt("Gefallen! %d %s verloren", t.samples, HasItems() ? "Funde" : "Proben") : std::string("Gefallen!"), bad);
             ++ps->sgTotal.downs;
         }
         t.samples = 0;

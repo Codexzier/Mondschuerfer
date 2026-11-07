@@ -8,7 +8,7 @@
 //   Krater, Felsen, Straßen, Gebäude, Monorail); Einsatzkarten (FPS-Modus)
 //   sind ein eigenes kleines Spielfeld aus dem Fantasy Town und dem
 //   Graveyard Kit mit Thema, Größe, Boden, Himmel und den Markierungen
-//   Stargate, Kristallplatz und Gegner-Startplatz. Zwei Ansichten:
+//   Stargate, Fundstücke und Gegner-Startplatz. Zwei Ansichten:
 //     1. Kartenliste: gespeicherte Karten (Ordner "karten" neben der .exe),
 //        Knöpfe "Karte laden" (wenn eine gewählt ist), "Neue Mondkarte",
 //        "Neue Einsatzkarte" (leere Karte) und "Zurück".
@@ -17,7 +17,7 @@
 //        den Segmenten (Reiter je Gruppe), oben Name, "An Server senden",
 //        "Speichern" und "Zurück", in der Mitte die Karte von schräg oben.
 //        Eine Einsatzkarte lässt sich nur mit genau einem Stargate und
-//        mindestens cfg::SAMPLE_GOAL Kristallplätzen speichern.
+//        mindestens cfg::SAMPLE_GOAL Fundstücken speichern.
 //   "An Server senden" schickt die Karte an einen Mehrspieler-Server (Anmeldung
 //   mit Spielername und Passwort; der Betreiber muss es auf der
 //   Verwaltungsseite erlauben). Dort kann er sie als aktive Karte wählen.
@@ -103,7 +103,7 @@ private:
     void Rebuild();                       // Kulisse nach jeder Änderung neu aufbauen
     bool Mission() const { return map_.kind == MapKind::Mission; }
     float Lift() const { return Mission() ? level_ * mapgrid::LEVEL : 0.0f; }   // Höhe der gewählten Ebene
-    bool CheckMission(std::string& error) const;   // Einsatzkarte speicherbar? (Stargate, Kristallplätze)
+    bool CheckMission(std::string& error) const;   // Einsatzkarte speicherbar? (Stargate, Fundstücke)
     bool Dirty() const { return dirty_ || nameField_.text != map_.name; }
     Placement PlacementAt(Vector3 g) const;
     int PieceAt(Vector3 g) const;         // Index in map_.pieces oder -1

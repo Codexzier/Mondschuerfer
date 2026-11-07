@@ -252,8 +252,62 @@ const std::vector<MapSegment>& MapSegments() {
         {"graveyard/gravestone-cross-large", "Großes Grabkreuz", G::Crypts, 1.0f},
         {"graveyard/gravestone-decorative", "Verzierter Grabstein", G::Crypts, 1.0f},
         {"graveyard/urn-round", "Urne", G::Crypts, 1.0f},
+
+        // Fundstücke (Freitagsplan (2)), siehe MapItems()
+        {"marker_item_crate", "Fundstück: Kiste", G::Markers, 1.0f},
+        {"marker_item_barrel", "Fundstück: Fass", G::Markers, 1.0f},
+        {"marker_item_urn", "Fundstück: Urne", G::Markers, 1.0f},
+        {"marker_item_chalice", "Fundstück: Kelch", G::Markers, 1.0f},
+        {"marker_item_lantern", "Fundstück: Laterne", G::Markers, 1.0f},
+        {"marker_item_pumpkin", "Fundstück: Kürbis", G::Markers, 1.0f},
+        {"marker_item_shovel", "Fundstück: Schaufel", G::Markers, 1.0f},
+        {"marker_item_bones", "Fundstück: Knochen", G::Markers, 1.0f},
     };
     return list;
+}
+
+// Größe im Spiel: etwa 0,25 bis 0,5 m hoch (eine Figur ist 0,6 m groß).
+// Die Reihenfolge ist die Netzwerk-Variante (net::DepositVariant): nur
+// hinten anfügen.
+const std::vector<MapItem>& MapItems() {
+    static const std::vector<MapItem> list = {
+        {"marker_item_crate", "blaster/crate-small", "Kiste", "Fundstück: Kiste", 1.0f},
+        {"marker_item_barrel", "barrel", "Fass", "Fundstück: Fass", 1.6f},
+        {"marker_item_urn", "graveyard/urn-round", "Urne", "Fundstück: Urne", 1.0f},
+        {"marker_item_chalice", "graveyard/detail-chalice", "Kelch", "Fundstück: Kelch", 1.5f},
+        {"marker_item_lantern", "graveyard/lantern-glass", "Laterne", "Fundstück: Laterne", 1.0f},
+        {"marker_item_pumpkin", "graveyard/pumpkin", "Kürbis", "Fundstück: Kürbis", 1.2f},
+        {"marker_item_shovel", "graveyard/shovel", "Schaufel", "Fundstück: Schaufel", 0.8f},
+        {"marker_item_bones", "bones", "Knochen", "Fundstück: Knochen", 0.8f},
+    };
+    return list;
+}
+
+const MapItem* FindItem(const std::string& marker) {
+    for (const MapItem& it : MapItems())
+        if (marker == it.marker) return &it;
+    return nullptr;
+}
+
+int ItemIndexOfModel(int model) {
+    static const std::vector<int> ids = [] {
+        std::vector<int> v;
+        for (const MapItem& it : MapItems()) v.push_back(ModelId(it.model));
+        return v;
+    }();
+    for (size_t i = 0; i < ids.size(); ++i)
+        if (model >= 0 && ids[i] == model) return static_cast<int>(i);
+    return -1;
+}
+
+bool IsSampleSpot(const std::string& model) {
+    return model == MARKER_CRYSTAL || FindItem(model) != nullptr;
+}
+
+bool MapHasItems(const GameMap& m) {
+    for (const MapPiece& q : m.pieces)
+        if (FindItem(q.model)) return true;
+    return false;
 }
 
 const MapSegment* FindSegment(const std::string& model) {
@@ -281,7 +335,7 @@ BoundingBox SegmentBounds(const std::string& model) {
         return b;
     }
     if (model == MARKER_CRYSTAL) return {{-0.8f, 0.0f, -0.8f}, {0.8f, 1.0f, 0.8f}};
-    if (model == MARKER_ENEMY) return {{-0.5f, 0.0f, -0.5f}, {0.5f, 1.0f, 0.5f}};
+    if (model == MARKER_ENEMY || FindItem(model)) return {{-0.5f, 0.0f, -0.5f}, {0.5f, 1.0f, 0.5f}};
     return ModelBounds(ModelId(model));
 }
 

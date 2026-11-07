@@ -228,6 +228,8 @@ void World::ApplyMap(const GameMap& m) {
 //                        Stargate samt Treppe daraus an),
 //   - Kristallplatz:     gelbe, schon sichtbare Kristalle. Die Probe färbt
 //                        sie grün, abgebaut wird hier nichts (keine Schiffe),
+//   - Fundstück:         ein Ding (MapItems), das wie eine Probe genommen
+//                        wird und danach verschwindet (Deposit::item),
 //   - Gegner-Startplatz: hier erscheinen die Gruppen der Bodenpiraten
 //                        (SpawnPirateGroup).
 // ===========================================================================
@@ -265,6 +267,19 @@ void World::NewInstance(const GameMap& m, unsigned int newSeed) {
             d.model = mdl.crystalSmall;
             d.scale = mapgrid::CRYSTAL_SCALE;
             d.sample = Sample::Yellow;
+            d.revealed = true;
+            d.revealT = 1.0f;
+            deposits.push_back(d);
+        } else if (const MapItem* it = FindItem(q.model)) {
+            Deposit d;
+            d.id = nextId++;
+            d.pos = {q.x, 0.0f, q.z};
+            d.yaw = q.yaw;
+            d.amount = d.initial = 1;
+            d.model = ModelId(it->model);
+            d.scale = it->scale;
+            d.sample = Sample::Yellow;
+            d.item = true;
             d.revealed = true;
             d.revealT = 1.0f;
             deposits.push_back(d);

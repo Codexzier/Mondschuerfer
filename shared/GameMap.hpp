@@ -13,8 +13,8 @@
 //     Zufalls-Deko hat die Karte keine Kollision, Schiffe fliegen darüber hinweg.
 //   - Einsatzkarte (FPS-Modus): eigenes kleines Spielfeld (size) mit Teilen
 //     aus dem Fantasy Town Kit und dem Graveyard Kit, Thema, Boden und Himmel.
-//     Dazu Markierungen: genau ein Stargate, Kristallplätze und
-//     Gegner-Startplätze. Ein SG-Team spielt sie als eigene Welt
+//     Dazu Markierungen: genau ein Stargate, Fundstücke (ältere Karten:
+//     Kristallplätze) und Gegner-Startplätze. Ein SG-Team spielt sie als eigene Welt
 //     (World::NewInstance), Mauern, Treppen und Deko sind für die Figuren
 //     Hindernisse (World::BuildTrooperBlocks).
 //
@@ -139,6 +139,25 @@ extern const char* const MARKER_GATE;
 extern const char* const MARKER_CRYSTAL;
 extern const char* const MARKER_ENEMY;
 bool IsMarker(const std::string& model);
+
+// Fundstücke (Einsatzkarten): Markierungen, an denen das SG-Team statt einer
+// Probe an einem gelben Kristall ein Ding aufnimmt (Kiste, Urne ...). Der
+// Kristallplatz steht im Editor nicht mehr zur Wahl, ältere Karten mit
+// Kristallplätzen laufen aber weiter.
+struct MapItem {
+    const char* marker;   // Markierung (Kartenteil, Gruppe Markers)
+    const char* model;    // Modell im Spiel
+    const char* name;     // Anzeige ("Kiste")
+    const char* label;    // Eintrag im Editor ("Fundstück: Kiste")
+    float scale;          // Größe im Spiel
+};
+const std::vector<MapItem>& MapItems();
+const MapItem* FindItem(const std::string& marker);   // nullptr = keine Fundstück-Markierung
+// Stelle in MapItems() zu einer Modell-ID, -1 = kein Fundstück (net::DepositVariant)
+int ItemIndexOfModel(int model);
+// Kristallplatz oder Fundstück: ein Platz für eine Probe bzw. einen Fund
+bool IsSampleSpot(const std::string& model);
+bool MapHasItems(const GameMap& m);   // mindestens eine Fundstück-Markierung
 // Abmessungen eines Segments ohne Größe (wie ModelBounds; Markierungen: ihre
 // Fläche am Boden, das Stargate mit seiner Treppe)
 BoundingBox SegmentBounds(const std::string& model);

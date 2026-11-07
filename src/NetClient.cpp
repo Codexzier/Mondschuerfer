@@ -1487,6 +1487,7 @@ void NetClient::Impl::HandleDeposits(const net::DepositsMsg& m) {
         d.yaw = nd.yaw;
         d.scale = nd.scale;
         d.model = net::DepositModel(models, nd.variant);
+        d.item = net::DepositIsItem(nd.variant);   // Fundstück einer Einsatzkarte
         d.amount = nd.amount;
         d.initial = nd.initial;
         d.sample = static_cast<Sample>(std::min<uint8_t>(nd.sample, 2));   // gelbe Kristalle der SG-Teams

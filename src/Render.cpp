@@ -1343,7 +1343,7 @@ void World::Draw(const Camera3D& cam) const {
     // Lagerstätten, die dieser Spieler entdeckt hat; NetClient setzt dafür
     // revealed = true.
     for (const auto& d : deposits) {
-        if (!d.revealed) continue;
+        if (!d.revealed || (d.item && d.sample == Sample::Taken)) continue;   // aufgenommene Fundstücke sind weg
         if (Dist2D(d.pos, focus) > cullR) continue;
         // Pulsieren 0..1; d.id als Phasenversatz, damit nicht alle Kristalle
         // im gleichen Takt leuchten.
@@ -1359,7 +1359,11 @@ void World::Draw(const Camera3D& cam) const {
         // emissive: grünliches Eigenleuchten im Takt von pulse; nie ganz aus,
         // damit die Kristalle auch im dunklen Moment noch glimmen. Gelbe
         // Kristalle (Probe nötig) mit gelbem Modell und gelblichem Leuchten.
-        if (d.sample == Sample::Yellow)
+        // Fundstück (Einsatzkarte): sein eigenes Modell, gelblich glimmend
+        if (d.item)
+            g_assets.Draw(d.model, d.pos, d.yaw, d.scale * appear, WHITE,
+                          Vector3{0.08f + 0.22f * pulse, 0.07f + 0.17f * pulse, 0.02f});
+        else if (d.sample == Sample::Yellow)
             g_assets.Draw(YellowCrystal(*this, d.model), d.pos, d.yaw, d.scale * appear * fill, WHITE,
                           Vector3{0.08f + 0.22f * pulse, 0.07f + 0.17f * pulse, 0.02f});
         else
@@ -1524,9 +1528,9 @@ void World::Draw(const Camera3D& cam) const {
     // Lichtsäule (9 m bzw. 8 m hoch) und Bodenring, pulsierend mit der id als
     // Phasenversatz. Von oben weithin sichtbar, damit man Fundstellen schnell
     // wiederfindet. Grün = Kristalle, gelb = gelbe Kristalle (Probe nötig),
-    // orange = Wrack (Schrott).
+    // orange = Wrack (Schrott). Fundstücke wie gelbe Kristalle, aufgenommen keine.
     for (const auto& d : deposits) {
-        if (!d.revealed || Dist2D(d.pos, focus) > cullR) continue;
+        if (!d.revealed || (d.item && d.sample == Sample::Taken) || Dist2D(d.pos, focus) > cullR) continue;
         float pulse = 0.6f + 0.4f * sinf(time * 2.5f + d.id);
         const bool yellow = d.sample == Sample::Yellow;
         DrawBeam(d.pos, 9.0f, 0.35f, yellow ? Color{220, 190, 40, static_cast<unsigned char>(70 * pulse)}
@@ -1555,8 +1559,9 @@ void World::Draw(const Camera3D& cam) const {
     // sich aus Lagerstätte, Funke und Takt (Hash01). Größe und Form folgen
     // dem Kristall (wie oben beim Zeichnen: einblenden, beim Abbau kleiner);
     // die Funken sitzen zur Mitte hin höher, wie die Spitzen einer Kristallgruppe.
+    // Fundstücke glimmen genauso (gelb), bis sie aufgenommen sind.
     for (const auto& d : deposits) {
-        if (!d.revealed || Dist2D(d.pos, focus) > cullR) continue;
+        if (!d.revealed || (d.item && d.sample == Sample::Taken) || Dist2D(d.pos, focus) > cullR) continue;
         const float pulse = 0.5f + 0.5f * sinf(time * 3.0f + d.id);
         const float fill = 0.55f + 0.45f * static_cast<float>(d.amount) / std::max(1, d.initial);
         const float sc = d.scale * std::clamp(d.revealT, 0.0f, 1.0f) * fill;
