@@ -161,14 +161,14 @@ rechts steht das Scoreboard deiner Einsätze (beste zuerst). *Ziel* wählt, wohi
 *Mondkarte (gemeinsam)* oder eine **Einsatzkarte**; rechts unter dem Scoreboard zeigt eine
 Vorschau ihren Grundriss. Mitgeliefert sind vier Einsatzkarten: *Marktflecken* (Dorf mit Marktplatz
 und Stadtmauer, Tag), *Dunkelwald* (Wald mit Lichtungen und Wassermühle, Abend), *Gruftberg*
-(Friedhof mit Krypta, Nacht) und *Mühlental* (Höfe, Felder, Mühlen und Waldrand, Tag). Dazu kommen
+(Friedhof mit Krypta, drumherum alter Friedhof, Gruftfeld, Totenacker und Kapellenruine, Nacht) und *Mühlental* (Höfe, Felder, Mühlen und Waldrand, Tag). Dazu kommen
 eigene Einsatzkarten aus dem Karteneditor (Ordner `karten`).
 *Tor anwählen* öffnet nach 3 Sekunden das Wurmloch, und das Team kommt auf der Mondkarte an einem
 der Stargates heraus bzw. am Stargate der Einsatzkarte, die Kameraden kurz nacheinander. Eine
 Einsatzkarte ist eine eigene Welt nur für dein Team: ihr Gelände, Himmel und Licht, keine Schiffe,
 die gelben Kristalle an den Kristallplätzen (nach der Probe grün, abgebaut wird dort nichts) und
 die Bodenpiraten an den Gegner-Startplätzen. Auf Karten mit dem Thema Friedhof sind die Gegner
-**Zombies**: doppelt so viele Gruppen von je fünf bis acht, langsamer als du, mit mehr Schild; sie
+**Zombies**: viermal so viele Gruppen von je sechs bis zehn, langsamer als du, mit mehr Schild; sie
 schießen nicht, sondern schlagen aus der Nähe zu. Zuerst dösen sie vor sich hin. Wach werden sie,
 wenn du oder ein Kamerad zu nah kommt, in der Nähe sprintet (Umschalt) oder schießt; ein wacher
 Zombie weckt alle um sich herum, so pflanzt sich der Alarm fort. Sie kreisen euch von mehreren

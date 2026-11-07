@@ -388,9 +388,9 @@ constexpr float AI_SPREAD_BEST = 0.7f;        // ... und nach AI_AIM_TIME
 // Zombies: die Gegner auf Einsatzkarten mit dem Thema Friedhof (statt der
 // Bodenpiraten, gleiche Gruppen und Startplätze). Langsamer als eine gehende
 // Figur, mehr Schild, schlagen aus der Nähe zu statt zu schießen.
-constexpr int ZOMBIE_MIN = 5;                 // Figuren je Gruppe ...
-constexpr int ZOMBIE_MAX = 8;                 // ... bis
-constexpr int ZOMBIE_GROUP_FACTOR = 2;        // so viel mal mehr Gruppen als Bodenpiraten (GameSettings::groundPirates)
+constexpr int ZOMBIE_MIN = 6;                 // Figuren je Gruppe ...
+constexpr int ZOMBIE_MAX = 10;                // ... bis
+constexpr int ZOMBIE_GROUP_FACTOR = 4;        // so viel mal mehr Gruppen als Bodenpiraten (GameSettings::groundPirates)
 constexpr float ZOMBIE_HP = 80.0f;
 constexpr float ZOMBIE_DAMAGE = 15.0f;        // je Schlag
 constexpr float ZOMBIE_HIT_INTERVAL = 1.2f;   // Sekunden zwischen zwei Schlägen

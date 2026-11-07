@@ -132,7 +132,7 @@ constexpr uint64_t UNDOCK_INTERACT_GUARD = 10;                  // ~0,33 s nach 
 constexpr size_t MAX_SNAP_SHIPS = 80;
 constexpr size_t MAX_SNAP_BULLETS = 128;
 constexpr size_t MAX_SNAP_WRECKS = 48;
-constexpr size_t MAX_SNAP_TROOPERS = 64;
+constexpr size_t MAX_SNAP_TROOPERS = 128;   // Zombie-Karten: viele Figuren auf einmal
 constexpr size_t MAX_SPECTATOR_LIST = 512;
 constexpr size_t MAX_EVENTS_PER_MSG = 1024;       // Client lehnt > 4096 ab (Protocol.cpp)
 
