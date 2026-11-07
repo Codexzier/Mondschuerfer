@@ -1892,7 +1892,15 @@ void World::UpdateBullets(float dt) {
             for (auto& t : troopers)
                 if (t.playerId < 0 && !t.down && t.faction != b.faction && SegmentNearTrooper(from, b.pos, t, 1.0f))
                     NoticeShooter(t, b.ownerTrooper);
-            if (b.pos.y <= 0.0f || TrooperBlocked(b.pos)) {
+            // Weltraumkarte: kein Boden, nur Decks; Treffer der Bodenpiraten an
+            // der Raumstation ziehen von ihrem Zustand ab
+            if (space ? InDeck(b.pos) || TrooperBlocked(b.pos) : b.pos.y <= 0.0f || TrooperBlocked(b.pos)) {
+                if (space && b.faction == Faction::Pirate)
+                    for (const SpaceStation& st : spaceStations)
+                        if (Dist2D(st.pos, b.pos) < st.r + 0.5f) {
+                            DamageSpaceStation(b.damage);
+                            break;
+                        }
                 b.life = 0.0f;
                 SpawnSparks({b.pos.x, std::max(b.pos.y, 0.05f), b.pos.z}, Color{255, 200, 90, 255}, 4);
             }

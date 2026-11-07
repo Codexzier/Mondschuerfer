@@ -466,6 +466,8 @@ static void TrooperMinimap(const World& w, const Trooper& t, int homeGate) {
         const Vector2 m = map(st.pos);
         DrawRectangleV({m.x - 4 * s, m.y - 4 * s}, {8 * s, 8 * s}, StationColor(st.type));
     }
+    for (const SpaceStation& st : w.spaceStations)   // Weltraumkarte: die Raumstation, die das Team verteidigt
+        DrawCircleLinesV(map(st.pos), st.r / (2 * half) * r.width, Color{110, 215, 225, 200});
     const float pulse = 0.5f + 0.5f * sinf(w.time * 5.0f);
     for (size_t i = 0; i < w.stargates.size(); ++i) {
         const Vector2 m = map(w.stargates[i].pos);
@@ -566,7 +568,7 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
     DrawCircleV({cx, cy}, 1.5f * s, cc);
 
     const Color yellow{255, 225, 90, 255};
-    Rectangle pr{16 * s, 16 * s, 300 * s, 200 * s};
+    Rectangle pr{16 * s, 16 * s, 300 * s, (w.space ? 250 : 200) * s};
     Panel(pr);
     float x = pr.x + 18 * s, y = pr.y + 14 * s, bw = pr.width - 36 * s;
     Text("SG-TEAM", x, y, 20 * s, MUTED);
@@ -582,8 +584,19 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
     if (t.reloadT > 0.0f) Bar({x, y + 42 * s, bw, 6 * s}, 1.0f - t.reloadT / cfg::TROOPER_RELOAD, Color{255, 200, 120, 255});
     y += 56 * s;
     const bool items = w.HasItems();   // Einsatzkarte mit Fundstücken statt Kristallplätzen
-    Text(items ? "FUNDE" : "PROBEN", x, y, 18 * s, MUTED);
-    TextRight(TextFormat("%d / %d", t.samples, w.SampleGoal()), x + bw, y, 18 * s, yellow);
+    if (w.space) {
+        // Weltraumkarte: Zustand der Raumstation und die Wellen
+        const float st = w.stationMaxHp > 0.0f ? w.stationHp / w.stationMaxHp : 0.0f;
+        StatBar(x, y, bw, "RAUMSTATION", TextFormat("%.0f %%", 100.0f * st), st, st < 0.3f ? BAD : Color{110, 215, 225, 255});
+        y += 48 * s;
+        Text(TextFormat("WELLEN %d / %d", w.wavesCleared, cfg::SPACE_WAVES), x, y, 18 * s, MUTED);
+        if (w.wavesCleared >= cfg::SPACE_WAVES) TextRight("alle abgewehrt", x + bw, y, 18 * s, GOOD);
+        else if (w.waveLeft > 0) TextRight(TextFormat("Welle %d: %d Gegner", w.wave, w.waveLeft), x + bw, y, 18 * s, Color{255, 160, 90, 255});
+        else TextRight(TextFormat("nächste in %.0f s", ceilf(w.waveT)), x + bw, y, 18 * s, yellow);
+    } else {
+        Text(items ? "FUNDE" : "PROBEN", x, y, 18 * s, MUTED);
+        TextRight(TextFormat("%d / %d", t.samples, w.SampleGoal()), x + bw, y, 18 * s, yellow);
+    }
 
     // Kameraden (NPC) unter dem Panel: Name und Schild, gefallene mit Restzeit
     // bis zur Rückkehr
@@ -613,6 +626,12 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
                                 cfg::SAMPLE_TIME),
                      W * 0.5f, hr.y + 12 * s, 22 * s, yellow);
         Bar({hr.x + 20 * s, hr.y + 44 * s, hr.width - 40 * s, 16 * s}, t.sampleT / cfg::SAMPLE_TIME, yellow);
+    } else if (!t.down && w.AtRestPoint(t.pos)) {
+        const char* hint = "Trägerschiff: Schild und Munition werden aufgefüllt";
+        const float tw = Width(hint, 22 * s) + 40 * s;
+        const Rectangle hr{W * 0.5f - tw * 0.5f, H - 90 * s, tw, 46 * s};
+        Panel(hr);
+        TextCentered(hint, W * 0.5f, hr.y + 12 * s, 22 * s, SHIELD);
     } else if (!t.down && w.SampleTarget(t.pos, cfg::SAMPLE_RANGE) >= 0) {
         const std::string hint = controls::KeyHint(controls::Act::Scan) + (items ? " halten: aufnehmen" : " halten: Probe nehmen");
         const float tw = Width(hint, 26 * s) + 40 * s;
@@ -656,7 +675,10 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
             TextCentered("Stargate offen: die Treppe hinauf und hindurch", W * 0.5f, hy, 20 * s, GOOD);
         else if (homeGate)
             TextCentered("Stargate wird angewählt ...", W * 0.5f, hy, 20 * s, ac);
-        else if (t.samples >= w.SampleGoal())
+        else if (w.space && w.wavesCleared >= cfg::SPACE_WAVES)
+            TextCentered(TextFormat("Alle Wellen abgewehrt: zum Stargate auf dem Trägerschiff (näher als %.0f m)", cfg::GATE_RETURN_RANGE),
+                         W * 0.5f, hy, 20 * s, yellow);
+        else if (!w.space && t.samples >= w.SampleGoal())
             TextCentered(TextFormat("Alle %s: zu einem Stargate (näher als %.0f m)", items ? "Funde" : "Proben", cfg::GATE_RETURN_RANGE),
                          W * 0.5f, hy, 20 * s, yellow);
     }

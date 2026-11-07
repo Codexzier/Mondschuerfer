@@ -2584,6 +2584,11 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
             t.age = foot->age;
             t.sgTime = fps->sgTime;
             t.sgPirates = ClampU16(fps->sgPirates);
+            t.wave = static_cast<uint8_t>(std::clamp(w.wave, 0, 255));
+            t.wavesCleared = static_cast<uint8_t>(std::clamp(w.wavesCleared, 0, 255));
+            t.waveLeft = ClampU16(w.waveLeft);
+            t.waveT = w.waveT;
+            t.stationHp = w.stationHp;
         }
     }
 

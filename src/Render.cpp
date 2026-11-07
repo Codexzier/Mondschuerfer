@@ -699,7 +699,11 @@ const SkyLook kSkies[] = {
     {{222, 146, 108, 255}, {206, 148, 120, 255}, 30.0f, 120.0f, 0.8f, {1.0f, 0.8f, 0.66f}},       // Abend
     {{12, 16, 32, 255}, {14, 18, 34, 255}, 12.0f, 60.0f, 0.92f, {0.42f, 0.5f, 0.78f}},            // Nacht
 };
+// Weltraumkarte: fast schwarz, kaum Dunst (Station und Trägerschiff sollen
+// von weitem zu sehen sein), kühles, etwas helleres Licht als die Nacht
+const SkyLook kSpaceSky{{6, 8, 18, 255}, {10, 12, 26, 255}, 60.0f, 240.0f, 0.5f, {0.72f, 0.78f, 0.98f}};
 const SkyLook& SkyOf(MapSky s) { return kSkies[std::clamp(static_cast<int>(s), 0, 2)]; }
+const SkyLook& SkyOf(const World& w) { return w.space ? kSpaceSky : SkyOf(w.mapSky); }
 
 // Bodenfarbe je MapGround als Faktor auf die graue Bodenplatte (terrain)
 const Color kGrounds[] = {
@@ -711,7 +715,7 @@ const Color kGrounds[] = {
 
 } // namespace
 
-Color World::ClearColor() const { return instance ? SkyOf(mapSky).sky : Color{14, 17, 26, 255}; }
+Color World::ClearColor() const { return instance ? SkyOf(*this).sky : Color{14, 17, 26, 255}; }
 
 // Das Wurmloch eines Stargates (Welt und Command Center). Der Ring der
 // Kit-Modelle gate_simple/gate_complex hat seine Mitte 0,585 über dem
@@ -981,13 +985,14 @@ void main() {
 }
 )";
 
-// Die Skybox zu sky und seed (geladen), nullptr, wenn das Bild fehlt
-const SkyBox* SkyBoxFor(MapSky sky, unsigned int seed) {
+// Die Skybox zu sky und seed (geladen), nullptr, wenn das Bild fehlt.
+// Weltraumkarte (space): immer space.
+const SkyBox* SkyBoxFor(MapSky sky, unsigned int seed, bool space) {
     static const char* const kNames[3][2] = {
         {"skybox-day", "skybox-alien"}, {"skybox-morning", "skybox-alien"}, {"skybox-night", "skybox-space"}};
     static SkyBox box;
     static std::string failed;   // Bild, das nicht ging (nicht jedes Bild neu versuchen)
-    const char* name = kNames[std::clamp(static_cast<int>(sky), 0, 2)][SkyHash(seed) & 1u];
+    const char* name = space ? "skybox-space" : kNames[std::clamp(static_cast<int>(sky), 0, 2)][SkyHash(seed) & 1u];
     if (box.name == name) return &box;
     if (failed == name) return nullptr;
     const std::string path = g_assets.AssetDir() + "skyboxes/" + name + ".png";
@@ -1094,10 +1099,10 @@ void World::Draw(const Camera3D& cam) const {
     // zu Fuß mit Skybox (siehe Himmel unten) in der Farbe ihres Horizonts.
     const float sand = tiltshift::Active() && cullR < 200.0f ? g_clientConfig.sandstorm : 0.0f;
     const Trooper* foot = me.role == PlayerRole::Trooper ? FindTrooper(me.trooperId) : nullptr;
-    const SkyBox* box = foot && instance ? SkyBoxFor(mapSky, seed) : nullptr;
-    const Color haze = box ? box->horizon : SkyOf(mapSky).haze;
+    const SkyBox* box = foot && instance ? SkyBoxFor(mapSky, seed, space) : nullptr;
+    const Color haze = box ? box->horizon : SkyOf(*this).haze;
     if (instance) {
-        const SkyLook& sk = SkyOf(mapSky);
+        const SkyLook& sk = SkyOf(*this);
         fx::SetHaze(focus, haze, sk.near, sk.far, sk.k);
         g_assets.SetLight(sk.light);
     } else {
@@ -1151,7 +1156,7 @@ void World::Draw(const Camera3D& cam) const {
         fx::SetFog(focus, 0.0f, time);
         DrawSkyCarriers(cam, time);
         if (instance) {
-            const SkyLook& sk = SkyOf(mapSky);
+            const SkyLook& sk = SkyOf(*this);
             fx::SetHaze(focus, haze, sk.near, sk.far, sk.k);
         } else {
             fx::SetFog(focus, sand, time);
@@ -1167,13 +1172,14 @@ void World::Draw(const Camera3D& cam) const {
     // Der tint wird mit der (umgefärbten) Gesteinsfarbe multipliziert.
     // Beim orangefarbenen Mond (Originalfarbe) den Boden kaum abdunkeln
     // Einsatzkarte: in der Farbe ihres Bodens, das Spielfeld (fieldHalf) etwas heller.
-    if (instance) {
+    // Weltraumkarte: kein Boden (die Decks sind Teile der Karte).
+    if (instance && !space) {
         const Color g = kGrounds[std::clamp(static_cast<int>(mapGround), 0, 3)];
         const Color dark{static_cast<unsigned char>(g.r * 0.8f), static_cast<unsigned char>(g.g * 0.8f),
                          static_cast<unsigned char>(g.b * 0.8f), 255};
         g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), dark);
         g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, fieldHalf * 2.0f + 1.0f), g);
-    } else {
+    } else if (!instance) {
         g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), orangeMoon ? Color{150, 140, 136, 255} : Color{120, 120, 128, 255});
         g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, cfg::WORLD_HALF * 2.0f + 30.0f),
                       orangeMoon ? Color{225, 218, 214, 255} : Color{176, 176, 184, 255});
@@ -1185,7 +1191,7 @@ void World::Draw(const Camera3D& cam) const {
     // Stufe 1 Gras (20 m) statt der Steine, der Friedhof graue Feldsteine.
     const int stoneLevel = g_clientConfig.groundStones;
     if (instance) {
-        if (stoneLevel >= 1 && me.role == PlayerRole::Trooper) {
+        if (stoneLevel >= 1 && me.role == PlayerRole::Trooper && !space) {
             if (mapTheme == MapTheme::Graveyard) DrawGroundStones(*this, focus, cam.position, 28.0f);
             else DrawGroundGrass(*this, focus, cam.position, 20.0f);
         }

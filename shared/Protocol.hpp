@@ -84,7 +84,9 @@ namespace net {
 // Version 14: SnapTrooper::hp (HP-Balken über Gegnern), Sfx::DryFire.
 // Version 15: Event-Editor im Spiel (Welcome::roles, EventOpen, EventEdit, EventList, ErrorCode NoPermission).
 // Version 16: Fundstücke auf Einsatzkarten (Kartenteile marker_item_*, NetDeposit::variant ab 3).
-constexpr uint16_t PROTOCOL_VERSION = 16;
+// Version 17: Weltraumkarte (MapTheme::Space, Kartenteile für Decks, Raumstationen und
+//             Trägerschiffe; SnapMeTrooper: Wellen und Zustand der Raumstation).
+constexpr uint16_t PROTOCOL_VERSION = 17;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -431,6 +433,11 @@ struct SnapMeTrooper {
     float age = 0;
     float sgTime = 0;             // Dauer des Einsatzes
     uint16_t sgPirates = 0;       // im Einsatz ausgeschaltete Bodenpiraten
+    // Weltraumkarte (World::wave ...): Wellen und Zustand der Raumstation
+    uint8_t wave = 0, wavesCleared = 0;
+    uint16_t waveLeft = 0;
+    float waveT = 0;
+    float stationHp = 0;
 };
 
 // Eigener Zustand (nur für Spieler) – genau genug für die Vorhersage

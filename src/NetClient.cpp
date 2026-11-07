@@ -1428,6 +1428,12 @@ void NetClient::Impl::ApplyFoot(const net::SnapMe& me) {
     ps.trooperId = ft.id;
     ps.sgTime = ft.sgTime;
     ps.sgPirates = ft.sgPirates;
+    // Weltraumkarte: Wellen und Zustand der Station (HUD)
+    world.wave = ft.wave;
+    world.wavesCleared = ft.wavesCleared;
+    world.waveLeft = ft.waveLeft;
+    world.waveT = ft.waveT;
+    world.stationHp = ft.stationHp;
 
     // Neue Figur (gerade durch das Tor): frisch einrichten. Den Blick gibt
     // der Server vor (vom Tor weg); Multiplayer.cpp übernimmt ihn für die

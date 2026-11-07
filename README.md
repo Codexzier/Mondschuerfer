@@ -159,9 +159,10 @@ Texteingaben (Serveradresse, Name, Passwort) brauchen die Tastatur.
 SG-Team beginnst du im **Command Center**. Dort stellst du mit *Kameraden* 0 bis 3 Kameraden ein,
 rechts steht das Scoreboard deiner Einsätze (beste zuerst). *Ziel* wählt, wohin das Tor führt:
 *Mondkarte (gemeinsam)* oder eine **Einsatzkarte**; rechts unter dem Scoreboard zeigt eine
-Vorschau ihren Grundriss. Mitgeliefert sind vier Einsatzkarten: *Marktflecken* (Dorf mit Marktplatz
+Vorschau ihren Grundriss. Mitgeliefert sind fünf Einsatzkarten: *Marktflecken* (Dorf mit Marktplatz
 und Stadtmauer, Tag), *Dunkelwald* (Wald mit Lichtungen und Wassermühle, Abend), *Gruftberg*
-(Friedhof mit Krypta, drumherum alter Friedhof, Gruftfeld, Totenacker und Kapellenruine, Nacht) und *Mühlental* (Höfe, Felder, Mühlen und Waldrand, Tag). Dazu kommen
+(Friedhof mit Krypta, drumherum alter Friedhof, Gruftfeld, Totenacker und Kapellenruine, Nacht), *Mühlental* (Höfe, Felder, Mühlen und Waldrand, Tag)
+und die Weltraumkarte *Sternenwacht* (Raumstation mit Andockplätzen und Trägerschiff). Dazu kommen
 eigene Einsatzkarten aus dem Karteneditor (Ordner `karten`).
 *Tor anwählen* öffnet nach 3 Sekunden das Wurmloch, und das Team kommt auf der Mondkarte an einem
 der Stargates heraus bzw. am Stargate der Einsatzkarte, die Kameraden kurz nacheinander. Eine
@@ -173,7 +174,18 @@ dem Thema Friedhof sind die Gegner
 schießen nicht, sondern schlagen aus der Nähe zu. Zuerst dösen sie vor sich hin. Wach werden sie,
 wenn du oder ein Kamerad zu nah kommt, in der Nähe sprintet (Umschalt) oder schießt; ein wacher
 Zombie weckt alle um sich herum, so pflanzt sich der Alarm fort. Sie kreisen euch von mehreren
-Seiten ein und stürmen auf den letzten Metern los. Auftrag und Punkte sind dieselben. *Als Pilot
+Seiten ein und stürmen auf den letzten Metern los. Auftrag und Punkte sind dieselben.
+
+Auf einer **Weltraumkarte** (Thema Weltraum) gibt es keinen Boden: Das Team läuft auf Decks, die im
+All schweben, und wer über eine Kante ohne Geländer läuft, stürzt ab und ist gefallen. Das Stargate
+steht auf dem Hangardeck vor dem **Trägerschiff**; dort kommt das Team an, und dort ist der
+**Rückzugspunkt**: Der Schild lädt sofort und schnell, die Ersatzmunition wird wieder voll.
+Statt Fundstücken verteidigt ihr die **Raumstation** gegen **5 Angriffswellen** von Bodenpiraten,
+die an den Gegner-Startplätzen (Andockplätzen) ankommen und ohne anderes Ziel auf die Station
+schießen. Jede Welle ist größer als die vorige; die erste kommt 20 Sekunden nach der Ankunft, die
+nächste 20 Sekunden, nachdem die vorige abgewehrt ist. Links oben stehen der Zustand der Station und
+die Wellen. Fällt die Station, ist der Einsatz gescheitert; nach der fünften Welle geht es durch das
+Stargate auf dem Trägerschiff zurück. Jede abgewehrte Welle bringt 100 Punkte. *Als Pilot
 spielen* führt zurück ins Schiff; umgekehrt bringt dich an der Handelsstation der Knopf *Als
 SG-Team spielen* ins Command Center.
 
@@ -312,16 +324,22 @@ glimmen.
 
   Eine **Einsatzkarte** ist ein eigenes Spielfeld für das SG-Team mit Teilen aus dem Fantasy Town
   Kit und dem Graveyard Kit (Mauern, Dächer und Treppen, Dorf, Wege, Natur, Friedhof,
-  Friedhofsmauer, Hof & Mühle, Gruft & Licht). Oben im Werkzeugfenster stellst du Thema (Dorf,
-  Wald, Friedhof; Friedhof bringt Zombies), Größe (60 bis 160 m), Boden und Himmel (Tag, Abend,
-  Nacht) ein. Mauern, Treppen und Deko sind für die Figuren Hindernisse. Mauern, Zäune und Hecken
+  Friedhofsmauer, Hof & Mühle, Gruft & Licht) und für den Weltraum (Decks, Weltraum,
+  Ausstattung). Oben im Werkzeugfenster stellst du Thema (Dorf, Wald, Friedhof, Weltraum;
+  Friedhof bringt Zombies), Größe (60 bis 160 m), Boden und Himmel (Tag, Abend, Nacht) ein; eine
+  Weltraumkarte hat keinen Boden und immer den Weltraumhimmel. Die Figuren laufen dort nur auf den
+  *Decks*; unter *Weltraum* stehen die beiden Raumstationen und Trägerschiffe, unter *Ausstattung*
+  Geländer, Wände, Container und Konsolen. Mauern, Treppen und Deko sind für die Figuren Hindernisse. Mauern, Zäune und Hecken
   stehen an einer Kante ihres Felds (mit R die Kante wählen), mehrere Mauern in einem Feld bleiben
-  stehen. Mit Q/E wählst du die Ebene, so stehen Dächer auf den Mauern. Die vier mitgelieferten
+  stehen. Mit Q/E wählst du die Ebene, so stehen Dächer auf den Mauern. Die mitgelieferten
   Einsatzkarten lassen sich ebenso öffnen; gespeichert wird dann eine eigene Kopie im Ordner
   `karten`, die die mitgelieferte ersetzt. Unter
   *Markierungen* setzt du das Stargate (genau eins), Fundstücke (Kiste, Fass, Urne, Kelch, Laterne,
   Kürbis, Schaufel, Knochen; gemischt erlaubt) und Gegner-Startplätze; gespeichert wird erst mit
   einem Stargate und mindestens 5 Fundstücken. Ältere Karten mit Kristallplätzen laufen weiter.
+  Eine Weltraumkarte braucht statt der Fundstücke eine Raumstation und mindestens einen
+  Gegner-Startplatz (dort kommen die Wellen an); das Stargate gehört auf ein Deck beim
+  Trägerschiff.
 
   | Eingabe | Wirkung |
   |---|---|
@@ -391,7 +409,7 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
   Betreiber freigegeben hat; ändert er es, melden sich alle neu bereit). Alle melden *Bereit*, der
   Gründer wählt das Tor an; das Team kommt nacheinander durch dasselbe Stargate auf die Mondkarte bzw.
   auf seine Einsatzkarte – eine eigene Welt nur für dieses Team (keine Schiffe, die Kristalle werden
-  nach der Probe nur grün, auf dem Friedhof Zombies). Die Einsatzkarten kommen mit *An Server senden*
+  nach der Probe nur grün, auf dem Friedhof Zombies, im Weltraum Gegnerwellen). Die Einsatzkarten kommen mit *An Server senden*
   aus dem Karteneditor auf den Server und werden auf der Verwaltungsseite freigegeben. Die Kameraden
   sind die Mitspieler (keine NPC-Kameraden), die Gegner Bodenpiraten. Die Proben (Standard 5) zählen für das
   ganze Team; nach dem Einsatz ist das Team wieder zusammen im Command Center. Allein geht es mit

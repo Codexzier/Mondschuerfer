@@ -497,6 +497,10 @@ void World::UpdateConvoy(Ship& s, float dt) {
 //            ab ZOMBIE_RUSH_CELLS, schlägt aus der Nähe zu (ZOMBIE_REACH, alle
 //            ZOMBIE_HIT_INTERVAL Sekunden). Er schießt nicht und flieht nie;
 //            ohne Ziel schläft er nach ZOMBIE_SLEEP wieder ein.
+//   Angreifer einer Welle (Trooper::raider, Weltraumkarte): ein Bodenpirat,
+//            der statt auf Streife zu gehen zur nächsten Raumstation läuft
+//            und aus RAIDER_RANGE auf ihre Hülle schießt. Sieht er eine
+//            Figur, kämpft er wie die anderen.
 // Ziel: alle 0,3 bis 0,5 s der nächste Gegner bis zur Sichtweite
 // (TROOPER_SIGHT_CELLS Rasterfelder der Karte, für alle KI-Figuren gleich) mit
 // freier Sichtlinie (TrooperLineClear). Wer getroffen wird, nimmt den Schützen ins
@@ -594,6 +598,7 @@ void World::AlertGroup(const Trooper& t, Vector3 where, int targetId) {
     for (float side : {first, -first}) {
         const Vector3 f = Vector3Add(where, Vector3Add(Vector3Scale(n, side * sight * 0.7f), Vector3Scale(u, sight * 0.2f)));
         if (fabsf(f.x) > lim || fabsf(f.z) > lim || TrooperBlocked({f.x, 0.1f, f.z})) continue;
+        if (space && !OverDeck({f.x, flanker->pos.y, f.z})) continue;   // Weltraumkarte: dort ist kein Deck
         flanker->ai = TrooperAiState::Flank;
         flanker->goal = {f.x, 0.0f, f.z};
         flanker->coverT = 12.0f;   // spätestens dann greift er an
@@ -796,6 +801,7 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
         return false;
     };
     bool fighting = false;   // zum Ziel schauen und schießen
+    bool siege = false;      // Angreifer: auf die Raumstation schießen
     if (!pirate) {
         if (const Trooper* leader = FindTrooper(t.leaderId); leader && !leader->down) {
             const Vector3 slot = MateSlot(*leader, t.slot);
@@ -809,6 +815,18 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
             }
         }
         fighting = target != nullptr;
+    } else if (t.ai == TrooperAiState::Patrol && t.raider && !spaceStations.empty()) {
+        // zur nächsten Station (Abstand zur Hülle), dann auf Augenhöhe zu ihrer Mitte schießen
+        const SpaceStation* st = &spaceStations[0];
+        for (const SpaceStation& o : spaceStations)
+            if (Dist2D(o.pos, t.pos) - o.r < Dist2D(st->pos, t.pos) - st->r) st = &o;
+        faceYaw = YawTowards(t.pos, st->pos);
+        if (Dist2D(st->pos, t.pos) - st->r > cfg::RAIDER_RANGE) {
+            move = Vector3Scale(toward(st->pos), 0.7f);
+        } else {
+            siege = true;
+            if (t.mag == 0) in.reload = true;
+        }
     } else if (t.ai == TrooperAiState::Patrol) {
         if (Dist2D(t.goal, t.pos) < 0.8f) {
             t.waitT -= dt;
@@ -953,7 +971,8 @@ void World::UpdateTrooperAi(Trooper& t, float dt) {
     in.yaw += std::clamp(AngleDiff(in.yaw, faceYaw), -turn, turn);
     in.pitch += std::clamp(facePitch - in.pitch, -turn, turn);
     const bool ready = !soldier || (t.reactT <= 0.0f && t.burstT <= 0.0f && t.mag > 0);
-    if (fighting && ready && t.seesTarget && fabsf(AngleDiff(in.yaw, aimYaw)) < 0.12f && fabsf(aimPitch - in.pitch) < 0.15f)
+    if (((fighting && t.seesTarget) || siege) && ready && fabsf(AngleDiff(in.yaw, aimYaw)) < 0.12f &&
+        fabsf(aimPitch - in.pitch) < 0.15f)
         in.fire = true;
 
     // --- Festgelaufen? Springen und seitlich ausweichen ------------------------------

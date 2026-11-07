@@ -425,5 +425,16 @@ constexpr int SG_POINTS_SAMPLE = 100;         // Punkte je zurückgebrachte Prob
 constexpr int SG_POINTS_PIRATE = 25;          // ... je ausgeschalteten Bodenpiraten (auch bei einem gescheiterten Einsatz)
 constexpr int SG_POINTS_RETURN = 200;         // ... für die Rückkehr durch das Stargate
 constexpr int SG_LOG_MAX = 100;               // so viele Einsätze merkt sich der Spielstand (Scoreboard)
+// Weltraumkarte (Einsatzkarte mit dem Thema Weltraum, Trooper.cpp): kein
+// Boden, nur Decks; Wellen von Bodenpiraten greifen die Raumstation an.
+constexpr int SPACE_WAVES = 5;                // so viele Wellen, danach öffnet sich das Stargate zur Rückkehr
+constexpr float SPACE_WAVE_FIRST = 20.0f;     // Sekunden nach der Ankunft bis zur ersten Welle
+constexpr float SPACE_WAVE_PAUSE = 20.0f;     // Pause nach einer abgewehrten Welle
+constexpr float SPACE_STATION_HP = 3000.0f;   // Zustand der Raumstation (Treffer der Bodenpiraten ziehen ab)
+constexpr float SPACE_FALL = 3.0f;            // so tief unter das Deck gestürzt: gefallen (ins All)
+constexpr float SPACE_REST_RANGE = 5.0f;      // Rückzugspunkt: so nah am Stargate auf dem Trägerschiff ...
+constexpr float SPACE_REST_REGEN = 40.0f;     // ... lädt der Schild so schnell (ohne Wartezeit), Munition wird voll
+constexpr float RAIDER_RANGE = 4.0f;          // Angreifer schießen aus so viel Abstand (zur Hülle) auf die Station
+constexpr int SG_POINTS_WAVE = 100;           // Punkte je abgewehrte Welle
 
 } // namespace cfg
