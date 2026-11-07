@@ -84,7 +84,10 @@ constexpr int MAX_LOBBY_CONNECTIONS = 128;        // verbunden, aber (noch) nich
 // Bruchteilen einer Sekunde (siehe GuardHalfOpenPeers).
 constexpr enet_uint32 HALF_OPEN_TIMEOUT_MIN_MS = 1500;
 constexpr enet_uint32 HALF_OPEN_TIMEOUT_MAX_MS = 3000;
-constexpr size_t MAX_PACKET_SIZE = 64 * 1024;     // ENet-Standard wären 32 MB pro Paket (Speicherangriff)
+constexpr size_t MAX_PACKET_SIZE = 64 * 1024;     // empfangene Pakete; ENet-Standard wären 32 MB (Speicherangriff)
+// Einsatzkarten mit Vorschau (MissionMaps) höchstens so groß: knapp unter
+// dem, was der Client annimmt (NetClient: CLIENT_MAX_PACKET = 1 MB)
+constexpr size_t MAX_MISSION_MAPS_BYTES = 1000 * 1024;
 constexpr size_t MAX_WAITING_DATA = 256 * 1024;   // unverarbeitete Daten pro Verbindung
 constexpr int INPUT_QUEUE_MAX = 6;                // ältere Eingaben verwerfen (HandleInput)
 // Regelung der Eingabe-Warteschlange (ApplyInputs): Liegen eine Sekunde lang
@@ -1880,7 +1883,8 @@ std::vector<const ServerMap*> GameServer::MissionMaps() const {
 // Ziele im Command Center für heute (shared/MapEvents.hpp): freigegebene
 // Einsatzkarten und die Karten der heutigen Events, ohne die heute
 // gesperrten. Reihenfolge wie die Kartenliste (nach Name), höchstens
-// net::MAX_MISSION_MAPS; sind es mehr, gehen die freigegebenen vor (davon
+// net::MAX_MISSION_MAPS und zusammen höchstens MAX_MISSION_MAPS_BYTES in der
+// Nachricht MissionMaps; sind es mehr, gehen die freigegebenen vor (davon
 // gibt es höchstens so viele, siehe ApplyMapCommands). Ändert sich etwas, bekommen die Clients die neue
 // Liste (MissionMaps); Teams, deren Ziel wegfällt, zielen wieder auf die
 // Mondkarte. Laufende Einsätze gehen zu Ende.
@@ -1894,15 +1898,24 @@ void GameServer::UpdateMissionMaps() {
         }
     auto has = [](const std::vector<std::string>& v, const std::string& f) { return std::find(v.begin(), v.end(), f) != v.end(); };
     auto usable = [&](const ServerMap& sm) { return sm.map.kind == MapKind::Mission && !has(locked, sm.file); };
-    long long quota = net::MAX_MISSION_MAPS;   // Plätze für Karten, die nur ein Event zulässt
+    // Zwei Durchgänge, damit die freigegebenen vorgehen: erst sie, dann die
+    // Karten, die nur ein Event zulässt. bytes zählt die Größe in MissionMaps.
+    std::vector<std::string> chosen;
+    size_t bytes = 0;
+    for (int pass = 0; pass < 2; ++pass)
+        for (const ServerMap& sm : accounts_.Maps()) {
+            if (!usable(sm) || chosen.size() >= static_cast<size_t>(net::MAX_MISSION_MAPS)) continue;
+            if (pass == 0 ? !sm.released : sm.released || !has(extra, sm.file)) continue;
+            net::MissionMapsMsg one;
+            one.maps.push_back(sm.map);
+            const size_t size = net::Encode(one).size();
+            if (bytes + size > MAX_MISSION_MAPS_BYTES) continue;
+            bytes += size;
+            chosen.push_back(sm.file);
+        }
+    std::vector<std::string> files;   // in der Reihenfolge der Kartenliste
     for (const ServerMap& sm : accounts_.Maps())
-        if (sm.released && usable(sm)) --quota;
-    std::vector<std::string> files;
-    for (const ServerMap& sm : accounts_.Maps()) {
-        if (!usable(sm) || files.size() >= static_cast<size_t>(net::MAX_MISSION_MAPS)) continue;
-        if (sm.released) files.push_back(sm.file);
-        else if (has(extra, sm.file) && quota-- > 0) files.push_back(sm.file);
-    }
+        if (has(chosen, sm.file)) files.push_back(sm.file);
     if (files == missionFiles_) return;
     for (const std::string& f : missionFiles_)
         if (!has(files, f)) ForgetTarget(f);
@@ -2304,9 +2317,17 @@ void GameServer::Send(Client& c, const std::vector<uint8_t>& bytes, bool reliabl
     ENetPacket* packet = enet_packet_create(bytes.data(), bytes.size(), flags);
     if (!packet) return;
     const enet_uint8 channel = static_cast<enet_uint8>(reliable ? net::CHANNEL_RELIABLE : net::CHANNEL_UNRELIABLE);
+    // ENet prüft MAX_PACKET_SIZE auch beim Senden und verwirft größere Pakete
+    // stillschweigend (z. B. die Einsatzkarten mit Vorschau, schon ab drei,
+    // vier großen Karten). Die Grenze soll nur den Empfang schützen, deshalb
+    // gilt sie für diesen Aufruf nicht. Empfangen wird erst wieder in
+    // enet_host_service, im selben Thread.
+    const size_t limit = host_->maximumPacketSize;
+    host_->maximumPacketSize = std::max(limit, bytes.size());
     // Bei Erfolg gehört das Paket ENet. Bei einem Fehler (z. B. Verbindung
     // gerade getrennt) müssen wir es selbst freigeben.
     if (enet_peer_send(c.peer, channel, packet) < 0 && packet->referenceCount == 0) enet_packet_destroy(packet);
+    host_->maximumPacketSize = limit;
 }
 
 void GameServer::SendToAllInGame(const std::vector<uint8_t>& bytes) {
@@ -3078,7 +3099,9 @@ void GameServer::ApplyMapCommands() {
                 MapNotice("Einsatzkarte \"" + name + "\" ist " +
                           (release ? "für die SG-Teams freigegeben." : "gesperrt. Laufende Einsätze dort gehen noch zu Ende.") +
                           (release != MissionAvailable(cmd.arg)
-                               ? std::string(release ? " Heute sperrt sie ein Event." : " Heute bleibt sie über ein Event wählbar.")
+                               ? std::string(release ? " Heute ist sie trotzdem nicht wählbar (ein Event sperrt sie, "
+                                                       "oder die Liste im Command Center ist voll)."
+                                                     : " Heute bleibt sie über ein Event wählbar.")
                                : std::string()));
                 break;
             }
