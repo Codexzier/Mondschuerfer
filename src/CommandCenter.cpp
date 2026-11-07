@@ -54,7 +54,7 @@ Stargate HomeGate() {
 // Vorschaubild einer Einsatzkarte im Rechteck r: Boden in seiner Farbe, darauf
 // die Grundrisse der Teile (SegmentBounds, gedreht wie in der Welt) – erst
 // Wege, dann alles andere ohne Dächer, zuletzt die Markierungen: Stargate
-// blau, Kristallplätze gelb, Gegner-Startplätze rot.
+// blau, Fundstücke und Kristallplätze gelb, Gegner-Startplätze rot.
 void DrawMapPreview(const GameMap& m, Rectangle r) {
     static const Color grounds[] = {{92, 128, 68, 255}, {118, 94, 68, 255}, {118, 118, 122, 255}, {192, 174, 128, 255}};
     DrawRectangleRec(r, grounds[std::clamp(static_cast<int>(m.ground), 0, 3)]);
@@ -66,8 +66,8 @@ void DrawMapPreview(const GameMap& m, Rectangle r) {
             const bool marker = IsMarker(q.model);
             if ((pass == 0) != flat || (pass == 2) != marker || has(q.model, "roof") || has(q.model, "chimney")) continue;
             const Vector2 p{r.x + (q.x + half) * k, r.y + (q.z + half) * k};
-            if (q.model == MARKER_CRYSTAL || q.model == MARKER_ENEMY) {
-                const bool crystal = q.model == MARKER_CRYSTAL;
+            if (IsSampleSpot(q.model) || q.model == MARKER_ENEMY) {
+                const bool crystal = IsSampleSpot(q.model);   // Kristallplatz oder Fundstück: gelb
                 DrawCircleV(p, std::max(3.0f, (crystal ? 1.4f : 1.1f) * k),
                             crystal ? Color{255, 220, 40, 255} : Color{230, 50, 40, 255});
                 continue;
@@ -267,7 +267,8 @@ CommandAction CommandCenterScreen::Draw(World& w) {
     const MapFileInfo* mission = target_ > 0 ? &targets_[static_cast<size_t>(target_ - 1)] : nullptr;
     const std::string brief[] = {
         mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
-        TextFormat("Sammle %d Proben an gelben Kristallen.", cfg::SAMPLE_GOAL),
+        mission && MapHasItems(preview_) ? TextFormat("Sammle %d Fundstücke ein.", cfg::SAMPLE_GOAL)
+                                         : TextFormat("Sammle %d Proben an gelben Kristallen.", cfg::SAMPLE_GOAL),
         "Dann wählt ein Stargate in der Nähe an:",
         "die Treppe hinauf und hindurch.",
         mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!",
@@ -452,12 +453,13 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
     const int target = mine && static_cast<size_t>(mine->target) <= maps.size() ? mine->target : 0;
     const GameMap* mission = target > 0 ? &maps[static_cast<size_t>(target - 1)] : nullptr;
     const bool hasGate = mission || teams.moonGate;   // Einsatzkarten haben immer ein Tor (der Editor prüft es)
-    // Proben-Ziel: auf einer Einsatzkarte höchstens so viele, wie sie Kristallplätze hat (wie World::SampleGoal)
+    // Proben-Ziel: auf einer Einsatzkarte höchstens so viele, wie sie Kristall-
+    // bzw. Fundstück-Plätze hat (wie World::SampleGoal)
     int samples = std::max(1, sampleGoal);
     if (mission) {
         int crystals = 0;
         for (const MapPiece& q : mission->pieces)
-            if (q.model == MARKER_CRYSTAL) ++crystals;
+            if (IsSampleSpot(q.model)) ++crystals;
         samples = std::min(samples, std::max(1, crystals));
     }
 
@@ -493,7 +495,8 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
     Text("AUFTRAG", x, y, 18 * s, MUTED);
     y += 26 * s;
     const std::string brief[] = {mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
-                                 TextFormat("Sammelt %d Proben an gelben Kristallen", samples),
+                                 mission && MapHasItems(*mission) ? TextFormat("Sammelt %d Fundstücke ein", samples)
+                                                                  : TextFormat("Sammelt %d Proben an gelben Kristallen", samples),
                                  "(sie zählen für das ganze Team).", "Dann ein Stargate in der Nähe anwählen:",
                                  "die Treppe hinauf und hindurch.",
                                  mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!"};
@@ -685,7 +688,7 @@ int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal, bool events
           "Ziel: 100.000 Ressourcenpunkte."}},
         {"SG-TEAM", sgTeam ? "Zu Fuß durch das Stargate" : "Auf diesem Server ausgeschaltet",
          {online ? "Start im Command Center: Team gründen oder beitreten." : "Start im Command Center mit Team SG1.",
-          TextFormat("%d Proben an gelben Kristallen sammeln", sampleGoal),
+          TextFormat("%d Proben oder Fundstücke sammeln", sampleGoal),
           "und durch ein Stargate zurückkehren."}},
     };
     const float cw = 460 * s, ch = 250 * s, gap = 40 * s;

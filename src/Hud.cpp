@@ -458,7 +458,7 @@ static void TrooperMinimap(const World& w, const Trooper& t, int homeGate) {
     DrawCircleLinesV(pp, radar / (2 * half) * r.width, Color{255, 255, 255, 35});
     const Color yellow{255, 225, 90, 255}, gateCol{150, 210, 255, 255};
     for (const auto& d : w.deposits) {
-        if (!d.revealed) continue;
+        if (!d.revealed || (d.item && d.sample == Sample::Taken)) continue;   // aufgenommene Fundstücke sind weg
         const Vector2 m = map(d.pos);
         DrawRectangleV({m.x - 2 * s, m.y - 2 * s}, {4 * s, 4 * s}, d.sample == Sample::Yellow ? yellow : GOOD);
     }
@@ -581,7 +581,8 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
     TextRight(TextFormat("/ %d", t.ammo), x + bw, y + 14 * s, 20 * s, t.ammo == 0 ? BAD : MUTED);
     if (t.reloadT > 0.0f) Bar({x, y + 42 * s, bw, 6 * s}, 1.0f - t.reloadT / cfg::TROOPER_RELOAD, Color{255, 200, 120, 255});
     y += 56 * s;
-    Text("PROBEN", x, y, 18 * s, MUTED);
+    const bool items = w.HasItems();   // Einsatzkarte mit Fundstücken statt Kristallplätzen
+    Text(items ? "FUNDE" : "PROBEN", x, y, 18 * s, MUTED);
     TextRight(TextFormat("%d / %d", t.samples, w.SampleGoal()), x + bw, y, 18 * s, yellow);
 
     // Kameraden (NPC) unter dem Panel: Name und Schild, gefallene mit Restzeit
@@ -608,10 +609,12 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
     if (t.sampleId >= 0) {
         const Rectangle hr{W * 0.5f - 300 * s, H - 110 * s, 600 * s, 80 * s};
         Panel(hr);
-        TextCentered(TextFormat("PROBE WIRD GENOMMEN ...  %.1f / %.0f s", t.sampleT, cfg::SAMPLE_TIME), W * 0.5f, hr.y + 12 * s, 22 * s, yellow);
+        TextCentered(TextFormat("%s ...  %.1f / %.0f s", items ? "FUNDSTÜCK WIRD GEBORGEN" : "PROBE WIRD GENOMMEN", t.sampleT,
+                                cfg::SAMPLE_TIME),
+                     W * 0.5f, hr.y + 12 * s, 22 * s, yellow);
         Bar({hr.x + 20 * s, hr.y + 44 * s, hr.width - 40 * s, 16 * s}, t.sampleT / cfg::SAMPLE_TIME, yellow);
     } else if (!t.down && w.SampleTarget(t.pos, cfg::SAMPLE_RANGE) >= 0) {
-        const std::string hint = controls::KeyHint(controls::Act::Scan) + " halten: Probe nehmen";
+        const std::string hint = controls::KeyHint(controls::Act::Scan) + (items ? " halten: aufnehmen" : " halten: Probe nehmen");
         const float tw = Width(hint, 26 * s) + 40 * s;
         const Rectangle hr{W * 0.5f - tw * 0.5f, H - 90 * s, tw, 50 * s};
         Panel(hr);
@@ -654,8 +657,8 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
         else if (homeGate)
             TextCentered("Stargate wird angewählt ...", W * 0.5f, hy, 20 * s, ac);
         else if (t.samples >= w.SampleGoal())
-            TextCentered(TextFormat("Alle Proben: zu einem Stargate (näher als %.0f m)", cfg::GATE_RETURN_RANGE), W * 0.5f, hy,
-                         20 * s, yellow);
+            TextCentered(TextFormat("Alle %s: zu einem Stargate (näher als %.0f m)", items ? "Funde" : "Proben", cfg::GATE_RETURN_RANGE),
+                         W * 0.5f, hy, 20 * s, yellow);
     }
 
     DrawNotices(w.Me());

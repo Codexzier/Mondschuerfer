@@ -166,8 +166,9 @@ eigene Einsatzkarten aus dem Karteneditor (Ordner `karten`).
 *Tor anwählen* öffnet nach 3 Sekunden das Wurmloch, und das Team kommt auf der Mondkarte an einem
 der Stargates heraus bzw. am Stargate der Einsatzkarte, die Kameraden kurz nacheinander. Eine
 Einsatzkarte ist eine eigene Welt nur für dein Team: ihr Gelände, Himmel und Licht, keine Schiffe,
-die gelben Kristalle an den Kristallplätzen (nach der Probe grün, abgebaut wird dort nichts) und
-die Bodenpiraten an den Gegner-Startplätzen. Auf Karten mit dem Thema Friedhof sind die Gegner
+statt gelber Kristalle **Fundstücke** wie Kisten, Urnen oder Laternen (leuchten gelb; E halten nimmt
+eins auf, es zählt wie eine Probe) und die Bodenpiraten an den Gegner-Startplätzen. Auf Karten mit
+dem Thema Friedhof sind die Gegner
 **Zombies**: viermal so viele Gruppen von je sechs bis zehn, langsamer als du, mit mehr Schild; sie
 schießen nicht, sondern schlagen aus der Nähe zu. Zuerst dösen sie vor sich hin. Wach werden sie,
 wenn du oder ein Kamerad zu nah kommt, in der Nähe sprintet (Umschalt) oder schießt; ein wacher
@@ -318,8 +319,9 @@ glimmen.
   stehen. Mit Q/E wählst du die Ebene, so stehen Dächer auf den Mauern. Die vier mitgelieferten
   Einsatzkarten lassen sich ebenso öffnen; gespeichert wird dann eine eigene Kopie im Ordner
   `karten`, die die mitgelieferte ersetzt. Unter
-  *Markierungen* setzt du das Stargate (genau eins), Kristallplätze und Gegner-Startplätze;
-  gespeichert wird erst mit einem Stargate und mindestens 5 Kristallplätzen.
+  *Markierungen* setzt du das Stargate (genau eins), Fundstücke (Kiste, Fass, Urne, Kelch, Laterne,
+  Kürbis, Schaufel, Knochen; gemischt erlaubt) und Gegner-Startplätze; gespeichert wird erst mit
+  einem Stargate und mindestens 5 Fundstücken. Ältere Karten mit Kristallplätzen laufen weiter.
 
   | Eingabe | Wirkung |
   |---|---|

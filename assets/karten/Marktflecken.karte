@@ -2839,15 +2839,15 @@ piece fantasy-town/pillar-wood -13.925 -8.075 0 1
 piece fantasy-town/pillar-wood -13.925 -5.925 0 1
 piece fantasy-town/roof-gable-end -14.5 -7.5 4.7124 1 1
 piece fantasy-town/roof-gable-end -14.5 -6.5 1.5708 1 1
-piece marker_crystal 3.2 3.2 0 1
-piece marker_crystal -5 -5.6 3.1416 1
-piece marker_crystal -18 2 3.1416 1
-piece marker_crystal 0 -20 1.5708 1
-piece marker_crystal 19 0 4.7124 1
-piece marker_crystal 25 25 1.5708 1
-piece marker_crystal -25 -25 1.5708 1
-piece marker_crystal 13.5 -12.5 0 1
-piece marker_crystal -12.5 13.5 1.5708 1
+piece marker_item_crate 3.2 3.2 0 1
+piece marker_item_barrel -5 -5.6 3.1416 1
+piece marker_item_lantern -18 2 3.1416 1
+piece marker_item_pumpkin 0 -20 1.5708 1
+piece marker_item_crate 19 0 4.7124 1
+piece marker_item_barrel 25 25 1.5708 1
+piece marker_item_lantern -25 -25 1.5708 1
+piece marker_item_pumpkin 13.5 -12.5 0 1
+piece marker_item_crate -12.5 13.5 1.5708 1
 piece marker_enemy 0 -4.5 0 1
 piece marker_enemy 0 -16 4.7124 1
 piece marker_enemy 15 0 3.1416 1
@@ -2977,7 +2977,7 @@ piece fantasy-town/fence -31.5 -9.5 0 1
 piece fantasy-town/fence -31.5 -8.5 0 1
 piece fantasy-town/fence -31.5 -7.5 0 1
 piece fantasy-town/fence -31.5 -6.5 0 1
-piece marker_crystal -35.5 -12 4.7124 1
+piece marker_item_barrel -35.5 -12 4.7124 1
 piece graveyard/hay-bale -35.7302 -15.5056 4.7124 1
 piece graveyard/hay-bale -37.6354 -14.7128 4.7124 1
 piece graveyard/hay-bale -37.3977 -8.1258 0 1

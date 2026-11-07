@@ -83,7 +83,8 @@ namespace net {
 //             yellowShare, sampleGoal, groundPirates und friendlyFire.
 // Version 14: SnapTrooper::hp (HP-Balken über Gegnern), Sfx::DryFire.
 // Version 15: Event-Editor im Spiel (Welcome::roles, EventOpen, EventEdit, EventList, ErrorCode NoPermission).
-constexpr uint16_t PROTOCOL_VERSION = 15;
+// Version 16: Fundstücke auf Einsatzkarten (Kartenteile marker_item_*, NetDeposit::variant ab 3).
+constexpr uint16_t PROTOCOL_VERSION = 16;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -850,7 +851,9 @@ struct ModelIds {
 ModelIds DefaultModelIds();                           // dieselben Modelle wie World::ResolveModels
 uint8_t ShipVariant(const ModelIds& m, int model);    // Index in m.ships
 int ShipModel(const ModelIds& m, uint8_t variant);
-uint8_t DepositVariant(const ModelIds& m, int model); // 0..2
+// 0..2 Kristalle, ab 3 Fundstücke (3 + Stelle in MapItems())
+uint8_t DepositVariant(const ModelIds& m, int model);
 int DepositModel(const ModelIds& m, uint8_t variant);
+bool DepositIsItem(uint8_t variant);
 
 } // namespace net

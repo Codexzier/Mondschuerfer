@@ -1725,11 +1725,17 @@ int ShipModel(const ModelIds& m, uint8_t variant) {
 uint8_t DepositVariant(const ModelIds& m, int model) {
     if (model == m.crystalA) return 1;
     if (model == m.crystalB) return 2;
+    if (const int item = ItemIndexOfModel(model); item >= 0) return static_cast<uint8_t>(3 + item);
     return 0;
 }
 
 int DepositModel(const ModelIds& m, uint8_t variant) {
+    if (DepositIsItem(variant)) return ModelId(MapItems()[variant - 3u].model);
     return variant == 1 ? m.crystalA : (variant == 2 ? m.crystalB : m.crystalSmall);
+}
+
+bool DepositIsItem(uint8_t variant) {
+    return variant >= 3 && variant - 3u < MapItems().size();
 }
 
 } // namespace net

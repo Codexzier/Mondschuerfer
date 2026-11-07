@@ -111,9 +111,10 @@ void EnemyFigure(Vector3 pos, float yaw, Color tint) {
 }
 
 // Ein Teil zeichnen (Vorschau unter dem Zeiger). Markierungen haben kein
-// eigenes Modell: Tor, Kristalle bzw. ein Bodenpirat stehen dafür.
+// eigenes Modell: Tor, Kristalle, das Fundstück bzw. ein Bodenpirat stehen dafür.
 void DrawPiece(const MapPiece& q, Color tint) {
     if (q.model == MARKER_GATE) g_assets.Draw(ModelId("gate_complex"), {q.x, 0.0f, q.z}, q.yaw, q.scale, tint);
+    else if (const MapItem* it = FindItem(q.model)) g_assets.Draw(ModelId(it->model), {q.x, 0.0f, q.z}, q.yaw, it->scale, tint);
     else if (q.model == MARKER_CRYSTAL) g_assets.Draw(ModelId("rock_crystals"), {q.x, 0.0f, q.z}, q.yaw, mapgrid::CRYSTAL_SCALE, tint);
     else if (q.model == MARKER_ENEMY) EnemyFigure({q.x, 0.0f, q.z}, q.yaw, tint);
     else g_assets.Draw(ModelId(q.model), {q.x, MapPieceY(q), q.z}, q.yaw, q.scale, tint);
@@ -529,16 +530,16 @@ void MapEditorScreen::Back() {
     g_audio.Play(Sfx::UiBack);
 }
 
-// Genau ein Stargate (Ankunft und Rückkehr) und genug Kristallplätze für die
-// Proben eines Einsatzes (cfg::SAMPLE_GOAL).
+// Genau ein Stargate (Ankunft und Rückkehr) und genug Fundstücke (bzw. bei
+// älteren Karten Kristallplätze) für die Proben eines Einsatzes (cfg::SAMPLE_GOAL).
 bool MapEditorScreen::CheckMission(std::string& error) const {
     int gates = 0, crystals = 0;
     for (const MapPiece& q : map_.pieces) {
         if (q.model == MARKER_GATE) ++gates;
-        else if (q.model == MARKER_CRYSTAL) ++crystals;
+        else if (IsSampleSpot(q.model)) ++crystals;
     }
     if (gates != 1) error = "Eine Einsatzkarte braucht genau ein Stargate (Reiter \"Markierungen\").";
-    else if (crystals < cfg::SAMPLE_GOAL) error = Fmt("Eine Einsatzkarte braucht mindestens %d Kristallplätze (jetzt %d).", cfg::SAMPLE_GOAL, crystals);
+    else if (crystals < cfg::SAMPLE_GOAL) error = Fmt("Eine Einsatzkarte braucht mindestens %d Fundstücke (jetzt %d).", cfg::SAMPLE_GOAL, crystals);
     return error.empty();
 }
 
@@ -794,6 +795,7 @@ void MapEditorScreen::DrawToolPanel(Rectangle r, float s) {
     const auto& segs = MapSegments();
     for (int i = 0; i < static_cast<int>(segs.size()); ++i) {
         if (static_cast<int>(segs[static_cast<size_t>(i)].group) != group_) continue;
+        if (segs[static_cast<size_t>(i)].model == std::string(MARKER_CRYSTAL)) continue;   // statt Kristallen: Fundstücke
         if (Button({x, y, w, 34 * s}, segs[static_cast<size_t>(i)].label, 18 * s, i == segment_)) {
             segment_ = segment_ == i ? -1 : i;
             g_audio.Play(Sfx::UiMove);
@@ -897,15 +899,15 @@ void MapEditorScreen::DrawEdit() {
     }
     const float ty = H - m - 24 * s;
     if (Mission()) {
-        // Einsatzkarte: die Markierungen (zum Speichern: 1 Stargate, genug Kristallplätze)
+        // Einsatzkarte: die Markierungen (zum Speichern: 1 Stargate, genug Fundstücke)
         int gates = 0, crystals = 0, enemies = 0;
         for (const MapPiece& q : map_.pieces) {
             if (q.model == MARKER_GATE) ++gates;
-            else if (q.model == MARKER_CRYSTAL) ++crystals;
+            else if (IsSampleSpot(q.model)) ++crystals;
             else if (q.model == MARKER_ENEMY) ++enemies;
         }
         std::string error;
-        Text(Fmt("Teile: %d  ·  Stargate: %d  ·  Kristallplätze: %d (mind. %d)  ·  Gegner-Startplätze: %d",
+        Text(Fmt("Teile: %d  ·  Stargate: %d  ·  Fundstücke: %d (mind. %d)  ·  Gegner-Startplätze: %d",
                  static_cast<int>(map_.pieces.size()), gates, crystals, cfg::SAMPLE_GOAL, enemies),
              bx, ty - 28 * s, 20 * s, CheckMission(error) ? GOOD : TEXT);
         Text("Linksklick setzen (halten: malen)  ·  Rechtsklick löschen  ·  R drehen  ·  Q/E Ebene  ·  "

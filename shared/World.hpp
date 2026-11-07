@@ -172,6 +172,7 @@ struct Deposit {
     bool revealed = false;          // Einzelspieler/Client: für den eigenen Spieler entdeckt
     float revealT = 0.0f;           // Einblend-Animation (0..1)
     Sample sample = Sample::Green;  // gelbe sind von Anfang an entdeckt (ohne Scanner sichtbar)
+    bool item = false;              // Fundstück einer Einsatzkarte (MapItems): nach dem Aufnehmen (Taken) weg statt grün
     // Server: IDs der Spieler, die sie entdeckt haben. Jeder Spieler muss
     // selbst scannen; der Server schickt jedem nur die von ihm entdeckten
     // (Zuschauer bekommen alle).
@@ -770,8 +771,10 @@ public:
     // Proben, die das Team des Spielers gerade trägt (alle Spielerfiguren des Teams)
     int TeamSamples(const PlayerState& ps) const;
     // Proben für die Rückkehr (settings.sampleGoal; auf einer Einsatzkarte
-    // höchstens so viele, wie sie Kristallplätze hat)
+    // höchstens so viele, wie sie Fundstücke bzw. Kristallplätze hat)
     int SampleGoal() const;
+    // Einsatzkarte mit Fundstücken (Deposit::item): Texte "Funde" statt "Proben"
+    bool HasItems() const;
     // Spieler einer Figur: ihr eigener oder der ihres Anführers (Kamerad), sonst nullptr
     PlayerState* PlayerOfTrooper(const Trooper* t);
     // Einsatz beenden: Die Figuren des Teams verschwinden, der Spieler ist
