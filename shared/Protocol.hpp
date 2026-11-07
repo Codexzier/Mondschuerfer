@@ -45,9 +45,13 @@
 //   Karte hochladen (Karteneditor): wie 3b LoginStart -> LoginChallenge, dann
 //   MapUpload statt LoginProof -> Server antwortet MapUploadResult. Das meldet
 //   nicht im Spiel an; der Client trennt danach die Verbindung.
+//   Event-Editor (angemeldeter Spieler mit der Rolle Event Manager, Welcome::roles):
+//   in der Rollenwahl EventOpen -> Server antwortet EventList (oder Error).
+//   Danach EventEdit (Event speichern oder löschen) -> EventList mit dem Ergebnis.
 // ---------------------------------------------------------------------------
 #include "GameMap.hpp"
 #include "GameSettings.hpp"
+#include "MapEvents.hpp"
 #include "SoundEvents.hpp"
 #include "raylib.h"
 #include <array>
@@ -78,7 +82,8 @@ namespace net {
 // Version 13: Scoreboard aller Spieler, EventKind::TeamHome, GameSettings fpsMode,
 //             yellowShare, sampleGoal, groundPirates und friendlyFire.
 // Version 14: SnapTrooper::hp (HP-Balken über Gegnern), Sfx::DryFire.
-constexpr uint16_t PROTOCOL_VERSION = 14;
+// Version 15: Event-Editor im Spiel (Welcome::roles, EventOpen, EventEdit, EventList, ErrorCode NoPermission).
+constexpr uint16_t PROTOCOL_VERSION = 15;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -124,6 +129,8 @@ enum class MsgType : uint8_t {
     Chat = 9,
     ChatTyping = 10,
     TeamAction = 11,
+    EventOpen = 12,
+    EventEdit = 13,
     // Server -> Client
     ServerInfo = 100,
     Error = 101,
@@ -143,6 +150,7 @@ enum class MsgType : uint8_t {
     InstanceEnd = 115,
     MissionMaps = 116,
     Scoreboard = 117,
+    EventList = 118,
 };
 
 enum class ErrorCode : uint8_t {
@@ -160,6 +168,7 @@ enum class ErrorCode : uint8_t {
     Banned = 11,              // Konto oder Adresse gesperrt (Verwaltungsseite, Bereich "Sperren")
     Kicked = 12,              // vom Betreiber getrennt
     RegistrationClosed = 13,  // Server nimmt keine neuen Konten an (Spielparameter)
+    NoPermission = 14,        // Konto fehlt die Rolle (z. B. Event Manager für den Event-Editor)
 };
 
 // Deutsche Beschreibung eines Fehlers (für die Anzeige im Spiel)
@@ -300,6 +309,25 @@ struct MapUploadMsg {
     GameMap map;                  // ohne author (den setzt der Server)
 };
 
+// Event-Editor öffnen (EventOpen, ohne Inhalt, EncodeSimple): nur als
+// angemeldeter Spieler, in der Rollenwahl. Hat das Konto die Rolle Event
+// Manager, antwortet der Server mit EventList und nimmt ab dann EventEdit an
+// (sonst Error NoPermission). Die Rollenwahl (TeamAction Role) schließt den
+// Editor auf dem Server wieder.
+
+// Event speichern oder löschen (nur bei offenem Editor, EventOpen). Der
+// Server prüft alles wie beim Bereich "Events" der Verwaltungsseite und
+// antwortet mit einer neuen EventList (ok/text = Ergebnis).
+//   Save:   event.id 0 = neues Event, sonst wird es ersetzt; by und created
+//           setzt der Server. Höchstens MAX_EVENT_MAPS Karten je Liste.
+//   Delete: nur event.id zählt.
+enum class EventEditType : uint8_t { Save = 0, Delete = 1 };
+
+struct EventEditMsg {
+    EventEditType action = EventEditType::Save;
+    MapEvent event;
+};
+
 // Chat-Nachricht des Spielers (nur angemeldete Spieler). Der Server prüft
 // den Text (ValidChatText) und schickt ihn als ChatLine an alle Spieler,
 // auch zurück an den Absender.
@@ -377,6 +405,9 @@ struct WelcomeMsg {
     // Zuletzt gewählte Rolle (PlayerRole, aus dem Konto): Vorauswahl der
     // Rollenwahl nach der Anmeldung
     uint8_t lastRole = 0;
+    // Kontorollen (AccountRoleBit, MapEvents.hpp): ROLE_EVENT_MANAGER zeigt
+    // in der Rollenwahl den Knopf "Event einrichten"
+    uint32_t roles = 0;
 };
 
 // Eigene Figur zu Fuß – genau genug für die Vorhersage (wie SnapMe beim Schiff)
@@ -705,6 +736,27 @@ struct ScoreboardMsg {
     std::vector<ScoreEntry> entries;
 };
 
+// Event-Editor: alle Einsatzkarten des Servers und alle Events. Antwort auf
+// EventOpen und auf jedes EventEdit; ändert ein anderer Event Manager oder
+// die Verwaltungsseite etwas, bekommen alle offenen Editoren die neue Liste
+// (dann ohne text). Passen nicht alle Events in die Nachricht (Grenze des
+// Clients 1 MB), fehlen die am weitesten in der Zukunft (hidden).
+struct EventMapEntry {
+    std::string file;             // ServerMap::file (so stehen Karten in MapEvent::maps/locked)
+    std::string name;
+    std::string author;
+    bool released = false;        // dauerhaft freigegeben (Verwaltungsseite)
+};
+struct EventListMsg {
+    std::string today;            // heutiger Tag des Servers (JJJJ-MM-TT)
+    std::vector<EventMapEntry> maps;   // nach Kartenname
+    std::vector<MapEvent> events;      // nach Beginn sortiert
+    uint16_t hidden = 0;          // so viele Events fehlen (nur auf der Verwaltungsseite zu sehen)
+    int32_t savedId = 0;          // gerade gespeichertes Event (der Editor wählt es aus), 0 = keins
+    bool ok = true;               // false: text ist eine Fehlermeldung
+    std::string text;             // Ergebnis des letzten EventEdit ("" = keins)
+};
+
 // Das SG-Team geht auf eine Einsatzkarte: eigene Welt nur für das Team
 // (World::NewInstance mit Seed und Karte). Snapshots bis einschließlich tick
 // gehören noch zur Mondkarte (wie beim Welcome).
@@ -733,7 +785,8 @@ std::vector<uint8_t> Encode(const MapUploadMsg& m);
 std::vector<uint8_t> Encode(const ChatMsg& m);
 std::vector<uint8_t> Encode(const ChatTypingMsg& m);
 std::vector<uint8_t> Encode(const TeamActionMsg& m);
-std::vector<uint8_t> EncodeSimple(MsgType t);   // Nachrichten ohne Inhalt (Spectate, Leave)
+std::vector<uint8_t> Encode(const EventEditMsg& m);
+std::vector<uint8_t> EncodeSimple(MsgType t);   // Nachrichten ohne Inhalt (Spectate, Leave, EventOpen)
 std::vector<uint8_t> Encode(const ServerInfoMsg& m);
 std::vector<uint8_t> Encode(const ErrorMsg& m);
 std::vector<uint8_t> Encode(const LoginChallengeMsg& m);
@@ -752,6 +805,7 @@ std::vector<uint8_t> Encode(const MissionMapsMsg& m);
 std::vector<uint8_t> Encode(const InstanceStartMsg& m);
 std::vector<uint8_t> Encode(const InstanceEndMsg& m);
 std::vector<uint8_t> Encode(const ScoreboardMsg& m);
+std::vector<uint8_t> Encode(const EventListMsg& m);
 
 bool Decode(Reader& r, RegisterMsg& m);
 bool Decode(Reader& r, LoginStartMsg& m);
@@ -762,6 +816,7 @@ bool Decode(Reader& r, MapUploadMsg& m);
 bool Decode(Reader& r, ChatMsg& m);
 bool Decode(Reader& r, ChatTypingMsg& m);
 bool Decode(Reader& r, TeamActionMsg& m);
+bool Decode(Reader& r, EventEditMsg& m);
 bool Decode(Reader& r, ServerInfoMsg& m);
 bool Decode(Reader& r, ErrorMsg& m);
 bool Decode(Reader& r, LoginChallengeMsg& m);
@@ -780,6 +835,7 @@ bool Decode(Reader& r, MissionMapsMsg& m);
 bool Decode(Reader& r, InstanceStartMsg& m);
 bool Decode(Reader& r, InstanceEndMsg& m);
 bool Decode(Reader& r, ScoreboardMsg& m);
+bool Decode(Reader& r, EventListMsg& m);
 
 // ---------------------------------------------------------------------------
 // Modellvarianten: über das Netz werden kleine Nummern statt Modell-IDs geschickt

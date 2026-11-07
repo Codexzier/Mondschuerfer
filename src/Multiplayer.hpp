@@ -28,7 +28,9 @@
 //      |                    |  NetClient meldet NetState::Playing
 //      |                    v
 //      |                 Rollenwahl (Pilot oder SG-Team, die letzte Wahl ist
-//      |                 vorausgewählt), dann
+//      |                 vorausgewählt; mit der Rolle Event Manager zusätzlich
+//      |                 "Event einrichten": Event-Editor, EventEditor.hpp,
+//      |                 "Zurück" führt wieder zur Rollenwahl), dann
 //      |                 Playing: Spiel wie im Einzelspieler, zusätzlich
 //      |                 "Beste Piloten", Namen über fremden Schiffen,
 //      |                 Anzeige nach Absturz, Abschlussanimation beim Ziel,
@@ -64,6 +66,7 @@
 #include "ClientConfig.hpp"
 #include "CommandCenter.hpp"
 #include "Controls.hpp"
+#include "EventEditor.hpp"
 #include "NetClient.hpp"
 #include "Options.hpp"
 #include "Ui.hpp"
@@ -129,6 +132,8 @@ private:
     const Trooper* OwnTrooper() const;                // eigene Figur im Einsatz, sonst nullptr
     bool InCommand() const;                           // Rolle SG-Team ohne Figur: im Command Center
     void ChooseRole(int role);                        // 0 Pilot, 1 SG-Team: an den Server schicken
+    bool EventManager() const;                        // Konto hat die Rolle Event Manager (Welcome::roles)
+    void OpenEventEditor();                           // aus der Rollenwahl: Event-Editor öffnen
     void UpdateFireworks(float dt);
     void FireworkBurst(Vector3 center, float spread, int strength);
 
@@ -148,6 +153,7 @@ private:
     void DrawShipNames(const World& w);
     void DrawTeamMarkers();                 // Figuren der SG-Teams auf der Minikarte (Piloten)
     void DrawCommand();
+    void DrawEventEditor();
     void DrawNoShip(const World& w);
     void DrawGoalAnimation();
     void DrawPause();
@@ -226,6 +232,8 @@ private:
     int roleFrames_ = 0;           // Frames seit dem Öffnen der Rollenwahl
     bool inCommand_ = false;       // im Command Center (für OpenOnline beim Betreten)
     CommandCenterScreen command_;
+    bool eventsOpen_ = false;      // Event-Editor über der Rollenwahl offen
+    EventEditorScreen events_;
     TrooperControls trooperControls_;   // Steuerung zu Fuß (Ego-Ansicht)
     int lookTrooper_ = -1;         // Figur, zu der lookYaw_/lookPitch_ gehören
     float lookYaw_ = 0.0f;         // Blickrichtung zu Fuß (Maus/rechter Stick)

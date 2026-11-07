@@ -327,6 +327,7 @@ void MultiplayerScreen::EnterPlaying() {
     chatTypingSent_ = false;
     // Rollenwahl: vorausgewählt ist die zuletzt gespielte Rolle (Serverkonto)
     roleChoice_ = true;
+    eventsOpen_ = false;
     roleSel_ = net_.Welcome().lastRole == 1 ? 1 : 0;
     roleFrames_ = 0;
     inCommand_ = false;
@@ -455,8 +456,14 @@ void MultiplayerScreen::HandleNetwork() {
                 g_audio.Play(Sfx::Denied);
                 return;
             }
-            // Fehler während des Spiels (z. B. abgelehnte Aktion): als Meldung zeigen
-            if (!err.empty() && net_.WorldReady()) net_.GetWorld().Notify(err, BAD);
+            // Fehler während des Spiels (z. B. abgelehnte Aktion): als Meldung
+            // zeigen, im Event-Editor in dessen Statuszeile
+            if (!err.empty() && eventsOpen_) events_.SetStatus(err, BAD);
+            else if (!err.empty() && net_.WorldReady()) net_.GetWorld().Notify(err, BAD);
+            if (eventsOpen_) {
+                net::EventListMsg list;
+                if (net_.TakeEventList(list)) events_.SetList(list);
+            }
             break;
     }
 
@@ -575,12 +582,13 @@ void MultiplayerScreen::Update(float frameDt) {
         if (!p.dead && !p.hidden) hadShip_ = true;
 
         // Rollenwahl: Testablauf mit Autopilot nimmt gleich "Pilot", ebenso
-        // ein Server ohne FPS-Modus. Kommt der Spieler nach einem
+        // ein Server ohne FPS-Modus (außer für einen Event Manager, der dort
+        // "Event einrichten" findet). Kommt der Spieler nach einem
         // Verbindungsabbruch zurück und ist noch zu Fuß unterwegs, gilt die
         // Rolle schon (der Server kennt sie).
         if (roleChoice_) {
             ++roleFrames_;
-            if (opt_.autopilot || !w.settings.fpsMode) ChooseRole(0);
+            if (opt_.autopilot || (!w.settings.fpsMode && !EventManager())) ChooseRole(0);
             else if (OwnTrooper()) roleChoice_ = false;
         }
         // Command Center: beim Betreten zurücksetzen, dann jedes Frame die Uhr
@@ -731,6 +739,17 @@ void MultiplayerScreen::ChooseRole(int role) {
     net_.GetWorld().Me().role = role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
     controls_.Reset();
     snapCam_ = true;
+}
+
+bool MultiplayerScreen::EventManager() const { return (net_.Welcome().roles & ROLE_EVENT_MANAGER) != 0; }
+
+// "Event einrichten" in der Rollenwahl: Der Editor liegt über der Rollenwahl,
+// die Liste kommt vom Server (HandleNetwork). Das Schiff bleibt versteckt,
+// bis eine Rolle gewählt ist.
+void MultiplayerScreen::OpenEventEditor() {
+    eventsOpen_ = true;
+    events_.Open(net_.MyName());
+    net_.OpenEvents();
 }
 
 // Autopilot an der Station: Reparatur bzw. Upgrades als Anfrage an den Server
@@ -1311,10 +1330,17 @@ void MultiplayerScreen::DrawPlaying() {
     EndMode3D();
     tiltshift::End();
 
-    // Rollenwahl nach der Anmeldung über dem Bild (ESC meldet ab)
+    // Rollenwahl nach der Anmeldung über dem Bild (ESC meldet ab), darüber
+    // gegebenenfalls der Event-Editor
     if (roleChoice_) {
-        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, true, w.settings.sampleGoal);
-        if (pick >= 0) {
+        if (eventsOpen_) {
+            DrawEventEditor();
+            return;
+        }
+        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, true, w.settings.sampleGoal, EventManager(), w.settings.fpsMode);
+        if (pick == 2) {
+            OpenEventEditor();
+        } else if (pick >= 0) {
             ChooseRole(pick);
         } else if (roleFrames_ > 1 && BackPressed()) {
             g_audio.Play(Sfx::UiBack);
@@ -1906,4 +1932,25 @@ void MultiplayerScreen::DrawHighscores(Rectangle r) {
         y += rowH;
     }
     if (n > visible) Text(Fmt("+%d weitere", n - visible), x, bottom - 20 * s, 17 * s, MUTED);
+}
+
+// --- (f) Event-Editor (über der Rollenwahl) ---------------------------------------------------
+// Bedienung und Anzeige macht EventEditorScreen; hier gehen Speichern und
+// Löschen an den Server (EventEdit), die Antwort kommt in HandleNetwork.
+void MultiplayerScreen::DrawEventEditor() {
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{8, 10, 16, 200});
+    const EventEditorAction act = events_.Draw();
+    if (act.kind == EventEditorAction::Kind::Save || act.kind == EventEditorAction::Kind::Delete) {
+        net::EventEditMsg m;
+        m.action = act.kind == EventEditorAction::Kind::Save ? net::EventEditType::Save : net::EventEditType::Delete;
+        m.event = act.event;
+        net_.SendEventEdit(m);
+    } else if (act.kind == EventEditorAction::Kind::Back) {
+        eventsOpen_ = false;
+        net_.CloseEvents();
+        roleSel_ = 2;
+        roleFrames_ = 0;   // dasselbe ESC soll in der Rollenwahl nicht abmelden
+        return;
+    }
+    MenuFooter("Tab: Feld wechseln    Enter / Strg+S: speichern    ESC: zurück zur Rollenwahl");
 }

@@ -154,8 +154,10 @@ deutscher Zeit), außer man leiht ihm die Zeitzone (siehe [Fehlersuche](#9-fehle
 Gespeichert in `/data/events.txt`; wird eine Karte gelöscht, verschwindet sie auch aus den Events.
 
 Im Bereich **„Rollen“** bekommen einzelne Konten zusätzliche Rechte (Spielername und Rolle wählen,
-„Zuweisen“; „Entziehen“ nimmt sie zurück). Die erste Rolle ist **Event Manager**: Er soll Events
-später auch im Spiel einrichten dürfen. Gespeichert in `accounts.txt` (`roles=event`).
+„Zuweisen“; „Entziehen“ nimmt sie zurück). Die erste Rolle ist **Event Manager**: Er kann Events
+auch im Spiel einrichten (nach der Anmeldung in der Rollenwahl → *Event einrichten*), mit
+denselben Regeln wie hier; als „eingerichtet von“ steht dann sein Kontoname. Gespeichert in
+`accounts.txt` (`roles=event`).
 
 ### Umgebungsvariablen
 

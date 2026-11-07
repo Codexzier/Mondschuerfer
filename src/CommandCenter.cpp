@@ -667,7 +667,7 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
 // ===========================================================================
 // Rollenwahl
 // ===========================================================================
-int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal) {
+int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal, bool events, bool sgTeam) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 150});
@@ -683,29 +683,41 @@ int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal) {
         {"PILOT", "Mit dem Raumschiff",
          {"Kristalle scannen, abbauen und verkaufen,", "das Schiff aufrüsten, Missionen fliegen.",
           "Ziel: 100.000 Ressourcenpunkte."}},
-        {"SG-TEAM", "Zu Fuß durch das Stargate",
+        {"SG-TEAM", sgTeam ? "Zu Fuß durch das Stargate" : "Auf diesem Server ausgeschaltet",
          {online ? "Start im Command Center: Team gründen oder beitreten." : "Start im Command Center mit Team SG1.",
           TextFormat("%d Proben an gelben Kristallen sammeln", sampleGoal),
           "und durch ein Stargate zurückkehren."}},
     };
     const float cw = 460 * s, ch = 250 * s, gap = 40 * s;
     const float y = H * 0.5f - ch * 0.5f;
+    if (!sgTeam && sel == 1) sel = 0;
+    if (!events && sel == 2) sel = 0;
     int pick = -1;
     for (int i = 0; i < 2; ++i) {
         const Rectangle r{W * 0.5f - cw - gap * 0.5f + i * (cw + gap), y, cw, ch};
-        if (Button(r, "", 20 * s, sel == i) && live) pick = i;
+        const bool enabled = i == 0 || sgTeam;
+        if (Button(r, "", 20 * s, sel == i, enabled) && live) pick = i;
         const Card& c = cards[i];
-        Text(c.title, r.x + 28 * s, r.y + 26 * s, 40 * s, sel == i ? ACCENT : TEXT);
+        Text(c.title, r.x + 28 * s, r.y + 26 * s, 40 * s, !enabled ? MUTED : sel == i ? ACCENT : TEXT);
         Text(c.sub, r.x + 28 * s, r.y + 76 * s, 22 * s, MUTED);
-        for (int l = 0; l < 3; ++l) Text(c.lines[l], r.x + 28 * s, r.y + 124 * s + l * 30 * s, 20 * s, TEXT);
+        for (int l = 0; l < 3; ++l) Text(c.lines[l], r.x + 28 * s, r.y + 124 * s + l * 30 * s, 20 * s, enabled ? TEXT : MUTED);
+    }
+    // Event Manager: dritter Knopf unter den Karten
+    float hintY = y + ch + 30 * s;
+    if (events) {
+        const Rectangle r{W * 0.5f - cw * 0.5f, y + ch + 28 * s, cw, 56 * s};
+        if (Button(r, "Event einrichten", 24 * s, sel == 2) && live) pick = 2;
+        hintY += 84 * s;
     }
     if (live) {
         if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT)) sel = 0;
-        if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) sel = 1;
+        if ((IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) && sgTeam) sel = 1;
+        if ((IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN)) && events) sel = 2;
+        if ((IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_UP)) && sel == 2) sel = 0;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) pick = sel;
     }
     TextCentered(online ? "Klick oder Pfeiltasten und Enter: wählen    ESC: abmelden" : "Klick oder Pfeiltasten und Enter: wählen    ESC: zurück",
-                 W * 0.5f, y + ch + 30 * s, 20 * s, MUTED);
+                 W * 0.5f, hintY, 20 * s, MUTED);
     if (pick >= 0) g_audio.Play(Sfx::UiConfirm);
     return pick;
 }

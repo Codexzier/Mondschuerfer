@@ -317,6 +317,11 @@ struct NetClient::Impl {
     bool uploadOk = false;
     std::string uploadText;
 
+    // --- Event-Editor ---------------------------------------------------------
+    bool eventsOpen = false;           // OpenEvents() bis CloseEvents(): Listen annehmen
+    bool eventListNew = false;         // für TakeEventList
+    net::EventListMsg eventList;
+
     // --- Welt -------------------------------------------------------------------
     World world;
     bool worldReady = false;
@@ -501,6 +506,9 @@ void NetClient::Impl::ResetSession() {
     WipeKey();
     uploadMap = GameMap{};
     uploadDone = false;
+    eventsOpen = false;
+    eventListNew = false;
+    eventList = net::EventListMsg{};
     worldReady = false;
     worldRebuilt = false;
     welcome = net::WelcomeMsg{};
@@ -800,6 +808,14 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
         case net::MsgType::MapUploadResult: {
             net::MapUploadResultMsg m;
             if (net::Decode(r, m)) HandleMapUploadResult(m);
+            break;
+        }
+        case net::MsgType::EventList: {
+            net::EventListMsg m;
+            if (net::Decode(r, m) && eventsOpen && state == NetState::Playing) {
+                eventList = std::move(m);
+                eventListNew = true;
+            }
             break;
         }
         case net::MsgType::MapData: {
@@ -2134,6 +2150,32 @@ void NetClient::UploadMap(const std::string& name, const std::string& password, 
     d.loginKind = Impl::LoginKind::Upload;
     d.uploadMap = map;
     d.uploadDone = false;
+}
+
+void NetClient::OpenEvents() {
+    Impl& d = *impl_;
+    if (d.state != NetState::Playing) return;
+    d.eventsOpen = true;
+    d.eventListNew = false;
+    d.Send(net::EncodeSimple(net::MsgType::EventOpen), true);
+}
+
+void NetClient::CloseEvents() {
+    impl_->eventsOpen = false;
+    impl_->eventListNew = false;
+}
+
+void NetClient::SendEventEdit(const net::EventEditMsg& m) {
+    Impl& d = *impl_;
+    if (d.state == NetState::Playing && d.eventsOpen) d.Send(net::Encode(m), true);
+}
+
+bool NetClient::TakeEventList(net::EventListMsg& out) {
+    Impl& d = *impl_;
+    if (!d.eventListNew) return false;
+    d.eventListNew = false;
+    out = d.eventList;
+    return true;
 }
 
 bool NetClient::TakeUploadResult(bool& ok, std::string& text) {

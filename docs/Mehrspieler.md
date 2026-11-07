@@ -187,6 +187,10 @@ Der ganze Ablauf als Sequenzdiagramm. `--->` heißt zuverlässig, `~~~>` unzuver
         |<------------------ Teams (bei Änderung, 1/s), MissionMaps -------|  Teamliste, Einsatzkarten
         |<------------------ Scoreboard (bei Änderung) --------------------|  alle Spieler nach Punkten
         |<------------------ InstanceStart / InstanceEnd ------------------|  Einsatzkarte des Teams
+        |------------------- EventOpen (Rollenwahl, Event Manager) ------->|  Welcome.roles, Rolle prüfen
+        |<------------------ EventList(Karten, Events) oder Error ---------|  Event-Editor
+        |------------------- EventEdit(speichern/löschen) ---------------->|  prüfen wie die Verwaltungsseite
+        |<------------------ EventList(..., Ergebnis) ---------------------|  andere Editoren: neue Liste
         |                                                                  |
         |------------------- Leave --------------------------------------->|  speichern, entfernen, trennen
 ```

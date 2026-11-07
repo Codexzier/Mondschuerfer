@@ -102,8 +102,10 @@ private:
 // Bild. sel = markierte Karte (Pfeiltasten/A/D ändern sie), live = bedienbar.
 // Liefert 0 (Pilot) oder 1 (SG-Team), sobald gewählt wurde, sonst -1.
 // online = Texte für den Mehrspieler, sampleGoal = Proben für die Rückkehr.
-// ESC wertet der Aufrufer aus.
-int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal);
+// Mehrspieler: events = zusätzlich der Knopf "Event einrichten" unter den
+// Karten (Rolle Event Manager, liefert 2, sel 2), sgTeam = false: Karte
+// SG-Team gesperrt (FPS-Modus des Servers aus). ESC wertet der Aufrufer aus.
+int DrawRoleChoice(int& sel, bool live, bool online, int sampleGoal, bool events = false, bool sgTeam = true);
 
 // Wurmloch eines Stargates mit Fußpunkt pos, Drehung yaw und Größe scale
 // (Render.cpp). Mit BLEND_ADDITIVE und ohne Schreiben in den Tiefenpuffer

@@ -32,6 +32,7 @@
 //     weitergeben (das Chatfenster selbst ist src/Chat.hpp).
 //   - Karten hochladen (Karteneditor, UploadMap).
 //   - SG-Teams: Rollenwahl und Command Center (SendTeamAction, Teams).
+//   - Event-Editor (Rolle Event Manager): OpenEvents, SendEventEdit, TakeEventList.
 //
 // Benutzt von: src/Multiplayer.cpp (Menüs, Anzeige), src/MapEditor.cpp
 // ("An Server senden"). Abhängigkeiten: ENet,
@@ -108,6 +109,17 @@ public:
     // Freigegebene Einsatzkarten (Ziele im Command Center, net::TeamEntry::target)
     const std::vector<GameMap>& MissionMaps() const;
     const net::ScoreboardMsg& Scoreboard() const;   // alle Spieler des Servers nach Punkten (Rolle SG-Team)
+
+    // Event-Editor (nur als Spieler mit der Rolle Event Manager, Welcome().roles):
+    // OpenEvents fragt die Liste an, CloseEvents nimmt keine Listen mehr an
+    // (der Server schließt den Editor mit der Rollenwahl). SendEventEdit
+    // speichert oder löscht ein Event; Antwort ist eine neue Liste.
+    // TakeEventList: true einmalig, wenn eine neue Liste da ist (auch wenn
+    // jemand anderes Events ändert). Fehler (Rolle entzogen) über TakeError().
+    void OpenEvents();
+    void CloseEvents();
+    void SendEventEdit(const net::EventEditMsg& m);
+    bool TakeEventList(net::EventListMsg& out);
 
     // --- Spielwelt ---------------------------------------------------------------
     bool WorldReady() const;              // Welcome empfangen, Welt aufgebaut
