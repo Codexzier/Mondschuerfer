@@ -55,14 +55,15 @@ Stargate HomeGate() {
 // die Grundrisse der Teile (SegmentBounds, gedreht wie in der Welt) – erst
 // Wege, dann alles andere ohne Dächer, zuletzt die Markierungen: Stargate
 // blau, Fundstücke und Kristallplätze gelb, Gegner-Startplätze rot.
+// Weltraumkarte: das All dunkel, Decks grau, die Raumstation türkis.
 void DrawMapPreview(const GameMap& m, Rectangle r) {
     static const Color grounds[] = {{92, 128, 68, 255}, {118, 94, 68, 255}, {118, 118, 122, 255}, {192, 174, 128, 255}};
-    DrawRectangleRec(r, grounds[std::clamp(static_cast<int>(m.ground), 0, 3)]);
+    DrawRectangleRec(r, m.theme == MapTheme::Space ? Color{8, 10, 22, 255} : grounds[std::clamp(static_cast<int>(m.ground), 0, 3)]);
     const float half = MapHalf(m), k = r.width / (2.0f * half);
     auto has = [](const std::string& s, const char* part) { return s.find(part) != std::string::npos; };
     for (int pass = 0; pass < 3; ++pass) {
         for (const MapPiece& q : m.pieces) {
-            const bool flat = has(q.model, "road") || has(q.model, "planks");
+            const bool flat = has(q.model, "road") || has(q.model, "planks") || IsDeck(q.model);
             const bool marker = IsMarker(q.model);
             if ((pass == 0) != flat || (pass == 2) != marker || has(q.model, "roof") || has(q.model, "chimney")) continue;
             const Vector2 p{r.x + (q.x + half) * k, r.y + (q.z + half) * k};
@@ -74,6 +75,8 @@ void DrawMapPreview(const GameMap& m, Rectangle r) {
             }
             Color c{176, 120, 170, 255};
             if (q.model == MARKER_GATE) c = Color{60, 140, 255, 255};
+            else if (IsSpaceStation(q.model)) c = Color{110, 215, 225, 255};
+            else if (has(q.model, "carrier")) c = Color{96, 104, 124, 255};
             else if (flat) c = Color{150, 150, 150, 255};
             else if (has(q.model, "wall") || has(q.model, "pillar")) c = Color{92, 64, 44, 255};
             else if (has(q.model, "fence") || has(q.model, "hedge")) c = Color{140, 104, 50, 255};
@@ -265,7 +268,7 @@ CommandAction CommandCenterScreen::Draw(World& w) {
     Text("AUFTRAG", x, y, 18 * s, MUTED);
     y += 26 * s;
     const MapFileInfo* mission = target_ > 0 ? &targets_[static_cast<size_t>(target_ - 1)] : nullptr;
-    const std::string brief[] = {
+    std::vector<std::string> brief = {
         mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
         mission && MapHasItems(preview_) ? TextFormat("Sammle %d Fundstücke ein.", cfg::SAMPLE_GOAL)
                                          : TextFormat("Sammle %d Proben an gelben Kristallen.", cfg::SAMPLE_GOAL),
@@ -273,6 +276,10 @@ CommandAction CommandCenterScreen::Draw(World& w) {
         "die Treppe hinauf und hindurch.",
         mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!",
     };
+    if (mission && mission->theme == MapTheme::Space)
+        brief = {TextFormat("Durch das Stargate nach %s.", mission->name.c_str()),
+                 TextFormat("Wehre %d Angriffswellen ab und", cfg::SPACE_WAVES), "beschütze die Raumstation.",
+                 "Am Tor auf dem Trägerschiff laden", "Schild und Munition wieder auf.", "Vorsicht: Neben den Decks ist das All!"};
     for (const std::string& line : brief) {
         Text(line, x, y, 18 * s, TEXT);
         y += 24 * s;
@@ -494,12 +501,16 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
     y += 12 * s;
     Text("AUFTRAG", x, y, 18 * s, MUTED);
     y += 26 * s;
-    const std::string brief[] = {mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
-                                 mission && MapHasItems(*mission) ? TextFormat("Sammelt %d Fundstücke ein", samples)
-                                                                  : TextFormat("Sammelt %d Proben an gelben Kristallen", samples),
-                                 "(sie zählen für das ganze Team).", "Dann ein Stargate in der Nähe anwählen:",
-                                 "die Treppe hinauf und hindurch.",
-                                 mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!"};
+    std::vector<std::string> brief = {mission ? TextFormat("Durch das Stargate nach %s.", mission->name.c_str()) : "Durch das Stargate auf den Mond.",
+                                      mission && MapHasItems(*mission) ? TextFormat("Sammelt %d Fundstücke ein", samples)
+                                                                       : TextFormat("Sammelt %d Proben an gelben Kristallen", samples),
+                                      "(sie zählen für das ganze Team).", "Dann ein Stargate in der Nähe anwählen:",
+                                      "die Treppe hinauf und hindurch.",
+                                      mission && mission->theme == MapTheme::Graveyard ? "Vorsicht vor Zombies!" : "Vorsicht vor Bodenpiraten!"};
+    if (mission && mission->theme == MapTheme::Space)
+        brief = {TextFormat("Durch das Stargate nach %s.", mission->name.c_str()),
+                 TextFormat("Wehrt %d Angriffswellen ab und", cfg::SPACE_WAVES), "beschützt die Raumstation.",
+                 "Am Tor auf dem Trägerschiff laden", "Schild und Munition wieder auf.", "Vorsicht: Neben den Decks ist das All!"};
     for (const std::string& line : brief) {
         Text(line, x, y, 18 * s, TEXT);
         y += 24 * s;

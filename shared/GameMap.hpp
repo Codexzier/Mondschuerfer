@@ -13,6 +13,9 @@
 //     Zufalls-Deko hat die Karte keine Kollision, Schiffe fliegen darüber hinweg.
 //   - Einsatzkarte (FPS-Modus): eigenes kleines Spielfeld (size) mit Teilen
 //     aus dem Fantasy Town Kit und dem Graveyard Kit, Thema, Boden und Himmel.
+//     Thema Weltraum: kein Boden, die Figuren laufen auf Decks (Space Station
+//     Kit) im All; statt Fundstücken eine Raumstation, die das Team gegen
+//     Wellen von Bodenpiraten verteidigt (Trooper.cpp, UpdateWaves).
 //     Dazu Markierungen: genau ein Stargate, Fundstücke (ältere Karten:
 //     Kristallplätze) und Gegner-Startplätze. Ein SG-Team spielt sie als eigene Welt
 //     (World::NewInstance), Mauern, Treppen und Deko sind für die Figuren
@@ -34,7 +37,7 @@
 //   name <Name bis Zeilenende>
 //   author <Spielername>           nur auf dem Server (wer sie hochgeladen hat)
 //   kind einsatz                   nur Einsatzkarten (fehlt = Mondkarte, so bleiben alte Karten gültig)
-//   theme <dorf|wald|friedhof>     nur Einsatzkarten
+//   theme <dorf|wald|friedhof|weltraum>   nur Einsatzkarten
 //   size <Kantenlänge in Metern>   nur Einsatzkarten
 //   ground <gras|erde|stein|sand>  nur Einsatzkarten
 //   sky <tag|abend|nacht>          nur Einsatzkarten
@@ -48,6 +51,8 @@
 // der beiden anderen Kits sind schon in Originalgröße ein Feld groß (Größe 1).
 // Höhe (nur Einsatzkarten): Ebene über dem Boden, damit Dächer auf den Mauern
 // stehen (eine Ebene = mapgrid::LEVEL Meter, eine Mauer des Fantasy Town Kits).
+// Decks liegen mit ihrer Oberkante auf ihrer Ebene, Raumstationen und
+// Trägerschiffe schweben mit ihrer Mitte dort (MapPieceY).
 //
 // Abhängigkeiten: raylib.h/raymath.h (Datentypen, Vektor-Mathe), Models.hpp
 // (Abmessungen der Modelle), Config.hpp (Kartengröße). Keine Grafik, damit
@@ -77,7 +82,7 @@ constexpr float CRYSTAL_SCALE = 2.8f;   // Größe der Kristalle an einem Krista
 // Kartenart und die Kopfzeilen der Einsatzkarten. Die Zahlen gehen so über
 // das Netzwerk (Protocol.cpp), also nur hinten anfügen.
 enum class MapKind { Moon = 0, Mission = 1 };
-enum class MapTheme { Village = 0, Forest = 1, Graveyard = 2, Count };   // dorf, wald, friedhof
+enum class MapTheme { Village = 0, Forest = 1, Graveyard = 2, Space = 3, Count };   // dorf, wald, friedhof, weltraum
 enum class MapGround { Grass = 0, Earth = 1, Stone = 2, Sand = 3, Count };
 enum class MapSky { Day = 0, Evening = 1, Night = 2, Count };
 const char* MapThemeName(MapTheme t);     // "Dorf" ... (Anzeige)
@@ -115,6 +120,7 @@ float MapCell(MapKind k);
 enum class SegmentGroup {
     Terrain, Rocks, Roads, Monorail, Buildings, Misc,
     Walls, Roofs, Village, Paths, Nature, Graves, GraveWalls, Markers, Farm, Crypts,
+    Decks, Space, Equipment,   // Weltraumkarte: Decks, Raumstation und Trägerschiff, Ausstattung
     Count
 };
 const char* SegmentGroupName(SegmentGroup g);
@@ -158,6 +164,10 @@ int ItemIndexOfModel(int model);
 // Kristallplatz oder Fundstück: ein Platz für eine Probe bzw. einen Fund
 bool IsSampleSpot(const std::string& model);
 bool MapHasItems(const GameMap& m);   // mindestens eine Fundstück-Markierung
+// Weltraumkarte: Deck (Boden der Figuren), Raumstation (wird verteidigt)
+bool IsDeck(const std::string& model);
+bool IsSpaceStation(const std::string& model);
+bool MapHasSpaceStation(const GameMap& m);
 // Abmessungen eines Segments ohne Größe (wie ModelBounds; Markierungen: ihre
 // Fläche am Boden, das Stargate mit seiner Treppe)
 BoundingBox SegmentBounds(const std::string& model);

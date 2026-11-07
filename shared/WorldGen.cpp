@@ -232,6 +232,10 @@ void World::ApplyMap(const GameMap& m) {
 //                        wird und danach verschwindet (Deposit::item),
 //   - Gegner-Startplatz: hier erscheinen die Gruppen der Bodenpiraten
 //                        (SpawnPirateGroup).
+// Thema Weltraum: Die Decks werden zu Rechtecken (decks), auf denen die
+// Figuren stehen; die Raumstationen (Modelle station/...) zu Kreisen
+// (spaceStations) mit dem gemeinsamen Zustand SPACE_STATION_HP. Der Himmel
+// ist immer Nacht (Weltraum-Skybox, Sterne, Kometen).
 // ===========================================================================
 void World::NewInstance(const GameMap& m, unsigned int newSeed) {
     *this = World{};
@@ -243,6 +247,8 @@ void World::NewInstance(const GameMap& m, unsigned int newSeed) {
     mapGround = m.ground;
     mapSky = m.sky;
     zombies = m.theme == MapTheme::Graveyard;   // Friedhof: Zombies statt Bodenpiraten
+    space = m.theme == MapTheme::Space;
+    if (space) mapSky = MapSky::Night;
     ResolveModels();
 
     players.push_back(PlayerState{});
@@ -287,8 +293,27 @@ void World::NewInstance(const GameMap& m, unsigned int newSeed) {
             enemySpots.push_back({q.x, 0.0f, q.z});
         } else {
             decos.push_back({ModelId(q.model), {q.x, MapPieceY(q), q.z}, q.yaw, q.scale, 0.0f});
+            if (!space) continue;
+            const BoundingBox b = ModelBounds(decos.back().model);
+            if (IsDeck(q.model)) {
+                // Rechteck aus den Maßen, gedreht wie beim Zeichnen (MapRotate)
+                DeckRect r;
+                const Vector2 mid = MapRotate((b.min.x + b.max.x) * 0.5f * q.scale, (b.min.z + b.max.z) * 0.5f * q.scale, q.yaw);
+                r.c = {q.x + mid.x, q.z + mid.y};
+                r.u = MapRotate(1.0f, 0.0f, q.yaw);
+                r.hu = (b.max.x - b.min.x) * 0.5f * q.scale;
+                r.hv = (b.max.z - b.min.z) * 0.5f * q.scale;
+                r.top = q.lift;
+                decks.push_back(r);
+            } else if (IsSpaceStation(q.model)) {
+                SpaceStation st;
+                st.pos = {q.x, q.lift, q.z};
+                st.r = std::max(b.max.x - b.min.x, b.max.z - b.min.z) * 0.5f * q.scale;
+                spaceStations.push_back(st);
+            }
         }
     }
+    if (!spaceStations.empty()) stationHp = stationMaxHp = cfg::SPACE_STATION_HP;
     BuildStargates();
 }
 

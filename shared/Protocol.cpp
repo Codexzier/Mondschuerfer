@@ -865,6 +865,11 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
             w.F32(t.age);
             w.F32(t.sgTime);
             w.U16(t.sgPirates);
+            w.U8(t.wave);
+            w.U8(t.wavesCleared);
+            w.U16(t.waveLeft);
+            w.F32(t.waveT);
+            w.F32(t.stationHp);
         }
     }
     w.U16(static_cast<uint16_t>(std::min<size_t>(m.ships.size(), 65535)));
@@ -1060,6 +1065,11 @@ bool Decode(Reader& r, SnapshotMsg& m) {
             t.age = r.F32();
             t.sgTime = r.F32();
             t.sgPirates = r.U16();
+            t.wave = r.U8();
+            t.wavesCleared = r.U8();
+            t.waveLeft = r.U16();
+            t.waveT = r.F32();
+            t.stationHp = r.F32();
         }
     }
     const uint16_t ns = r.U16();
