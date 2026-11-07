@@ -31,6 +31,7 @@
 //   - Chat: Nachrichten und "tippt gerade" schicken, empfangene Zeilen
 //     weitergeben (das Chatfenster selbst ist src/Chat.hpp).
 //   - Karten hochladen (Karteneditor, UploadMap).
+//   - Events einrichten (Event-Editor, EventLogin/SendEventEdit).
 //   - SG-Teams: Rollenwahl und Command Center (SendTeamAction, Teams).
 //
 // Benutzt von: src/Multiplayer.cpp (Menüs, Anzeige), src/MapEditor.cpp
@@ -81,6 +82,16 @@ public:
     void UploadMap(const std::string& name, const std::string& password, const GameMap& map);
     // true einmalig, wenn die Antwort auf UploadMap da ist
     bool TakeUploadResult(bool& ok, std::string& text);
+    // Events einrichten (Konto mit der Rolle Event Manager): wie Login, aber
+    // angemeldet wird nicht. Kommt die Liste (TakeEventList), ist der Editor
+    // offen und der Zustand wieder Lobby. Fehler (falsches Passwort, Rolle
+    // fehlt ...) kommen über TakeError().
+    void EventLogin(const std::string& name, const std::string& password);
+    // Event speichern oder löschen (nur bei offenem Editor); Antwort: neue Liste
+    void SendEventEdit(const net::EventEditMsg& m);
+    // true einmalig, wenn eine neue Liste da ist (nach EventLogin, nach jedem
+    // SendEventEdit und wenn jemand anderes Events ändert)
+    bool TakeEventList(net::EventListMsg& out);
 
     // --- Jedes Frame ---------------------------------------------------------
     // held: gehaltene Tasten (Schub, Drehen, Feuer). scanPressed/interactPressed:

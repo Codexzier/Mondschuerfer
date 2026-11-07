@@ -64,6 +64,7 @@ const char* ErrorText(ErrorCode c) {
         case ErrorCode::Banned: return "Du bist auf diesem Server gesperrt.";
         case ErrorCode::Kicked: return "Der Betreiber hat dich vom Server getrennt.";
         case ErrorCode::RegistrationClosed: return "Dieser Server nimmt zurzeit keine neuen Konten an.";
+        case ErrorCode::NoPermission: return "Deinem Konto fehlt dafür die Berechtigung.";
     }
     return "Unbekannter Fehler";
 }
@@ -440,6 +441,39 @@ Color ReadColor(Reader& r) {
 
 uint16_t ClampU16(int64_t v) { return static_cast<uint16_t>(std::clamp<int64_t>(v, 0, 65535)); }
 
+// Event (MapEvents.hpp). Karten als Dateinamen, höchstens MAX_EVENT_MAPS je
+// Liste. Ob Name und Tage gültig sind, prüft der Empfänger (Server: wie die
+// Verwaltungsseite).
+void WriteEvent(Writer& w, const MapEvent& e) {
+    w.I32(e.id);
+    w.Str(e.name);
+    w.Str(e.from);
+    w.Str(e.to);
+    for (const std::vector<std::string>* list : {&e.maps, &e.locked}) {
+        const size_t n = std::min<size_t>(list->size(), MAX_EVENT_MAPS);
+        w.U8(static_cast<uint8_t>(n));
+        for (size_t i = 0; i < n; ++i) w.Str((*list)[i]);
+    }
+    w.Str(e.by);
+    w.I64(e.created);
+}
+
+bool ReadEvent(Reader& r, MapEvent& e) {
+    e = MapEvent{};
+    e.id = r.I32();
+    e.name = r.Str();
+    e.from = r.Str();
+    e.to = r.Str();
+    for (std::vector<std::string>* list : {&e.maps, &e.locked}) {
+        const uint8_t n = r.U8();
+        if (n > MAX_EVENT_MAPS) return false;
+        for (uint8_t i = 0; i < n && r.ok(); ++i) list->push_back(r.Str());
+    }
+    e.by = r.Str();
+    e.created = r.I64();
+    return r.ok();
+}
+
 } // namespace
 
 // ===========================================================================
@@ -622,6 +656,33 @@ bool Decode(Reader& r, TeamActionMsg& m) {
     m.action = static_cast<TeamActionType>(a);
     m.param = r.U8();
     return r.ok();
+}
+
+std::vector<uint8_t> Encode(const EventLoginMsg& m) {
+    Writer w;
+    Start(MsgType::EventLogin, w);
+    w.Bytes(m.proof.data(), m.proof.size());
+    return w.buf;
+}
+
+bool Decode(Reader& r, EventLoginMsg& m) {
+    r.Bytes(m.proof.data(), m.proof.size());
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const EventEditMsg& m) {
+    Writer w;
+    Start(MsgType::EventEdit, w);
+    w.U8(static_cast<uint8_t>(m.action));
+    WriteEvent(w, m.event);
+    return w.buf;
+}
+
+bool Decode(Reader& r, EventEditMsg& m) {
+    const uint8_t a = r.U8();
+    if (a > static_cast<uint8_t>(EventEditType::Delete)) return false;
+    m.action = static_cast<EventEditType>(a);
+    return ReadEvent(r, m.event);
 }
 
 // ===========================================================================
@@ -1582,6 +1643,56 @@ bool Decode(Reader& r, ScoreboardMsg& m) {
         e.returns = r.I32();
         m.entries.push_back(e);
     }
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const EventListMsg& m) {
+    Writer w;
+    Start(MsgType::EventList, w);
+    w.Str(m.today);
+    const size_t nm = std::min(m.maps.size(), MAX_LIST);
+    w.U16(static_cast<uint16_t>(nm));
+    for (size_t i = 0; i < nm; ++i) {
+        const EventMapEntry& e = m.maps[i];
+        w.Str(e.file);
+        w.Str(e.name);
+        w.Str(e.author);
+        w.U8(e.released ? 1 : 0);
+    }
+    const size_t ne = std::min(m.events.size(), MAX_LIST);
+    w.U16(static_cast<uint16_t>(ne));
+    for (size_t i = 0; i < ne; ++i) WriteEvent(w, m.events[i]);
+    w.U16(m.hidden);
+    w.I32(m.savedId);
+    w.U8(m.ok ? 1 : 0);
+    w.Str(m.text);
+    return w.buf;
+}
+
+bool Decode(Reader& r, EventListMsg& m) {
+    m = EventListMsg{};
+    m.today = r.Str();
+    const uint16_t nm = r.U16();
+    if (nm > MAX_LIST) return false;
+    for (uint16_t i = 0; i < nm && r.ok(); ++i) {
+        EventMapEntry e;
+        e.file = r.Str();
+        e.name = r.Str();
+        e.author = r.Str();
+        e.released = r.U8() != 0;
+        m.maps.push_back(std::move(e));
+    }
+    const uint16_t ne = r.U16();
+    if (ne > MAX_LIST) return false;
+    for (uint16_t i = 0; i < ne && r.ok(); ++i) {
+        MapEvent e;
+        if (!ReadEvent(r, e)) return false;
+        m.events.push_back(std::move(e));
+    }
+    m.hidden = r.U16();
+    m.savedId = r.I32();
+    m.ok = r.U8() != 0;
+    m.text = r.Str();
     return r.ok();
 }
 

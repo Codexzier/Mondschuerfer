@@ -440,6 +440,7 @@ const char* ErrorCodeName(net::ErrorCode c) {
         case net::ErrorCode::Banned: return "Banned";
         case net::ErrorCode::Kicked: return "Kicked";
         case net::ErrorCode::RegistrationClosed: return "RegistrationClosed";
+        case net::ErrorCode::NoPermission: return "NoPermission";
     }
     return "?";
 }

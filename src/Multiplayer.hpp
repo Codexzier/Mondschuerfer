@@ -20,7 +20,7 @@
 //      |  NetClient meldet NetState::Lobby (ServerInfo empfangen)
 //      v
 //   Lobby       Servername, Spieler online, Einstellungen des Servers.
-//               Knöpfe: Zuschauen / Mitspielen / Trennen.
+//               Knöpfe: Zuschauen / Mitspielen / Events einrichten / Trennen.
 //      |-- Zuschauen --> Spectating: ganze Karte von oben, links die
 //      |                 Spielerliste, rechts Gesamtmenge und Bestenliste.
 //      |-- Mitspielen -> Login: Name + Passwort, "Anmelden" oder
@@ -39,6 +39,10 @@
 //      |                 SG-Team: Command Center (CommandCenterScreen::
 //      |                 DrawOnline: Teams gründen, beitreten, Tor anwählen),
 //      |                 im Einsatz Ego-Ansicht zu Fuß mit dem HUD der Figur.
+//      |-- Events einrichten -> Login (nur "Anmelden", Konto mit der Rolle
+//                        Event Manager), dann Events: Event-Editor
+//                        (EventEditorScreen, EventEditor.hpp). "Zurück" führt
+//                        wieder in die Lobby; im Spiel angemeldet wird nicht.
 //
 //   Verbindungsverlust in irgendeiner Phase -> zurück zu Address mit Fehlertext.
 //
@@ -64,6 +68,7 @@
 #include "ClientConfig.hpp"
 #include "CommandCenter.hpp"
 #include "Controls.hpp"
+#include "EventEditor.hpp"
 #include "NetClient.hpp"
 #include "Options.hpp"
 #include "Ui.hpp"
@@ -107,7 +112,7 @@ public:
     bool CaptureCursor() const;
 
 private:
-    enum class Phase { Address, Lobby, Login, Playing, Spectating };
+    enum class Phase { Address, Lobby, Login, Playing, Spectating, Events };
 
     // --- Zustandswechsel ----------------------------------------------------
     void SetPhase(Phase p);
@@ -117,6 +122,7 @@ private:
     void EnterLogin();
     void EnterPlaying();
     void EnterSpectating();
+    void EnterEvents(const net::EventListMsg& list);   // Event-Editor öffnen (Antwort auf EventLogin)
     void SubmitLogin(bool registerAccount);
     void HandleNetwork();          // Fehler, Zustandsänderungen und Ereignisse von NetClient
     void SetStatus(const std::string& text, Color c);
@@ -143,6 +149,7 @@ private:
     void DrawLogin();
     void DrawPlaying();
     void DrawSpectating();
+    void DrawEvents();
     void DrawTopPilots(const World& w);
     Rectangle TopPilotsRect() const;
     void DrawShipNames(const World& w);
@@ -182,6 +189,8 @@ private:
     bool spectatePending_ = false; // "Zuschauen" angefragt, Welcome steht noch aus
     float spectateStartT_ = 0.0f;
     bool retryLogin_ = false;      // nach "Name vergeben" (Testablauf) anmelden, sobald wieder in der Lobby
+    bool loginForEvents_ = false;  // Anmeldung für "Events einrichten" statt zum Mitspielen
+    EventEditorScreen events_;     // Event-Editor (Phase Events)
     int lobbySel_ = 0;
     int pauseSel_ = 0;
 

@@ -88,6 +88,8 @@ constexpr size_t MAX_PACKET_SIZE = 64 * 1024;     // empfangene Pakete; ENet-Sta
 // Einsatzkarten mit Vorschau (MissionMaps) höchstens so groß: knapp unter
 // dem, was der Client annimmt (NetClient: CLIENT_MAX_PACKET = 1 MB)
 constexpr size_t MAX_MISSION_MAPS_BYTES = 1000 * 1024;
+// Event-Editor (EventList) ebenso; fehlende Events zählt EventListMsg::hidden
+constexpr size_t MAX_EVENT_LIST_BYTES = 1000 * 1024;
 constexpr size_t MAX_WAITING_DATA = 256 * 1024;   // unverarbeitete Daten pro Verbindung
 constexpr int INPUT_QUEUE_MAX = 6;                // ältere Eingaben verwerfen (HandleInput)
 // Regelung der Eingabe-Warteschlange (ApplyInputs): Liegen eine Sekunde lang
@@ -97,7 +99,7 @@ constexpr int INPUT_QUEUE_WINDOW = net::TICK_RATE;   // Schritte (= 1 s)
 constexpr int MAX_BAD_PACKETS = 50;               // danach wird getrennt
 constexpr int MAX_MSGS_PER_SECOND = 240;          // normal: 30 Input/s + ein paar zuverlässige
 constexpr int FLOOD_DISCONNECT = 2000;            // so viele pro Sekunde -> trennen
-constexpr double LOBBY_TIMEOUT = 15.0 * 60.0;     // so lange darf man ohne Anmeldung verbunden sein
+constexpr double LOBBY_TIMEOUT = 15.0 * 60.0;     // so lange darf man ohne Anmeldung verbunden sein (Event-Editor: seit der letzten Aktion)
 // Abmelden außerhalb einer Station: So lange bleibt das Schiff noch ohne
 // Steuerung in der Welt und kann abgeschossen werden (LogoutPlayer).
 constexpr double LOGOUT_GRACE = 10.0;
@@ -170,6 +172,28 @@ std::string LocalDay(std::time_t t) {
     char day[16];
     std::strftime(day, sizeof(day), "%Y-%m-%d", &tm);
     return day;
+}
+
+// Prüft ein Event aus dem Event-Editor wie die Verwaltungsseite
+// (WebServer.cpp, HandleEvents): Name, Tage, Kartenlisten. Ob es die Karten
+// gibt, prüft ChangeEvent. Liefert den Grund der Ablehnung oder "".
+std::string EventProblem(const MapEvent& e) {
+    size_t chars = 0;
+    for (unsigned char ch : e.name)
+        if ((ch & 0xC0) != 0x80) ++chars;   // Folgebytes von UTF-8 nicht mitzählen
+    if (!net::ValidChatText(e.name) || e.name.front() == ' ' || e.name.back() == ' ' || chars > static_cast<size_t>(MAX_EVENT_NAME))
+        return "Bitte einen Namen eingeben (höchstens " + std::to_string(MAX_EVENT_NAME) + " Zeichen).";
+    if (!ValidEventDay(e.from) || !ValidEventDay(e.to)) return "Bitte gültige Tage angeben (JJJJ-MM-TT).";
+    if (e.to < e.from) return "Der letzte Tag liegt vor dem ersten.";
+    if (e.maps.empty() && e.locked.empty()) return "Bitte mindestens eine Karte wählbar machen oder sperren.";
+    for (const std::vector<std::string>* list : {&e.maps, &e.locked})
+        for (size_t i = 0; i < list->size(); ++i) {
+            const std::string& f = (*list)[i];
+            if (std::find(list->begin(), list->begin() + static_cast<long>(i), f) != list->begin() + static_cast<long>(i) ||
+                (list == &e.locked && std::find(e.maps.begin(), e.maps.end(), f) != e.maps.end()))
+                return "Eine Karte kann nicht zugleich wählbar und gesperrt sein.";
+        }
+    return std::string();
 }
 
 uint32_t RandomSeed() {
@@ -909,7 +933,7 @@ void GameServer::Housekeeping() {
     for (auto& up : clients_) {
         Client& c = *up;
         c.msgsThisSecond = 0;
-        if (c.role == Role::Lobby && !c.closing && c.peer && now - c.connectedAt > LOBBY_TIMEOUT) {
+        if (c.role == Role::Lobby && !c.closing && c.peer && now - std::max(c.connectedAt, c.eventActiveAt) > LOBBY_TIMEOUT) {
             SendError(c, net::ErrorCode::BadRequest, "Zu lange ohne Anmeldung – Verbindung getrennt.");
             Log(Fmt("Verbindung #%u (%s): Zeitüberschreitung in der Lobby", c.connId, c.ipText.c_str()));
             Disconnect(c);
@@ -1184,6 +1208,18 @@ void GameServer::OnReceive(Client& c, const uint8_t* data, size_t len) {
             else HandleMapUpload(c, m);
             break;
         }
+        case net::MsgType::EventLogin: {
+            net::EventLoginMsg m;
+            if (!net::Decode(r, m)) BadPacket(c, "EventLogin");
+            else HandleEventLogin(c, m);
+            break;
+        }
+        case net::MsgType::EventEdit: {
+            net::EventEditMsg m;
+            if (!net::Decode(r, m)) BadPacket(c, "EventEdit");
+            else HandleEventEdit(c, m);
+            break;
+        }
         case net::MsgType::Input: {
             net::InputMsg m;
             if (!net::Decode(r, m)) BadPacket(c, "Input");
@@ -1418,6 +1454,51 @@ void GameServer::HandleMapUpload(Client& c, const net::MapUploadMsg& m) {
         }
     }
     Send(c, net::Encode(res), true);
+}
+
+// Event-Editor im Spiel (Lobby-Knopf "Events einrichten"). Anmeldedaten wie
+// bei LoginProof prüfen, dann die Rolle Event Manager. Angemeldet wird nicht:
+// Die Verbindung bleibt in der Lobby und darf ab jetzt EventEdit schicken.
+void GameServer::HandleEventLogin(Client& c, const net::EventLoginMsg& m) {
+    if (c.role != Role::Lobby) return;
+    Account* acc = CheckProof(c, m.proof, "EventLogin ohne LoginStart");
+    if (!acc) return;
+    if (!(acc->roles & ROLE_EVENT_MANAGER)) {
+        c.eventAccount = nullptr;
+        SendError(c, net::ErrorCode::NoPermission, "Rolle Event Manager, der Betreiber vergibt sie auf der Verwaltungsseite");
+        return;
+    }
+    c.eventAccount = acc;
+    c.eventActiveAt = Now();
+    Send(c, net::Encode(MakeEventList()), true);
+    Log(Fmt("%s hat den Event-Editor geöffnet (Verbindung #%u, %s)", acc->name.c_str(), c.connId, c.ipText.c_str()));
+}
+
+// Event speichern oder löschen aus dem Event-Editor. Antwort: neue EventList
+// mit dem Ergebnis. Wurde die Rolle inzwischen entzogen oder das Konto
+// gesperrt, ist der Editor zu (Error NoPermission).
+void GameServer::HandleEventEdit(Client& c, const net::EventEditMsg& m) {
+    if (c.role != Role::Lobby || !c.eventAccount) {
+        BadPacket(c, "EventEdit ohne EventLogin");
+        return;
+    }
+    const Account* acc = c.eventAccount;
+    c.eventActiveAt = Now();
+    if (!(acc->roles & ROLE_EVENT_MANAGER) || FindAccountBan(acc->name)) {
+        c.eventAccount = nullptr;
+        SendError(c, net::ErrorCode::NoPermission, "Rolle Event Manager");
+        return;
+    }
+    const bool remove = m.action == net::EventEditType::Delete;
+    MapEvent e = m.event;
+    std::string text = remove ? std::string() : EventProblem(e);
+    const bool ok = text.empty() && ChangeEvent(remove, e, acc->name, text, &c);
+    if (ok) Log(acc->name + " (Event-Editor): " + text);
+    net::EventListMsg list = MakeEventList();
+    list.ok = ok;
+    list.text = text;
+    list.savedId = ok && !remove ? e.id : 0;
+    Send(c, net::Encode(list), true);
 }
 
 // Eingaben nur in die Warteschlange legen; angewendet werden sie in ApplyInputs.
@@ -3158,42 +3239,76 @@ void GameServer::ApplyEventCommands() {
     std::vector<EventCommand> cmds;
     if (!shared_ || !shared_->TakeEventCommands(cmds)) return;
     for (EventCommand& cmd : cmds) {
-        MapEvent& e = cmd.event;
-        const MapEvent* old = e.id != 0 ? accounts_.FindEvent(e.id) : nullptr;
-        if (e.id != 0 && !old) {
-            EventNotice("Dieses Event gibt es nicht mehr.", true);
-            continue;
-        }
-        if (cmd.kind == EventCommand::Kind::Delete) {
-            const std::string name = old ? old->name : std::string();
-            if (!old || !accounts_.RemoveEvent(e.id)) continue;
-            accounts_.SaveEvents();
-            UpdateMissionMaps();
-            EventNotice("Event \"" + name + "\" gelöscht.");
-            continue;
-        }
+        std::string text;
+        const bool ok = ChangeEvent(cmd.kind == EventCommand::Kind::Delete, cmd.event, "Verwaltungsseite", text, nullptr);
+        EventNotice(text, !ok);
+    }
+}
+
+bool GameServer::ChangeEvent(bool remove, MapEvent& e, const std::string& by, std::string& text, const Client* skip) {
+    const MapEvent* old = e.id != 0 ? accounts_.FindEvent(e.id) : nullptr;
+    if (!old && (e.id != 0 || remove)) {
+        text = "Dieses Event gibt es nicht mehr.";
+        return false;
+    }
+    if (remove) {
+        text = "Event \"" + old->name + "\" gelöscht.";
+        accounts_.RemoveEvent(e.id);
+    } else {
         // Nur Einsatzkarten, die es (noch) gibt
-        bool missing = false;
         for (const std::vector<std::string>* list : {&e.maps, &e.locked})
             for (const std::string& f : *list) {
                 const ServerMap* sm = accounts_.FindMap(f);
-                if (!sm || sm->map.kind != MapKind::Mission) missing = true;
+                if (!sm || sm->map.kind != MapKind::Mission) {
+                    text = "Eine der Karten gibt es nicht mehr oder sie ist keine Einsatzkarte.";
+                    return false;
+                }
             }
-        if (missing) {
-            EventNotice("Eine der Karten gibt es nicht mehr oder sie ist keine Einsatzkarte.", true);
-            continue;
-        }
         const bool isNew = !old;
-        e.by = old ? old->by : std::string("Verwaltungsseite");
+        e.by = old ? old->by : by;
         e.created = old ? old->created : UnixNow();
         if (!accounts_.SetEvent(e)) {
-            EventNotice(Fmt("Es gibt schon %d Events. Bitte zuerst alte löschen.", static_cast<int>(Accounts::MAX_EVENTS)), true);
+            text = Fmt("Es gibt schon %d Events. Bitte zuerst alte löschen.", static_cast<int>(Accounts::MAX_EVENTS));
+            return false;
+        }
+        text = "Event \"" + e.name + "\" " + (isNew ? "eingerichtet." : "gespeichert.");
+    }
+    accounts_.SaveEvents();
+    UpdateMissionMaps();
+    if (!remove && EventOnDay(e, missionDay_)) text += " Es gilt schon heute.";
+    SendEventLists(skip);
+    return true;
+}
+
+// Alle Einsatzkarten (nach Name) und alle Events. Passt nicht alles unter
+// MAX_EVENT_LIST_BYTES, fehlen die Events mit dem spätesten Beginn.
+net::EventListMsg GameServer::MakeEventList() const {
+    net::EventListMsg m;
+    m.today = LocalDay(std::time(nullptr));
+    for (const ServerMap& sm : accounts_.Maps())
+        if (sm.map.kind == MapKind::Mission) m.maps.push_back({sm.file, sm.map.name, sm.map.author, sm.released});
+    const size_t empty = net::Encode(net::EventListMsg{}).size();
+    size_t bytes = net::Encode(m).size() + 256;   // Platz für text
+    for (const MapEvent& e : accounts_.Events()) {
+        net::EventListMsg one;
+        one.events.push_back(e);
+        bytes += net::Encode(one).size() - empty;
+        if (bytes > MAX_EVENT_LIST_BYTES || m.events.size() >= Accounts::MAX_EVENTS) {
+            ++m.hidden;
             continue;
         }
-        accounts_.SaveEvents();
-        UpdateMissionMaps();
-        EventNotice("Event \"" + e.name + "\" " + (isNew ? "eingerichtet." : "gespeichert.") +
-                    (EventOnDay(e, missionDay_) ? " Es gilt schon heute." : ""));
+        m.events.push_back(e);
+    }
+    return m;
+}
+
+void GameServer::SendEventLists(const Client* skip) {
+    std::vector<uint8_t> bytes;
+    for (auto& up : clients_) {
+        const Client& c = *up;
+        if (&c == skip || !c.eventAccount || c.role != Role::Lobby || c.closing) continue;
+        if (bytes.empty()) bytes = net::Encode(MakeEventList());
+        Send(*up, bytes, true);
     }
 }
 

@@ -359,6 +359,12 @@ dabei selbst voraus, damit sich die Steuerung direkt anfühlt).
        Ziffern, `_` und `-`; jeden Namen gibt es pro Server nur einmal (Groß/Klein egal).
        Passwort: mindestens 6 Zeichen.
      - **Anmelden** bei jedem weiteren Mal – du spielst mit deinem letzten Stand weiter.
+   - **Events einrichten** – nur für Konten mit der Rolle *Event Manager* (vergibt der Betreiber
+     auf der Verwaltungsseite). Nach der Anmeldung öffnet sich der Event-Editor: links die Events
+     des Servers, rechts Name, **Von** und **Bis** (JJJJ-MM-TT; *Bis* leer = nur ein Tag) und alle
+     Einsatzkarten. Ein Klick schaltet jede Karte zwischen *wie sonst*, *wählbar* (an diesen Tagen
+     zusätzlich im Command Center) und *gesperrt*. Die Mondkarte ist immer wählbar.
+     **Speichern** (Enter, Strg+S), **Löschen** (zweimal klicken), **Zurück** (ESC) zur Lobby.
 4. **Rolle wählen:** Pilot oder SG-Team (vorausgewählt ist die zuletzt gespielte Rolle). Hat der
    Server den FPS-Modus ausgeschaltet, geht es gleich als Pilot weiter.
 5. **Abmelden:** ESC → *Abmelden & zum Hauptmenü*. Der Server speichert deinen Fortschritt.
@@ -597,6 +603,7 @@ Mondschuerfer/
 │   ├── Save.cpp/.hpp     Spielstand
 │   ├── MapEditor.*       Karteneditor (Kartenliste, Werkzeuge, Raster) und Kartenauswahl
 │   ├── MapFiles.*        Eigene Karten im Ordner "karten" speichern und laden
+│   ├── EventEditor.*     Mehrspieler: Event-Editor (Einsatzkarten für einzelne Tage, Rolle Event Manager)
 │   ├── NetClient.*       Mehrspieler: Verbindung, Anmeldung, Vorhersage, Interpolation
 │   ├── Multiplayer.*     Mehrspieler: Menüs (Adresse, Lobby, Anmeldung), Spielen, Zuschauen
 │   └── ClientConfig.*    Einstellungsdatei: Serveradresse, Spielername, Musik

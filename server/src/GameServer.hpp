@@ -17,6 +17,8 @@
 //     den Fortschritt über Accounts (Datenordner).
 //   - Nimmt Karten aus dem Karteneditor an (MapUpload, nur mit Berechtigung)
 //     und schickt allen die aktive Karte (MapData).
+//   - Event-Editor im Spiel (EventLogin, EventEdit): Konten mit der Rolle
+//     Event Manager richten Events ein wie auf der Verwaltungsseite.
 //   - SG-Teams (FPS-Modus): Rollenwahl, Teams im Command Center, Anwahl des
 //     Stargates; die Figuren rechnet die Welt (shared/Trooper.cpp) wie die
 //     Schiffe, der Client sagt seine eigene Figur nur voraus.
@@ -140,6 +142,10 @@ private:
         std::string challengeName;          // Name aus LoginStart (ungeprüft!)
         int failedLogins = 0;               // pro Verbindung höchstens 5
 
+        // --- Event-Editor (Lobby, siehe HandleEventLogin) ---
+        Account* eventAccount = nullptr;    // Konto mit der Rolle Event Manager; nullptr = Editor nicht offen
+        double eventActiveAt = 0.0;         // Now() der letzten Aktion im Editor (verlängert die Lobby-Zeit)
+
         // --- Spieler ---
         int playerId = -1;                  // PlayerState::id in der Welt
         Account* account = nullptr;         // Konto (Zeiger in Accounts, bleibt gültig); Bots: nullptr
@@ -248,6 +254,13 @@ private:
     void BanNotice(const std::string& text, bool error = false);   // wie MapNotice
     void ApplyEventCommands();  // Bereich "Events" der Webseite: Event speichern, löschen
     void EventNotice(const std::string& text, bool error = false); // wie MapNotice
+    // Event speichern oder löschen (Verwaltungsseite und Event-Editor im
+    // Spiel). by = wer ein neues Event einrichtet. Liefert false mit dem
+    // Grund in text, sonst das Ergebnis in text (e.id = Nummer des Events).
+    // Danach bekommen alle offenen Event-Editoren außer skip die neue Liste.
+    bool ChangeEvent(bool remove, MapEvent& e, const std::string& by, std::string& text, const Client* skip);
+    net::EventListMsg MakeEventList() const;     // Einsatzkarten und Events für den Event-Editor
+    void SendEventLists(const Client* skip);     // an alle offenen Event-Editoren (außer skip)
     void ApplyRoleCommands();   // Bereich "Rollen" der Webseite: Rolle zuweisen, entziehen
     void RoleNotice(const std::string& text, bool error = false);  // wie MapNotice
     void RemoveSurplusPirates();
@@ -311,7 +324,9 @@ private:
     void HandleLoginStart(Client& c, const net::LoginStartMsg& m);
     void HandleLoginProof(Client& c, const net::LoginProofMsg& m);
     void HandleMapUpload(Client& c, const net::MapUploadMsg& m);
-    // Prüft den Beweis zur Nonce aus LoginStart (LoginProof, MapUpload). Liefert
+    void HandleEventLogin(Client& c, const net::EventLoginMsg& m);
+    void HandleEventEdit(Client& c, const net::EventEditMsg& m);
+    // Prüft den Beweis zur Nonce aus LoginStart (LoginProof, MapUpload, EventLogin). Liefert
     // das Konto oder nullptr; dann ist die Fehlermeldung schon verschickt.
     Account* CheckProof(Client& c, const net::Key32& proof, const char* what);
     void HandleInput(Client& c, const net::InputMsg& m);

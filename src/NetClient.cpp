@@ -35,6 +35,7 @@
 //   Register()/Login() -> LoggingIn: Schlüssel berechnen, senden
 //   Spectate()         -> LoggingIn
 //   UploadMap()        -> LoggingIn, nach MapUploadResult wieder Lobby
+//   EventLogin()       -> LoggingIn, nach EventList wieder Lobby (Editor offen)
 //   Welcome kommt      -> Playing bzw. Spectating: Kulisse mit dem Seed des
 //                         Servers aufbauen (World::BuildMirror)
 //   jedes Frame (Update):
@@ -306,7 +307,7 @@ struct NetClient::Impl {
     double serviceErrorSince = -1.0;   // Now() beim ersten Socketfehler in Folge, -1 = keiner
 
     // --- Anmeldung -------------------------------------------------------------
-    enum class LoginKind { None, Register, Login, Spectate, Upload };
+    enum class LoginKind { None, Register, Login, Spectate, Upload, Events };
     LoginKind loginKind = LoginKind::None;
     double loginStart = 0.0;
     std::string loginName;             // so, wie der Spieler ihn eingegeben hat (geprüft)
@@ -316,6 +317,9 @@ struct NetClient::Impl {
     bool uploadDone = false;           // Antwort da (TakeUploadResult)
     bool uploadOk = false;
     std::string uploadText;
+    bool eventsOpen = false;           // Event-Editor offen (EventList nach EventLogin erhalten)
+    bool eventListNew = false;         // für TakeEventList
+    net::EventListMsg eventList;
 
     // --- Welt -------------------------------------------------------------------
     World world;
@@ -436,6 +440,7 @@ struct NetClient::Impl {
     void HandleHighscores(const net::HighscoresMsg& m);
     void HandleSettings(const net::SettingsMsg& m);
     void HandleMapUploadResult(const net::MapUploadResultMsg& m);
+    void HandleEventList(net::EventListMsg& m);
     void HandleMapData(const net::MapDataMsg& m);
     void ApplyMapData(const net::MapDataMsg& m);
     void HandleTeams(const net::TeamsMsg& m);
@@ -501,6 +506,9 @@ void NetClient::Impl::ResetSession() {
     WipeKey();
     uploadMap = GameMap{};
     uploadDone = false;
+    eventsOpen = false;
+    eventListNew = false;
+    eventList = net::EventListMsg{};
     worldReady = false;
     worldRebuilt = false;
     welcome = net::WelcomeMsg{};
@@ -802,6 +810,11 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
             if (net::Decode(r, m)) HandleMapUploadResult(m);
             break;
         }
+        case net::MsgType::EventList: {
+            net::EventListMsg m;
+            if (net::Decode(r, m)) HandleEventList(m);
+            break;
+        }
         case net::MsgType::MapData: {
             net::MapDataMsg m;
             if (net::Decode(r, m)) HandleMapData(m);
@@ -881,6 +894,7 @@ void NetClient::Impl::HandleError(const net::ErrorMsg& m) {
             case LoginKind::Login: text = "Anmeldung fehlgeschlagen: " + text; break;
             case LoginKind::Spectate: text = "Zuschauen nicht möglich: " + text; break;
             case LoginKind::Upload: text = "Hochladen fehlgeschlagen: " + text; break;
+            case LoginKind::Events: text = "Events einrichten nicht möglich: " + text; break;
             case LoginKind::None: break;
         }
     }
@@ -919,6 +933,11 @@ void NetClient::Impl::HandleChallenge(const net::LoginChallengeMsg& m) {
         up.map = uploadMap;
         Send(net::Encode(up), true);
         uploadMap = GameMap{};
+    } else if (loginKind == LoginKind::Events) {
+        // Event-Editor: derselbe Beweis, der Server prüft danach die Rolle
+        net::EventLoginMsg ev;
+        ev.proof = crypto::LoginProof(loginKey, m.nonce, ToLowerAscii(loginName));
+        Send(net::Encode(ev), true);
     } else {
         return;
     }
@@ -933,6 +952,19 @@ void NetClient::Impl::HandleMapUploadResult(const net::MapUploadResultMsg& m) {
     uploadText = m.text;
     loginKind = LoginKind::None;
     state = NetState::Lobby;
+}
+
+// Liste des Event-Editors: die erste beendet EventLogin (wieder Lobby, Editor
+// offen), danach kommt eine nach jeder Änderung.
+void NetClient::Impl::HandleEventList(net::EventListMsg& m) {
+    if (state == NetState::LoggingIn && loginKind == LoginKind::Events) {
+        loginKind = LoginKind::None;
+        state = NetState::Lobby;
+        eventsOpen = true;
+    }
+    if (!eventsOpen || state != NetState::Lobby) return;
+    eventList = std::move(m);
+    eventListNew = true;
 }
 
 // Aktive Karte des Servers: kommt nach jedem Welcome und wenn der Betreiber
@@ -2134,6 +2166,30 @@ void NetClient::UploadMap(const std::string& name, const std::string& password, 
     d.loginKind = Impl::LoginKind::Upload;
     d.uploadMap = map;
     d.uploadDone = false;
+}
+
+// Wie Login, nur mit LoginKind::Events: HandleChallenge schickt dann
+// EventLogin statt LoginProof.
+void NetClient::EventLogin(const std::string& name, const std::string& password) {
+    Impl& d = *impl_;
+    Login(name, password);
+    if (d.state != NetState::LoggingIn) return;   // Eingabe ungültig (Grund in TakeError)
+    d.loginKind = Impl::LoginKind::Events;
+    d.eventsOpen = false;
+    d.eventListNew = false;
+}
+
+void NetClient::SendEventEdit(const net::EventEditMsg& m) {
+    Impl& d = *impl_;
+    if (d.state == NetState::Lobby && d.eventsOpen) d.Send(net::Encode(m), true);
+}
+
+bool NetClient::TakeEventList(net::EventListMsg& out) {
+    Impl& d = *impl_;
+    if (!d.eventListNew) return false;
+    d.eventListNew = false;
+    out = d.eventList;
+    return true;
 }
 
 bool NetClient::TakeUploadResult(bool& ok, std::string& text) {

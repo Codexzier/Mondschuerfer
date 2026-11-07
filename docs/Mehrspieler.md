@@ -171,6 +171,14 @@ Der ganze Ablauf als Sequenzdiagramm. `--->` heißt zuverlässig, `~~~>` unzuver
         |------------------------- MapUpload(proof, Karte) --------------->|  Beweis wie (c), Berechtigung?
         |<------------------------ MapUploadResult(ok, Text) --------------|  danach trennt das Spiel
         |                                                                  |
+        |  (e) EVENTS EINRICHTEN (Event-Editor, ohne Anmeldung im Spiel)   |
+        |------------------------- LoginStart(name) ---------------------->|
+        |<------------------------ LoginChallenge(nonce) ------------------|
+        |------------------------- EventLogin(proof) --------------------->|  Beweis wie (c), Rolle Event Manager?
+        |<------------------ EventList(Karten, Events) oder Error ---------|  Verbindung bleibt in der Lobby
+        |------------------------- EventEdit(speichern/löschen) ---------->|  prüfen wie die Verwaltungsseite
+        |<------------------ EventList(..., Ergebnis) ---------------------|  andere Editoren: neue Liste
+        |                                                                  |
         |<------------------ MapData (nach jedem Welcome) -----------------|  aktive Karte (Kulisse)
         |<------------------ Deposits, Players, Highscores ----------------|  Startpaket
         |                                                                  |
