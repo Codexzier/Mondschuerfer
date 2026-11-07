@@ -450,6 +450,7 @@ void World::Update(float dt) {
 
     for (auto& ps : players) UpdatePlayer(ps, dt);
     UpdateTroopers(dt);   // Figuren zu Fuß (Trooper.cpp)
+    if (orbit) UpdateOrbit(dt);   // Weltraumkarte der Piloten: Asteroiden und Raumstation (Orbit.cpp)
 
     // KI aller anderen Schiffe. Versteckte Schiffe überspringen, außer
     // Händlern, die in einer Station warten (ihr Aufenthalts-Timer muss
@@ -504,8 +505,8 @@ void World::Update(float dt) {
                 sp->mining = false;
                 sp->scanOn = false;
                 sp->dockedAt = -1;
-                Ship n = MakeShip(ShipKind::Player, {0.0f, cfg::SHIP_ALTITUDE, 24.0f});
-                n.yaw = PI;
+                Ship n = MakeShip(ShipKind::Player, StartPos());
+                n.yaw = StartYaw();
                 n.playerId = sp->id;
                 s = n;
                 sp->shipId = n.id;
@@ -522,7 +523,10 @@ void World::Update(float dt) {
                 // Gegner, Händler und (auf dem Server) Spielerschiffe hinterlassen
                 // ein Wrack mit ihrer Ladung, mindestens 120 Punkte, auf
                 // Zehner abgerundet. Abschießen lohnt sich also immer etwas.
+                // Weltraumkarte: kein Wrack (es gibt dort nichts zu verkaufen,
+                // Abschüsse bringen gleich Punkte, OrbitBounty).
                 if (s.kind == ShipKind::Player) PlayerShipLost(s);
+                if (orbit) continue;
                 Wreck w;
                 w.id = nextId++;
                 w.pos = {s.pos.x, 0.15f, s.pos.z};
@@ -598,8 +602,9 @@ void World::Update(float dt) {
     // Abstand: cfg::DEPOSIT_RESPAWN (25 s) mal Zufall 0,6..1,2; auf dem
     // Server geteilt durch die halbe Spielerzahl (64 Spieler: im Mittel
     // alle 0,7 s, bis der Sollwert erreicht ist). In einer Einsatzkarte
-    // (instance) gibt es keinen Nachschub, weder Kristalle noch Schiffe.
-    if (!instance && static_cast<int>(deposits.size()) < DepositTarget()) {
+    // (instance) gibt es keinen Nachschub, weder Kristalle noch Schiffe,
+    // auf der Weltraumkarte der Piloten (orbit) keine Kristalle.
+    if (!instance && !orbit && static_cast<int>(deposits.size()) < DepositTarget()) {
         depositSpawnT -= dt;
         if (depositSpawnT <= 0.0f) {
             SpawnDeposit(false);
@@ -621,7 +626,9 @@ void World::Update(float dt) {
         if (s.faction == Faction::Pirate && s.mission < 0) ++pirates;
         if (s.kind == ShipKind::Miner) ++miners;
     }
+    // Weltraumkarte (Einzelspieler): feste Anzahl cfg::ORBIT_PIRATES.
     int wantPirates = isServer ? settings.enemyShips
+                      : orbit  ? cfg::ORBIT_PIRATES
                                : std::min<int>(cfg::PIRATES_MAX, cfg::PIRATES_BASE + static_cast<int>(totalDelivered / 12000));
     pirateSpawnT -= dt;
     if (!instance && pirates < wantPirates && pirateSpawnT <= 0.0f) {
@@ -631,12 +638,12 @@ void World::Update(float dt) {
         if (isServer && wantPirates > 8) pirateSpawnT *= 0.3f;
     }
     minerSpawnT -= dt;
-    if (!instance && miners < cfg::MINERS_COUNT && minerSpawnT <= 0.0f) {
+    if (!instance && !orbit && miners < cfg::MINERS_COUNT && minerSpawnT <= 0.0f) {
         SpawnMiner(true);
         minerSpawnT = Rand(25.0f, 40.0f);
     }
 
-    if (!instance) UpdateMissions(dt);
+    if (!instance && !orbit) UpdateMissions(dt);
 
     // Tote Schiffe entfernen. Einzelspieler: das Spielerschiff bleibt immer an Index 0.
     // Erst hier am Ende, damit während des Schritts kein Schiff aus der Liste
@@ -1928,6 +1935,16 @@ void World::UpdateBullets(float dt) {
                 break;
             }
         }
+        // Weltraumkarte: Geschosse der Spieler treffen auch Asteroiden (in x/z)
+        if (b.life <= 0.0f || b.faction != Faction::Player || b.ownerId < 0) continue;
+        for (Asteroid& a : asteroids) {
+            if (a.dead || Dist2D(b.pos, a.pos) > a.r) continue;
+            b.life = 0.0f;
+            SpawnSparks(b.pos, Color{255, 200, 90, 255}, 7);
+            SoundAt(Sfx::HitMetal, b.pos);
+            DamageAsteroid(a, b.damage, b.ownerPlayer);
+            break;
+        }
     }
     bullets.erase(std::remove_if(bullets.begin(), bullets.end(), [](const Bullet& b) { return b.life <= 0; }),
                   bullets.end());
@@ -1994,9 +2011,14 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
             }
         } else if (attacker == Faction::Player && attackerId >= 0 && attackerPlayer) {
             ++attackerPlayer->kills;
-            if (!simulation) Notify(*attackerPlayer, s.faction == Faction::Pirate ? "Pirat abgeschossen! Wrack kann abgebaut werden."
-                                                                                : "Händler abgeschossen. Wrack kann abgebaut werden.",
-                                    Color{255, 210, 130, 255});
+            // Weltraumkarte: Punkte gleich aufs Konto statt eines Wracks
+            if (orbit) {
+                if (s.faction == Faction::Pirate) OrbitBounty(*attackerPlayer, s);
+            } else if (!simulation) {
+                Notify(*attackerPlayer, s.faction == Faction::Pirate ? "Pirat abgeschossen! Wrack kann abgebaut werden."
+                                                                     : "Händler abgeschossen. Wrack kann abgebaut werden.",
+                       Color{255, 210, 130, 255});
+            }
         }
     }
 }

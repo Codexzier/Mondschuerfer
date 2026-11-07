@@ -6,7 +6,8 @@ aus dem **Kenney Space Kit** und vertont mit den Kenney-Paketen **Sci-Fi Sounds*
 mit dem Scanner nach Kristallen, baust sie ab, verkaufst sie an der Handelsstation und
 rüstest dein Schiff in der Werft auf. Piraten machen dir dabei das Leben schwer.
 
-**Ziel:** 100.000 Ressourcenpunkte auf dem Konto.
+**Ziel:** 100.000 Ressourcenpunkte auf dem Konto. Danach geht es im Einzelspieler auf der
+**Weltraumkarte** weiter (siehe [Spielregeln](#spielregeln)).
 
 Neben dem Einzelspieler gibt es einen **Mehrspieler**: Mehrere Piloten schürfen gleichzeitig auf
 einem gemeinsamen Mond, den ein eigener Server rechnet (z. B. als Docker-Container auf einem
@@ -303,9 +304,18 @@ glimmen.
   - Abgeschossene Schiffe stürzen ab und hinterlassen ein **Wrack**, das du wie eine
     Lagerstätte abbauen kannst (orangefarbener Lichtstrahl).
   - Die Geschütztürme der Stationen schützen dich vor Piraten.
+- **Weltraumkarte (Einzelspieler):** Hast du auf dem Mond 100.000 Punkte, geht es mit *Weiter ins
+  All* auf die Weltraumkarte. Aufrüstungen, Schiffe und Leben kommen mit, der Kontostand beginnt
+  bei 0, das Ziel sind wieder 100.000. Es gibt keinen Boden und keine Kristalle: Punkte bringen nur
+  abgeschossene Piraten (2.000, Elite-Piraten 5.000). In der Mitte steht die Raumstation, im Süden
+  das Trägerschiff mit Werft und Raumschiffsverkäufer (dort schützen Geschütztürme). Etwa jede
+  Minute fliegt ein Asteroid langsam auf die Station zu (Warnung mit Himmelsrichtung, orange auf dem
+  Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.
+  Explodiert die Station, stehen alle Kontostände auf 0, und nach 30 Sekunden kommt eine neue.
+  Die nächste Karte folgt später; bis dahin beginnt nach dem Ziel eine neue Runde im All.
 - **Fortsetzen:** Das Spiel speichert automatisch beim Andocken, nach jedem SG-Einsatz und beim Schließen des Fensters,
   außerdem über *Pause → Speichern & zum Hauptmenü*. Der Spielstand liegt als
-  `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach Sieg oder Absturz wird er gelöscht.
+  `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach einem Absturz wird er gelöscht.
 - **Simulation:** Ein Autopilot spielt selbst: scannen, abbauen, verkaufen, kämpfen, aufrüsten.
   Eine beliebige Taste führt zurück ins Menü.
 - **Karteneditor:** Zuerst kommt die Liste der gespeicherten Karten mit *Karte laden*, *Neue

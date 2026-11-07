@@ -11,6 +11,7 @@
 //   MONDSCHUERFER_SAVE 1                  Kennung und Formatversion
 //   seed <Zahl>                           Startwert des Zufallsgenerators
 //   map <Dateistamm>                      eigene Karte (src/MapFiles.hpp); fehlt bei der Zufallskarte
+//   orbit <Strukturpunkte> <Modell 0|1>   Weltraumkarte der Piloten (fehlt auf dem Mond); 0 Punkte = neue Station
 //   balance <Kontostand>
 //   delivered <insgesamt abgeliefert>     bestimmt die Ausbaustufe der Stationen
 //   upgrades <Tempo> <Panzerung> <Waffe> <Laderaum> <Kanonen>   Stufen 0..5 (Kanonen 0..2; fehlt in alten Spielständen)
@@ -128,6 +129,7 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     f << kMagic << ' ' << kVersion << '\n';
     f << "seed " << w.seed << '\n';
     if (!w.mapFile.empty()) f << "map " << w.mapFile << '\n';
+    if (w.orbit) f << "orbit " << (w.spaceStations.empty() ? 0.0f : w.stationHp) << ' ' << w.stationVariant << '\n';
     f << "balance " << me.balance << '\n';
     f << "delivered " << w.totalDelivered << '\n';
     f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << ' ' << me.upgrades[4] << '\n';
@@ -244,6 +246,7 @@ bool LoadGame(World& w) {
     std::getline(f, line);
     unsigned int seed = 1;
     std::string mapFile;
+    bool orbit = false;
     // Erst Seed und Karte lesen, damit die Mondoberfläche identisch erzeugt wird
     std::streampos start = f.tellg();
     while (std::getline(f, line)) {
@@ -252,15 +255,18 @@ bool LoadGame(World& w) {
         ls >> key;
         if (key == "seed") ls >> seed;
         else if (key == "map") ls >> mapFile;
+        else if (key == "orbit") orbit = true;
     }
     // Ab hier wird w verändert. NewGame setzt die Welt komplett zurück
     // (*this = World{}), also sind auch Wracks und Geschosse leer.
-    w.NewGame(seed, false);
+    // Weltraumkarte der Piloten: deren Kulisse statt der Mondoberfläche.
+    if (orbit) w.NewOrbit(seed, 0);
+    else w.NewGame(seed, false);
     // Eigene Karte wieder einsetzen. Wurde die Datei inzwischen gelöscht,
     // geht es mit der Zufallskarte weiter (die Kulisse hat keinen Einfluss
     // aufs Spiel). Ebenso, wenn sie jetzt eine Einsatzkarte ist.
     GameMap map;
-    if (!mapFile.empty() && LoadMapFile(mapFile, map) && map.kind == MapKind::Moon) {
+    if (!orbit && !mapFile.empty() && LoadMapFile(mapFile, map) && map.kind == MapKind::Moon) {
         w.ApplyMap(map);
         w.mapFile = mapFile;
     }
@@ -282,6 +288,16 @@ bool LoadGame(World& w) {
         std::string key;
         ls >> key;
         if (key == "balance") ls >> me.balance;
+        else if (key == "orbit") {
+            // Station mit dem gespeicherten Modell; war sie gerade zerstört
+            // (0 Punkte), kommt gleich die neue.
+            float hp = 0.0f;
+            int variant = 0;
+            ls >> hp >> variant;
+            w.stationVariant = variant & 1;
+            w.PlaceOrbitStation();
+            if (hp > 0.0f) w.stationHp = std::min(hp, w.stationMaxHp);
+        }
         else if (key == "delivered") ls >> w.totalDelivered;
         else if (key == "upgrades") { me.upgrades[4] = 0; ls >> me.upgrades[0] >> me.upgrades[1] >> me.upgrades[2] >> me.upgrades[3] >> me.upgrades[4]; }
         else if (key == "lives") { ls >> me.lives; me.lives = std::clamp(me.lives, 1, limits::MAX_LIVES); }

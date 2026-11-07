@@ -437,4 +437,26 @@ constexpr float SPACE_REST_REGEN = 40.0f;     // ... lädt der Schild so schnell
 constexpr float RAIDER_RANGE = 4.0f;          // Angreifer schießen aus so viel Abstand (zur Hülle) auf die Station
 constexpr int SG_POINTS_WAVE = 100;           // Punkte je abgewehrte Welle
 
+// Weltraumkarte der Piloten (shared/Orbit.cpp): Wer auf dem Mond das Ziel
+// erreicht, fliegt dort weiter, bis wieder GOAL_POINTS auf dem Konto sind.
+// Keine Kristalle: Punkte gibt es nur für abgeschossene Piraten. Ab und an
+// fliegt ein Asteroid langsam auf die Raumstation in der Mitte zu; trifft er
+// sie, verliert sie Strukturpunkte. Bei 0 explodiert sie, alle Piloten auf
+// der Karte haben dann Kontostand 0, und nach ORBIT_STATION_RESPAWN kommt
+// eine neue Station. Am Trägerschiff im Süden: Werft und Raumschiffsverkäufer.
+constexpr int ORBIT_BOUNTY_PIRATE = 2000;        // Abschuss eines Piraten
+constexpr int ORBIT_BOUNTY_ELITE = 5000;         // ... eines Elite-Piraten
+constexpr int ORBIT_PIRATES = 8;                 // so viele Piraten gleichzeitig (Einzelspieler)
+constexpr float ORBIT_STATION_HP = 1000.0f;      // Strukturpunkte der Raumstation
+constexpr float ORBIT_STATION_SCALE = 40.0f;     // Maßstab des Modells (40 m breit)
+constexpr float ORBIT_STATION_RESPAWN = 30.0f;   // Sekunden nach der Explosion bis zur neuen Station
+constexpr float ORBIT_CARRIER_Z = 150.0f;        // Trägerschiff: so weit südlich der Station (Mitte)
+constexpr float ORBIT_ASTEROID_FIRST = 45.0f;    // Sekunden bis zum ersten Asteroiden
+constexpr float ORBIT_ASTEROID_INTERVAL = 75.0f; // danach im Mittel so oft (mal 0,8 bis 1,2)
+constexpr float ORBIT_ASTEROID_DIST = 230.0f;    // Abstand zur Station beim Auftauchen
+constexpr float ORBIT_ASTEROID_SPEED = 3.5f;     // Einheiten pro Sekunde (gut eine Minute bis zur Station)
+constexpr float ORBIT_ASTEROID_HP = 250.0f;      // so viel Schaden hält ein Asteroid aus
+constexpr float ORBIT_ASTEROID_DAMAGE = 250.0f;  // Strukturpunkte je Einschlag (vier Treffer: Station zerstört)
+constexpr float ORBIT_ASTEROID_SIZE = 7.0f;      // Maßstab des Modells (gut 6 m breit)
+
 } // namespace cfg

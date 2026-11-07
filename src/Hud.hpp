@@ -88,8 +88,10 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton = fa
 // der Spieler "Zum Hauptmenü" gewählt hat. Die Tasten Enter/ESC wirken erst
 // nach 1 s (w.outcomeT), damit ein gerade noch gehaltener Tastendruck aus dem
 // Spiel den Bildschirm nicht sofort wegklickt.
+// toOrbit: Sieg auf dem Mond im Einzelspiel, der Knopf heißt "Weiter ins All"
+// (Sprung auf die Weltraumkarte der Piloten, main.cpp).
 bool DrawGameOver(const World& w);
-bool DrawVictory(const World& w);
+bool DrawVictory(const World& w, bool toOrbit = false);
 
 // Zeigt die Tastenbelegung als zweispaltige Liste (Taste | Wirkung) ab der
 // linken oberen Ecke (x, y), und zwar für das zuletzt benutzte Gerät:

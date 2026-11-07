@@ -252,6 +252,17 @@ void Minimap(const World& w) {
         DrawRectangleV({m.x - 5 * s, m.y - 5 * s}, {10 * s, 10 * s}, c);
         DrawRectangleLinesEx({m.x - 7 * s, m.y - 7 * s, 14 * s, 14 * s}, 1, c);
     }
+    // Weltraumkarte der Piloten: Raumstation (Kreis in ihrer Größe) und
+    // Asteroiden (orange, pulsierend, auch außerhalb des Radarkreises)
+    const float pulse = 0.5f + 0.5f * sinf(w.time * 5.0f);
+    for (const SpaceStation& st : w.spaceStations)
+        DrawCircleLinesV(map(st.pos), st.r / (2 * cfg::WORLD_HALF) * r.width, Color{110, 215, 225, 220});
+    for (const Asteroid& a : w.asteroids) {
+        if (a.dead) continue;
+        const Vector2 m = map(a.pos);
+        DrawCircleV(m, (5.0f + 3.0f * pulse) * s, Fade(Color{255, 150, 60, 255}, 0.25f + 0.25f * pulse));
+        DrawCircleV(m, 3.2f * s, Color{255, 150, 60, 255});
+    }
     for (const auto& sh : w.ships) {
         // Das eigene Schiff zeichnet unten der weiße Pfeil. (Früher wurde hier jedes
         // Spielerschiff übersprungen – im Mehrspieler fehlten dadurch die anderen
@@ -270,7 +281,6 @@ void Minimap(const World& w) {
     // aus World::UpdateMissions, im Mehrspieler vom Server): Personen gelb,
     // Piraten rot, Konvoi-Frachter grün. Sie pulsieren (Größe und Deckkraft),
     // damit man sie auf der großen Karte schnell findet.
-    const float pulse = 0.5f + 0.5f * sinf(w.time * 5.0f);
     for (const MissionMarker& mk : w.Me().markers) {
         const Vector2 m = map(mk.pos);
         const Color c = mk.kind == 0 ? Color{255, 225, 60, 255} : (mk.kind == 1 ? BAD : Color{150, 255, 120, 255});
@@ -715,6 +725,51 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
     }
 }
 
+// Weltraumkarte der Piloten (World::orbit): oben in der Mitte der Zustand
+// der Raumstation (Strukturpunkte, Abstand des nächsten Asteroiden oder Zeit
+// bis zur neuen Station), über jedem Asteroiden im Bild sein Trefferbalken.
+static void DrawOrbitHud(const World& w, const Camera3D& cam) {
+    const float s = Scale();
+    const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
+    const Color stationCol{110, 215, 225, 255}, rock{255, 150, 60, 255};
+    for (const Asteroid& a : w.asteroids) {
+        if (a.dead) continue;
+        const Vector3 top{a.pos.x, cfg::SHIP_ALTITUDE + a.r + 1.0f, a.pos.z};
+        if (Vector3DotProduct(Vector3Subtract(top, cam.position), Vector3Subtract(cam.target, cam.position)) <= 0.0f) continue;
+        const Vector2 p = GetWorldToScreen(top, cam);
+        if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) continue;
+        const float bw = 90 * s;
+        TextCentered("ASTEROID", p.x, p.y - 30 * s, 18 * s, rock);
+        Bar({p.x - bw * 0.5f, p.y - 8 * s, bw, 7 * s}, a.hp / a.maxHp, rock);
+    }
+    const Rectangle r{W * 0.5f - 230 * s, 16 * s, 460 * s, 76 * s};
+    Panel(r);
+    const float x = r.x + 18 * s, bw = r.width - 36 * s;
+    float y = r.y + 10 * s;
+    const bool up = !w.spaceStations.empty() && w.stationMaxHp > 0.0f;
+    const float k = up ? w.stationHp / w.stationMaxHp : 0.0f;
+    Text("RAUMSTATION", x, y, 18 * s, MUTED);
+    TextRight(up ? TextFormat("Struktur %d %%", static_cast<int>(ceilf(k * 100.0f))) : "zerstört", x + bw, y, 18 * s,
+              k < 0.3f ? BAD : TEXT);
+    y += 24 * s;
+    Bar({x, y, bw, 8 * s}, k, k < 0.3f ? BAD : stationCol);
+    y += 16 * s;
+    if (!up) {
+        TextCentered(TextFormat("Neue Station in %.0f s", std::max(0.0f, ceilf(w.stationDownT))), W * 0.5f, y, 18 * s, BAD);
+        return;
+    }
+    // Nächster Asteroid: Abstand bis zum Einschlag an der Hülle (wie World::UpdateOrbit)
+    const SpaceStation& st = w.spaceStations[0];
+    float best = 1e9f;
+    for (const Asteroid& a : w.asteroids)
+        if (!a.dead) best = std::min(best, Dist2D(a.pos, st.pos) - st.r - a.r * 0.5f);
+    if (best < 1e8f)
+        TextCentered(TextFormat("Asteroid im Anflug: noch %d m bis zur Station", static_cast<int>(std::max(0.0f, best))), W * 0.5f, y,
+                     18 * s, Fade(rock, 0.6f + 0.4f * sinf(w.time * 6.0f)));
+    else
+        TextCentered("Keine Asteroiden in Sicht", W * 0.5f, y, 18 * s, MUTED);
+}
+
 // ===========================================================================
 // HUD während des Fluges (Ablauf siehe Dateikopf)
 // ===========================================================================
@@ -809,6 +864,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     TextRight(TextFormat("LEBEN  %d", me.lives), x + bw, y, 18 * s, me.lives <= 1 ? BAD : TEXT);
 
     Minimap(w);
+    if (w.orbit) DrawOrbitHud(w, cam);
 
     // --- Laufende Mission oben in der Mitte -------------------------------------------
     // Name und Fortschritt ("Personen 2 / 3", "Abschüsse 1 / 3" ...) in einem
@@ -1337,9 +1393,9 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
 // Endbildschirme
 // ===========================================================================
 // Gemeinsamer Aufbau für Niederlage und Sieg (nur Einzelspieler, siehe
-// Hud.hpp): Titel, Untertitel, Statistik, Knopf "Zum Hauptmenü".
-// Liefert true, wenn der Spieler zurück ins Menü will.
-static bool EndScreen(const World& w, const char* title, const char* sub, Color tc) {
+// Hud.hpp): Titel, Untertitel, Statistik, Knopf (meist "Zum Hauptmenü").
+// Liefert true, wenn der Spieler den Knopf gewählt hat.
+static bool EndScreen(const World& w, const char* title, const char* sub, Color tc, const char* button = "Zum Hauptmenü") {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 160});
@@ -1361,7 +1417,7 @@ static bool EndScreen(const World& w, const char* title, const char* sub, Color 
     row("Abschüsse", std::to_string(w.Me().kills));
     row("Spielzeit", Time(w.Me().playTime));
     Rectangle b{W * 0.5f - 170 * s, r.y + r.height - 76 * s, 340 * s, 52 * s};
-    bool go = Button(b, "Zum Hauptmenü", 24 * s, true);
+    bool go = Button(b, button, 24 * s, true);
     // Tastatur erst nach 1 s: Wer beim Sieg/Absturz gerade Enter oder ESC
     // drückt, soll den Bildschirm nicht versehentlich sofort schließen.
     // Controller: A (der einzige Knopf hier) oder B wie ESC.
@@ -1376,6 +1432,8 @@ bool DrawGameOver(const World& w) {
 }
 
 // Die Zahl im Untertitel ist fest eingetragen und muss zu cfg::GOAL_POINTS passen.
-bool DrawVictory(const World& w) {
+bool DrawVictory(const World& w, bool toOrbit) {
+    if (toOrbit)
+        return EndScreen(w, "ZIEL ERREICHT!", "100.000 Ressourcenpunkte! Jetzt geht es ins All.", GOOD, "Weiter ins All");
     return EndScreen(w, "ZIEL ERREICHT!", "Du hast 100.000 Ressourcenpunkte erwirtschaftet.", GOOD);
 }

@@ -415,6 +415,22 @@ private:
         }
     }
 
+    // Ziel auf dem Mond erreicht, "Weiter ins All": Die Weltraumkarte der
+    // Piloten ersetzt die Mondwelt (World::NewOrbit). Aufrüstungen, Schiffe,
+    // Leben und Statistik kommen mit (CarryPilot), dann gleich speichern.
+    void EnterOrbit() {
+        auto next = std::make_unique<World>();
+        next->NewOrbit(static_cast<unsigned int>(std::time(nullptr)), world_.totalDelivered);
+        next->CarryPilot(next->Me(), world_.Me());
+        world_ = std::move(*next);
+        SaveGame(world_);
+        controls_.Reset();
+        screen_ = Screen::Playing;
+        camTarget_ = world_.Player().pos;
+        endHandled_ = false;
+        dockFrames_ = 0;
+    }
+
     // Rollenwahl öffnen (nach NewGame bzw. Continue aus dem Hauptmenü; die
     // Testläufe mit --mode starten ohne sie als Pilot). Vorausgewählt ist die
     // Rolle beim letzten Speichern.
@@ -632,7 +648,8 @@ private:
     }
 
     // Einzelspiel, ein Frame. Fälle:
-    //   - gewonnen: Welt erstarrt, nur Effekte; Spielstand löschen (einmal).
+    //   - gewonnen (Mond): Welt erstarrt, nur Effekte; der Spielstand bleibt,
+    //     mit "Weiter ins All" geht es auf der Weltraumkarte weiter (EnterOrbit).
     //   - abgestürzt: Welt läuft ohne Eingaben weiter (Explosion, Piraten);
     //     Spielstand löschen – es gibt kein "Weiterspielen" nach dem Tod.
     //   - angedockt: Welt steht, das Stationsfenster (DrawPlaying) ist offen.
@@ -646,7 +663,7 @@ private:
             controls_.Reset();
             world_.outcomeT += dt;
             world_.UpdateAmbient(dt);
-            if (!endHandled_) { DeleteSave(); g_audio.PlayGoalMusic(); endHandled_ = true; }
+            if (!endHandled_) { g_audio.PlayGoalMusic(); endHandled_ = true; }
             return;
         }
         if (world_.outcome == Outcome::Dead) {
@@ -981,8 +998,9 @@ private:
                 else pickMap_ = true;
                 break;
             case 1:
+                // Auf der Weltraumkarte gibt es nur Piloten: ohne Rollenwahl
                 Continue();
-                if (screen_ == Screen::Playing) OpenRoles();
+                if (screen_ == Screen::Playing && !world_.orbit) OpenRoles();
                 break;
             case 2: EnterMultiplayer(MultiplayerOptions{}); break;
             case 3: EnterEditor(); break;
@@ -1058,7 +1076,7 @@ private:
     void DrawPlaying() {
         if (world_.outcome == Outcome::Won) {
             DrawHud(world_, cam_, false);
-            if (DrawVictory(world_)) BackToMenu();
+            if (DrawVictory(world_, true)) EnterOrbit();
             return;
         }
         if (world_.outcome == Outcome::Dead) {

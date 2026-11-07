@@ -109,8 +109,10 @@ void DrawGroundRing(Vector3 c, float rIn, float rOut, Color col, int segments = 
 // Abschnitts, der Rest ist Lücke. Jeder Strich besteht aus 4 Teilstücken,
 // damit er der Rundung folgt. phase verschiebt alle Striche (1.0 = um genau
 // einen Abschnitt); wächst phase mit der Zeit, dreht sich der Ring langsam.
-// Gleiche Bauweise und Höhe wie DrawGroundRing.
+// Gleiche Bauweise und Höhe wie DrawGroundRing (über c.y: auf der
+// Weltraumkarte liegen die Andockplätze auf dem Deck des Trägerschiffs).
 void DrawDashedRing(Vector3 c, float r, float width, Color col, int dashes, float phase) {
+    const float y = c.y + 0.12f;
     rlBegin(RL_TRIANGLES);
     rlColor4ub(col.r, col.g, col.b, col.a);
     const int sub = 4;
@@ -121,12 +123,12 @@ void DrawDashedRing(Vector3 c, float r, float width, Color col, int dashes, floa
             float a0 = start + len * s / sub;
             float a1 = start + len * (s + 1) / sub;
             float rIn = r - width * 0.5f, rOut = r + width * 0.5f;
-            rlVertex3f(c.x + cosf(a0) * rIn, 0.12f, c.z + sinf(a0) * rIn);
-            rlVertex3f(c.x + cosf(a0) * rOut, 0.12f, c.z + sinf(a0) * rOut);
-            rlVertex3f(c.x + cosf(a1) * rOut, 0.12f, c.z + sinf(a1) * rOut);
-            rlVertex3f(c.x + cosf(a0) * rIn, 0.12f, c.z + sinf(a0) * rIn);
-            rlVertex3f(c.x + cosf(a1) * rOut, 0.12f, c.z + sinf(a1) * rOut);
-            rlVertex3f(c.x + cosf(a1) * rIn, 0.12f, c.z + sinf(a1) * rIn);
+            rlVertex3f(c.x + cosf(a0) * rIn, y, c.z + sinf(a0) * rIn);
+            rlVertex3f(c.x + cosf(a0) * rOut, y, c.z + sinf(a0) * rOut);
+            rlVertex3f(c.x + cosf(a1) * rOut, y, c.z + sinf(a1) * rOut);
+            rlVertex3f(c.x + cosf(a0) * rIn, y, c.z + sinf(a0) * rIn);
+            rlVertex3f(c.x + cosf(a1) * rOut, y, c.z + sinf(a1) * rOut);
+            rlVertex3f(c.x + cosf(a1) * rIn, y, c.z + sinf(a1) * rIn);
         }
     }
     rlEnd();
@@ -715,7 +717,7 @@ const Color kGrounds[] = {
 
 } // namespace
 
-Color World::ClearColor() const { return instance ? SkyOf(*this).sky : Color{14, 17, 26, 255}; }
+Color World::ClearColor() const { return instance ? SkyOf(*this).sky : orbit ? kSpaceSky.sky : Color{14, 17, 26, 255}; }
 
 // Das Wurmloch eines Stargates (Welt und Command Center). Der Ring der
 // Kit-Modelle gate_simple/gate_complex hat seine Mitte 0,585 über dem
@@ -1097,9 +1099,10 @@ void World::Draw(const Camera3D& cam) const {
     // der Übersicht des Zuschauers (dort wäre die ganze Karte im Staub).
     // Einsatzkarte: statt des Sandsturms der Dunst und das Licht ihres Himmels;
     // zu Fuß mit Skybox (siehe Himmel unten) in der Farbe ihres Horizonts.
-    const float sand = tiltshift::Active() && cullR < 200.0f ? g_clientConfig.sandstorm : 0.0f;
+    // Weltraumkarte der Piloten (orbit): kein Sandsturm, Weltraum-Skybox auch aus dem Schiff.
+    const float sand = !orbit && tiltshift::Active() && cullR < 200.0f ? g_clientConfig.sandstorm : 0.0f;
     const Trooper* foot = me.role == PlayerRole::Trooper ? FindTrooper(me.trooperId) : nullptr;
-    const SkyBox* box = foot && instance ? SkyBoxFor(mapSky, seed, space) : nullptr;
+    const SkyBox* box = foot && instance ? SkyBoxFor(mapSky, seed, space) : orbit ? SkyBoxFor(MapSky::Night, seed, true) : nullptr;
     const Color haze = box ? box->horizon : SkyOf(*this).haze;
     if (instance) {
         const SkyLook& sk = SkyOf(*this);
@@ -1150,11 +1153,13 @@ void World::Draw(const Camera3D& cam) const {
     // Einsatzkarten: Skybox; Mondkarte: Sternenhimmel. Kometen auf der
     // Mondkarte und auf Einsatzkarten mit Nachthimmel (ohne Skybox-Bild dort
     // auch die Sterne), Trägerschiffe überall; sie ohne Dunst und Nebel.
-    if (foot) {
+    // Weltraumkarte der Piloten: Skybox und Kometen auch aus dem Schiff, die
+    // Trägerschiffe am Himmel nicht (dort liegt ein echtes).
+    if (foot || orbit) {
         if (box) DrawSkyBox(*box, cam);
         if (!instance || mapSky == MapSky::Night) DrawStarSky(cam, time, !box);
         fx::SetFog(focus, 0.0f, time);
-        DrawSkyCarriers(cam, time);
+        if (!orbit) DrawSkyCarriers(cam, time);
         if (instance) {
             const SkyLook& sk = SkyOf(*this);
             fx::SetHaze(focus, haze, sk.near, sk.far, sk.k);
@@ -1172,14 +1177,15 @@ void World::Draw(const Camera3D& cam) const {
     // Der tint wird mit der (umgefärbten) Gesteinsfarbe multipliziert.
     // Beim orangefarbenen Mond (Originalfarbe) den Boden kaum abdunkeln
     // Einsatzkarte: in der Farbe ihres Bodens, das Spielfeld (fieldHalf) etwas heller.
-    // Weltraumkarte: kein Boden (die Decks sind Teile der Karte).
+    // Weltraumkarte: kein Boden (die Decks sind Teile der Karte), ebenso auf
+    // der Weltraumkarte der Piloten (orbit).
     if (instance && !space) {
         const Color g = kGrounds[std::clamp(static_cast<int>(mapGround), 0, 3)];
         const Color dark{static_cast<unsigned char>(g.r * 0.8f), static_cast<unsigned char>(g.g * 0.8f),
                          static_cast<unsigned char>(g.b * 0.8f), 255};
         g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), dark);
         g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, fieldHalf * 2.0f + 1.0f), g);
-    } else if (!instance) {
+    } else if (!instance && !orbit) {
         g_assets.Draw(mdl.terrain, TRS({0, -0.05f, 0}, 0, 1400.0f), orangeMoon ? Color{150, 140, 136, 255} : Color{120, 120, 128, 255});
         g_assets.Draw(mdl.terrain, TRS({0, 0, 0}, 0, cfg::WORLD_HALF * 2.0f + 30.0f),
                       orangeMoon ? Color{225, 218, 214, 255} : Color{176, 176, 184, 255});
@@ -1195,9 +1201,9 @@ void World::Draw(const Camera3D& cam) const {
             if (mapTheme == MapTheme::Graveyard) DrawGroundStones(*this, focus, cam.position, 28.0f);
             else DrawGroundGrass(*this, focus, cam.position, 20.0f);
         }
-    } else if (stoneLevel >= 1 && me.role == PlayerRole::Trooper) {
+    } else if (!orbit && stoneLevel >= 1 && me.role == PlayerRole::Trooper) {
         DrawGroundStones(*this, focus, cam.position, 28.0f);
-    } else if (stoneLevel >= 2 && tiltshift::Active() && cullR < 200.0f) {
+    } else if (!orbit && stoneLevel >= 2 && tiltshift::Active() && cullR < 200.0f) {
         DrawGroundStones(*this, focus, cam.position, 70.0f);
     }
 
@@ -1343,6 +1349,17 @@ void World::Draw(const Camera3D& cam) const {
         }
     }
 
+    // --- Weltraumkarte der Piloten: Raumstation und Asteroiden (Orbit.cpp) ------
+    // Die Station dreht sich langsam (nur Optik); getroffene Asteroiden
+    // glühen kurz orange auf.
+    for (const SpaceStation& st : spaceStations)
+        if (st.model >= 0 && Dist2D(st.pos, focus) <= cullR + st.scale) g_assets.Draw(st.model, st.pos, time * 0.03f, st.scale);
+    for (const Asteroid& a : asteroids) {
+        if (a.dead || Dist2D(a.pos, focus) > cullR + a.scale) continue;
+        const float f = a.hitFlash;
+        g_assets.Draw(a.model, a.pos, a.yaw, a.scale, Color{200, 190, 180, 255}, Vector3{0.6f * f, 0.3f * f, 0.08f * f});
+    }
+
     // --- Lagerstätten -----------------------------------------------------------
     // Nur entdeckte Lagerstätten sind sichtbar. Einzelspieler: der eigene
     // Scanner setzt revealed. Mehrspieler: Der Server schickt nur die
@@ -1458,8 +1475,9 @@ void World::Draw(const Camera3D& cam) const {
     // Schatten (nur ohne Schattenkarte, die zeichnet echte Schatten)
     // Alpha 0.16 bis 2,5 m Flughöhe, darüber schwächer, ab 12,5 m nur noch
     // 20 % davon: je höher das Schiff, desto blasser der Schatten.
+    // Weltraumkarte der Piloten: kein Boden, also keine Schatten darauf
     for (const auto& s : ships) {
-        if (shadowMap) break;
+        if (shadowMap || orbit) break;
         if (s.dead || s.hidden || Dist2D(s.pos, focus) > cullR) continue;
         float h = std::max(0.0f, s.pos.y);
         DrawShadow(s.pos, 1.1f, 0.16f * std::clamp(1.2f - h * 0.08f, 0.2f, 1.0f));
@@ -1472,21 +1490,23 @@ void World::Draw(const Camera3D& cam) const {
     // Markierungen unter Schiffen
     // Farbcode: eigenes Schiff orange, andere Spieler grün, feindlich rot
     // (Piraten oder Händler/Miner, die man angegriffen hat), neutral blau
-    // (friedliche Händler/Miner).
+    // (friedliche Händler/Miner). Weltraumkarte der Piloten: kein Boden, die
+    // Ringe liegen knapp über den Decks von Station und Trägerschiff.
+    const float ringY = orbit ? cfg::SHIP_ALTITUDE - 1.1f : 0.12f;
     if (!player.dead && !player.hidden && !player.crashing)
-        DrawGroundRing(player.pos, 1.7f, 1.95f, Color{255, 170, 60, 130}, 40);
+        DrawGroundRing(player.pos, 1.7f, 1.95f, Color{255, 170, 60, 130}, 40, ringY);
     for (const auto& s : ships) {
         // &s == &player: das eigene Schiff (ships[0]) hat oben schon seinen Ring.
         if (s.dead || s.hidden || s.crashing || &s == &player) continue;
         if (Dist2D(s.pos, focus) > cullR) continue;
         if (s.kind == ShipKind::Player)   // andere Spieler (Mehrspieler)
-            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{110, 240, 170, 130}, 32);
+            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{110, 240, 170, 130}, 32, ringY);
         else if (s.faction == Faction::Pirate || s.hostileToPlayer)
-            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{255, 70, 60, 150}, 32);
+            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{255, 70, 60, 150}, 32, ringY);
         else if (s.kind == ShipKind::Convoy)   // Frachter des Konvois (Mission)
-            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{150, 255, 120, 140}, 32);
+            DrawGroundRing(s.pos, 1.7f, 1.95f, Color{150, 255, 120, 140}, 32, ringY);
         else
-            DrawGroundRing(s.pos, 1.7f, 1.9f, Color{120, 200, 255, 100}, 32);
+            DrawGroundRing(s.pos, 1.7f, 1.9f, Color{120, 200, 255, 100}, 32, ringY);
     }
 
     // Andockbereich der Stationen
