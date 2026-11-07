@@ -158,6 +158,33 @@ code {
 /* Daten veraltet (Verbindung verloren): sichtbar, aber gedämpft */
 .layout.stale { opacity: 0.55; }
 
+/* Reiter unter der Kopfzeile (bleiben mit ihr oben stehen) */
+.tabs-bar { border-top: 1px solid var(--line); }
+.tabs {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 0 16px;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+}
+.tab {
+    font: inherit;
+    font-weight: 600;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    padding: 10px 16px 9px;
+    min-height: 44px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tab-page { display: grid; gap: var(--gap); min-width: 0; }
+
 .columns {
     display: grid;
     gap: var(--gap);

@@ -15,6 +15,8 @@
         Bereiche "Events" (/api/events) und "Rollen" (/api/roles).
      5. Der Bereich "Verlauf" fragt einmal pro Minute GET /api/history ab
         (Lastprotokoll der letzten 24 Stunden) und zeichnet daraus Diagramme.
+     6. Reiter Übersicht / Konfiguration / Spieler: zeigt jeweils eine Seite,
+        die Wahl steht in der Adresse (#uebersicht, #konfiguration, #spieler).
 
    WOHER KOMMEN DIE DATEN?
      Der Spiel-Thread des Servers legt einmal pro Sekunde eine Kopie seines
@@ -1857,9 +1859,53 @@
     }
 
     // =========================================================================
+    // Reiter: Übersicht, Konfiguration, Spieler
+    // Die Wahl steht in der Adresse (#uebersicht ...): Sie bleibt beim
+    // Neuladen erhalten und lässt sich als Lesezeichen speichern. Alle
+    // Bereiche werden weiter aktualisiert, auch die verborgenen.
+    // =========================================================================
+    const tabButtons = () => [...document.querySelectorAll('.tab')];
+
+    function showTab(btn, focus) {
+        tabButtons().forEach((b) => {
+            const on = b === btn;
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+            b.tabIndex = on ? 0 : -1;
+            $(b.getAttribute('aria-controls')).hidden = !on;
+        });
+        if (focus) btn.focus();
+        const hash = `#${btn.dataset.hash}`;
+        if (location.hash !== hash) history.replaceState(null, '', hash);
+        // Die Diagramme richten sich nach der Breite; verborgen hatten sie keine
+        if (btn.id === 'tab-btn-overview' && state.history) renderHistory(state.history);
+    }
+
+    function initTabs() {
+        const buttons = tabButtons();
+        buttons.forEach((b, i) => {
+            b.addEventListener('click', () => showTab(b, false));
+            // Pfeiltasten wechseln den Reiter (übliche Bedienung einer Reiterleiste)
+            b.addEventListener('keydown', (ev) => {
+                let j = -1;
+                if (ev.key === 'ArrowRight') j = (i + 1) % buttons.length;
+                else if (ev.key === 'ArrowLeft') j = (i + buttons.length - 1) % buttons.length;
+                else if (ev.key === 'Home') j = 0;
+                else if (ev.key === 'End') j = buttons.length - 1;
+                if (j < 0) return;
+                ev.preventDefault();
+                showTab(buttons[j], true);
+            });
+        });
+        const fromHash = () => buttons.find((b) => `#${b.dataset.hash}` === location.hash);
+        showTab(fromHash() || buttons[0], false);
+        window.addEventListener('hashchange', () => { const b = fromHash(); if (b) showTab(b, false); });
+    }
+
+    // =========================================================================
     // Start: Ereignisse verbinden, erste Abfrage
     // =========================================================================
     function init() {
+        initTabs();
         $('f-serverName').dataset.maxBytes = '40';   // limits::MAX_SERVER_NAME
 
         $('player-search').addEventListener('input', () => renderPlayers(state.status, true));

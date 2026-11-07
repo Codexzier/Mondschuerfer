@@ -201,7 +201,10 @@ Bereich begrenzt.
 
 ### Die Webseite
 
-Die Seite aktualisiert sich alle 2 Sekunden selbst und zeigt:
+Die Seite aktualisiert sich alle 2 Sekunden selbst. Sie hat drei Reiter: **Übersicht** (Auslastung,
+Verlauf), **Konfiguration** (Spielparameter, Schiffe, Karten, Events) und **Spieler** (eingeloggte
+Spieler, Bestenliste, Rollen, Sperren). Der gewählte Reiter steht in der Adresse (`#uebersicht`,
+`#konfiguration`, `#spieler`) und bleibt beim Neuladen erhalten. Die Seite zeigt:
 
 - **Auslastung:** Rechenzeit pro Simulationsschritt (Durchschnitt/Maximum; das Budget sind
   33,3 ms), Auslastung in Prozent, CPU, Arbeitsspeicher, Netzwerk ein/aus, Laufzeit.
