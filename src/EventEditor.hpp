@@ -1,7 +1,7 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// EventEditor.hpp – Event-Editor im Mehrspieler (Lobby-Knopf "Events
-// einrichten", nur für Konten mit der Rolle Event Manager).
+// EventEditor.hpp – Event-Editor im Mehrspieler (Knopf "Event einrichten" in
+// der Rollenwahl nach der Anmeldung, nur für Konten mit der Rolle Event Manager).
 //
 // Wofür ist die Datei da?
 //   Ein Event macht Einsatzkarten an einzelnen Tagen im Command Center
@@ -13,11 +13,11 @@
 //   "gesperrt" (Klick schaltet weiter). Die Mondkarte steht immer oben und
 //   ist immer wählbar.
 //
-// Ablauf: MultiplayerScreen meldet mit NetClient::EventLogin an, reicht jede
+// Ablauf: MultiplayerScreen öffnet ihn mit NetClient::OpenEvents, reicht jede
 // neue Liste (net::EventListMsg) an SetList weiter und schickt, was Draw
 // liefert, als EventEdit an den Server. Der Server prüft alles noch einmal.
 //
-// Wer benutzt die Datei? src/Multiplayer.cpp (Phase Events).
+// Wer benutzt die Datei? src/Multiplayer.cpp (über der Rollenwahl).
 // Abhängigkeiten: shared/Protocol.hpp (EventListMsg), shared/MapEvents.hpp,
 // src/Ui.hpp, raylib.
 // ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@
 #include <string>
 
 // Was im Editor gewählt wurde (MultiplayerScreen schickt Save/Delete als
-// EventEdit an den Server bzw. geht bei Back zurück in die Lobby)
+// EventEdit an den Server bzw. geht bei Back zurück zur Rollenwahl)
 struct EventEditorAction {
     enum class Kind { None, Save, Delete, Back };
     Kind kind = Kind::None;
@@ -37,7 +37,8 @@ struct EventEditorAction {
 class EventEditorScreen {
 public:
     EventEditorScreen();
-    // Beim Öffnen (nach EventLogin): account = eigenes Konto für die Kopfzeile
+    // Beim Öffnen: account = eigenes Konto für die Kopfzeile; bis die erste
+    // Liste kommt (SetList), wartet der Editor auf den Server
     void Open(const std::string& account);
     // Neue Liste vom Server übernehmen. Ein gerade gespeichertes Event wird
     // ausgewählt (savedId), ein gelöschtes geschlossen; sonst bleibt das

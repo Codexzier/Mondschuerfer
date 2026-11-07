@@ -20,7 +20,7 @@
 //      |  NetClient meldet NetState::Lobby (ServerInfo empfangen)
 //      v
 //   Lobby       Servername, Spieler online, Einstellungen des Servers.
-//               Knöpfe: Zuschauen / Mitspielen / Events einrichten / Trennen.
+//               Knöpfe: Zuschauen / Mitspielen / Trennen.
 //      |-- Zuschauen --> Spectating: ganze Karte von oben, links die
 //      |                 Spielerliste, rechts Gesamtmenge und Bestenliste.
 //      |-- Mitspielen -> Login: Name + Passwort, "Anmelden" oder
@@ -28,7 +28,9 @@
 //      |                    |  NetClient meldet NetState::Playing
 //      |                    v
 //      |                 Rollenwahl (Pilot oder SG-Team, die letzte Wahl ist
-//      |                 vorausgewählt), dann
+//      |                 vorausgewählt; mit der Rolle Event Manager zusätzlich
+//      |                 "Event einrichten": Event-Editor, EventEditor.hpp,
+//      |                 "Zurück" führt wieder zur Rollenwahl), dann
 //      |                 Playing: Spiel wie im Einzelspieler, zusätzlich
 //      |                 "Beste Piloten", Namen über fremden Schiffen,
 //      |                 Anzeige nach Absturz, Abschlussanimation beim Ziel,
@@ -39,10 +41,6 @@
 //      |                 SG-Team: Command Center (CommandCenterScreen::
 //      |                 DrawOnline: Teams gründen, beitreten, Tor anwählen),
 //      |                 im Einsatz Ego-Ansicht zu Fuß mit dem HUD der Figur.
-//      |-- Events einrichten -> Login (nur "Anmelden", Konto mit der Rolle
-//                        Event Manager), dann Events: Event-Editor
-//                        (EventEditorScreen, EventEditor.hpp). "Zurück" führt
-//                        wieder in die Lobby; im Spiel angemeldet wird nicht.
 //
 //   Verbindungsverlust in irgendeiner Phase -> zurück zu Address mit Fehlertext.
 //
@@ -112,7 +110,7 @@ public:
     bool CaptureCursor() const;
 
 private:
-    enum class Phase { Address, Lobby, Login, Playing, Spectating, Events };
+    enum class Phase { Address, Lobby, Login, Playing, Spectating };
 
     // --- Zustandswechsel ----------------------------------------------------
     void SetPhase(Phase p);
@@ -122,7 +120,6 @@ private:
     void EnterLogin();
     void EnterPlaying();
     void EnterSpectating();
-    void EnterEvents(const net::EventListMsg& list);   // Event-Editor öffnen (Antwort auf EventLogin)
     void SubmitLogin(bool registerAccount);
     void HandleNetwork();          // Fehler, Zustandsänderungen und Ereignisse von NetClient
     void SetStatus(const std::string& text, Color c);
@@ -135,6 +132,8 @@ private:
     const Trooper* OwnTrooper() const;                // eigene Figur im Einsatz, sonst nullptr
     bool InCommand() const;                           // Rolle SG-Team ohne Figur: im Command Center
     void ChooseRole(int role);                        // 0 Pilot, 1 SG-Team: an den Server schicken
+    bool EventManager() const;                        // Konto hat die Rolle Event Manager (Welcome::roles)
+    void OpenEventEditor();                           // aus der Rollenwahl: Event-Editor öffnen
     void UpdateFireworks(float dt);
     void FireworkBurst(Vector3 center, float spread, int strength);
 
@@ -149,12 +148,12 @@ private:
     void DrawLogin();
     void DrawPlaying();
     void DrawSpectating();
-    void DrawEvents();
     void DrawTopPilots(const World& w);
     Rectangle TopPilotsRect() const;
     void DrawShipNames(const World& w);
     void DrawTeamMarkers();                 // Figuren der SG-Teams auf der Minikarte (Piloten)
     void DrawCommand();
+    void DrawEventEditor();
     void DrawNoShip(const World& w);
     void DrawGoalAnimation();
     void DrawPause();
@@ -189,8 +188,6 @@ private:
     bool spectatePending_ = false; // "Zuschauen" angefragt, Welcome steht noch aus
     float spectateStartT_ = 0.0f;
     bool retryLogin_ = false;      // nach "Name vergeben" (Testablauf) anmelden, sobald wieder in der Lobby
-    bool loginForEvents_ = false;  // Anmeldung für "Events einrichten" statt zum Mitspielen
-    EventEditorScreen events_;     // Event-Editor (Phase Events)
     int lobbySel_ = 0;
     int pauseSel_ = 0;
 
@@ -235,6 +232,8 @@ private:
     int roleFrames_ = 0;           // Frames seit dem Öffnen der Rollenwahl
     bool inCommand_ = false;       // im Command Center (für OpenOnline beim Betreten)
     CommandCenterScreen command_;
+    bool eventsOpen_ = false;      // Event-Editor über der Rollenwahl offen
+    EventEditorScreen events_;
     TrooperControls trooperControls_;   // Steuerung zu Fuß (Ego-Ansicht)
     int lookTrooper_ = -1;         // Figur, zu der lookYaw_/lookPitch_ gehören
     float lookYaw_ = 0.0f;         // Blickrichtung zu Fuß (Maus/rechter Stick)

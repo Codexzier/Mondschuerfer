@@ -10,7 +10,7 @@
 //              und die Knöpfe Speichern, Löschen, Zurück
 //
 // Bedienung mit Maus und Tastatur (Tab wechselt das Feld, Enter oder Strg+S
-// speichert, ESC geht zurück in die Lobby). Gespeichert wird nur auf dem
+// speichert, ESC geht zurück zur Rollenwahl). Gespeichert wird nur auf dem
 // Server; dieser Bildschirm hält nur das Formular.
 // ---------------------------------------------------------------------------
 #include "EventEditor.hpp"
@@ -79,7 +79,8 @@ void EventEditorScreen::Open(const std::string& account) {
     picks_.clear();
     listScroll_ = 0;
     mapScroll_ = 0;
-    busy_ = false;
+    busy_ = true;   // bis die erste Liste da ist
+    busyAt_ = GetTime();
     confirmDeleteAt_ = -10.0;
     frames_ = 0;
     status_.clear();
@@ -320,7 +321,7 @@ EventEditorAction EventEditorScreen::Draw() {
     y = mapBottom + 2 * s;
     Text(Fmt("Im Command Center wählbar: Mondkarte + %d Einsatzkarte(n) (ohne andere Events)", usable), x, y, 16 * s, TEXT);
     y += 28 * s;
-    if (busy_) Text("Wird an den Server geschickt ...", x, y, 18 * s, MUTED);
+    if (busy_) Text("Warte auf den Server ...", x, y, 18 * s, MUTED);
     else if (!status_.empty()) Text(Fit(status_, 18 * s, iw), x, y, 18 * s, statusColor_);
 
     // Knöpfe

@@ -17,8 +17,8 @@
 //     den Fortschritt über Accounts (Datenordner).
 //   - Nimmt Karten aus dem Karteneditor an (MapUpload, nur mit Berechtigung)
 //     und schickt allen die aktive Karte (MapData).
-//   - Event-Editor im Spiel (EventLogin, EventEdit): Konten mit der Rolle
-//     Event Manager richten Events ein wie auf der Verwaltungsseite.
+//   - Event-Editor im Spiel (EventOpen, EventEdit): angemeldete Spieler mit
+//     der Rolle Event Manager richten Events ein wie auf der Verwaltungsseite.
 //   - SG-Teams (FPS-Modus): Rollenwahl, Teams im Command Center, Anwahl des
 //     Stargates; die Figuren rechnet die Welt (shared/Trooper.cpp) wie die
 //     Schiffe, der Client sagt seine eigene Figur nur voraus.
@@ -142,10 +142,6 @@ private:
         std::string challengeName;          // Name aus LoginStart (ungeprüft!)
         int failedLogins = 0;               // pro Verbindung höchstens 5
 
-        // --- Event-Editor (Lobby, siehe HandleEventLogin) ---
-        Account* eventAccount = nullptr;    // Konto mit der Rolle Event Manager; nullptr = Editor nicht offen
-        double eventActiveAt = 0.0;         // Now() der letzten Aktion im Editor (verlängert die Lobby-Zeit)
-
         // --- Spieler ---
         int playerId = -1;                  // PlayerState::id in der Welt
         Account* account = nullptr;         // Konto (Zeiger in Accounts, bleibt gültig); Bots: nullptr
@@ -167,6 +163,7 @@ private:
 
         // --- SG-Team (siehe HandleTeamAction) ---
         bool roleChosen = false;            // Rollenwahl nach der Anmeldung erledigt (bis dahin ist das Schiff versteckt)
+        bool eventsOpen = false;            // Event-Editor offen (EventOpen bis zur Rollenwahl), siehe HandleEventOpen
         int sentMissionMaps = -1;           // Stand der Einsatzkarten (missionMapsRev_), den der Client schon hat
         int sentScoreboard = -1;            // Stand des Scoreboards (scoreboardRev_), den der Client schon hat
 
@@ -324,9 +321,9 @@ private:
     void HandleLoginStart(Client& c, const net::LoginStartMsg& m);
     void HandleLoginProof(Client& c, const net::LoginProofMsg& m);
     void HandleMapUpload(Client& c, const net::MapUploadMsg& m);
-    void HandleEventLogin(Client& c, const net::EventLoginMsg& m);
+    void HandleEventOpen(Client& c);
     void HandleEventEdit(Client& c, const net::EventEditMsg& m);
-    // Prüft den Beweis zur Nonce aus LoginStart (LoginProof, MapUpload, EventLogin). Liefert
+    // Prüft den Beweis zur Nonce aus LoginStart (LoginProof, MapUpload). Liefert
     // das Konto oder nullptr; dann ist die Fehlermeldung schon verschickt.
     Account* CheckProof(Client& c, const net::Key32& proof, const char* what);
     void HandleInput(Client& c, const net::InputMsg& m);

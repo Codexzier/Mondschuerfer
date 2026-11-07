@@ -658,18 +658,6 @@ bool Decode(Reader& r, TeamActionMsg& m) {
     return r.ok();
 }
 
-std::vector<uint8_t> Encode(const EventLoginMsg& m) {
-    Writer w;
-    Start(MsgType::EventLogin, w);
-    w.Bytes(m.proof.data(), m.proof.size());
-    return w.buf;
-}
-
-bool Decode(Reader& r, EventLoginMsg& m) {
-    r.Bytes(m.proof.data(), m.proof.size());
-    return r.ok();
-}
-
 std::vector<uint8_t> Encode(const EventEditMsg& m) {
     Writer w;
     Start(MsgType::EventEdit, w);
@@ -753,6 +741,7 @@ std::vector<uint8_t> Encode(const WelcomeMsg& m) {
     w.F32(m.serverTime);
     w.U32(m.tick);
     w.U8(m.lastRole);
+    w.U32(m.roles);
     return w.buf;
 }
 
@@ -767,6 +756,7 @@ bool Decode(Reader& r, WelcomeMsg& m) {
     m.serverTime = r.F32();
     m.tick = r.U32();
     m.lastRole = r.U8();
+    m.roles = r.U32();
     return r.ok();
 }
 

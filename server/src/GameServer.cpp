@@ -99,7 +99,7 @@ constexpr int INPUT_QUEUE_WINDOW = net::TICK_RATE;   // Schritte (= 1 s)
 constexpr int MAX_BAD_PACKETS = 50;               // danach wird getrennt
 constexpr int MAX_MSGS_PER_SECOND = 240;          // normal: 30 Input/s + ein paar zuverlässige
 constexpr int FLOOD_DISCONNECT = 2000;            // so viele pro Sekunde -> trennen
-constexpr double LOBBY_TIMEOUT = 15.0 * 60.0;     // so lange darf man ohne Anmeldung verbunden sein (Event-Editor: seit der letzten Aktion)
+constexpr double LOBBY_TIMEOUT = 15.0 * 60.0;     // so lange darf man ohne Anmeldung verbunden sein
 // Abmelden außerhalb einer Station: So lange bleibt das Schiff noch ohne
 // Steuerung in der Welt und kann abgeschossen werden (LogoutPlayer).
 constexpr double LOGOUT_GRACE = 10.0;
@@ -933,7 +933,7 @@ void GameServer::Housekeeping() {
     for (auto& up : clients_) {
         Client& c = *up;
         c.msgsThisSecond = 0;
-        if (c.role == Role::Lobby && !c.closing && c.peer && now - std::max(c.connectedAt, c.eventActiveAt) > LOBBY_TIMEOUT) {
+        if (c.role == Role::Lobby && !c.closing && c.peer && now - c.connectedAt > LOBBY_TIMEOUT) {
             SendError(c, net::ErrorCode::BadRequest, "Zu lange ohne Anmeldung – Verbindung getrennt.");
             Log(Fmt("Verbindung #%u (%s): Zeitüberschreitung in der Lobby", c.connId, c.ipText.c_str()));
             Disconnect(c);
@@ -1208,12 +1208,9 @@ void GameServer::OnReceive(Client& c, const uint8_t* data, size_t len) {
             else HandleMapUpload(c, m);
             break;
         }
-        case net::MsgType::EventLogin: {
-            net::EventLoginMsg m;
-            if (!net::Decode(r, m)) BadPacket(c, "EventLogin");
-            else HandleEventLogin(c, m);
+        case net::MsgType::EventOpen:
+            HandleEventOpen(c);
             break;
-        }
         case net::MsgType::EventEdit: {
             net::EventEditMsg m;
             if (!net::Decode(r, m)) BadPacket(c, "EventEdit");
@@ -1456,36 +1453,32 @@ void GameServer::HandleMapUpload(Client& c, const net::MapUploadMsg& m) {
     Send(c, net::Encode(res), true);
 }
 
-// Event-Editor im Spiel (Lobby-Knopf "Events einrichten"). Anmeldedaten wie
-// bei LoginProof prüfen, dann die Rolle Event Manager. Angemeldet wird nicht:
-// Die Verbindung bleibt in der Lobby und darf ab jetzt EventEdit schicken.
-void GameServer::HandleEventLogin(Client& c, const net::EventLoginMsg& m) {
-    if (c.role != Role::Lobby) return;
-    Account* acc = CheckProof(c, m.proof, "EventLogin ohne LoginStart");
-    if (!acc) return;
-    if (!(acc->roles & ROLE_EVENT_MANAGER)) {
-        c.eventAccount = nullptr;
+// Event-Editor im Spiel (Knopf "Event einrichten" in der Rollenwahl, nur mit
+// der Rolle Event Manager, Welcome::roles). Ab jetzt nimmt der Server
+// EventEdit an, bis der Spieler eine Rolle wählt (HandleTeamAction).
+void GameServer::HandleEventOpen(Client& c) {
+    if (c.role != Role::Player || !c.account) return;
+    if (!(c.account->roles & ROLE_EVENT_MANAGER)) {
+        c.eventsOpen = false;
         SendError(c, net::ErrorCode::NoPermission, "Rolle Event Manager, der Betreiber vergibt sie auf der Verwaltungsseite");
         return;
     }
-    c.eventAccount = acc;
-    c.eventActiveAt = Now();
+    c.eventsOpen = true;
     Send(c, net::Encode(MakeEventList()), true);
-    Log(Fmt("%s hat den Event-Editor geöffnet (Verbindung #%u, %s)", acc->name.c_str(), c.connId, c.ipText.c_str()));
+    Log(c.name + " hat den Event-Editor geöffnet");
 }
 
 // Event speichern oder löschen aus dem Event-Editor. Antwort: neue EventList
-// mit dem Ergebnis. Wurde die Rolle inzwischen entzogen oder das Konto
-// gesperrt, ist der Editor zu (Error NoPermission).
+// mit dem Ergebnis. Wurde die Rolle inzwischen entzogen, ist der Editor zu
+// (Error NoPermission). Ein gesperrtes Konto trennt der Server ohnehin.
 void GameServer::HandleEventEdit(Client& c, const net::EventEditMsg& m) {
-    if (c.role != Role::Lobby || !c.eventAccount) {
-        BadPacket(c, "EventEdit ohne EventLogin");
+    if (c.role != Role::Player || !c.account || !c.eventsOpen) {
+        BadPacket(c, "EventEdit ohne EventOpen");
         return;
     }
-    const Account* acc = c.eventAccount;
-    c.eventActiveAt = Now();
-    if (!(acc->roles & ROLE_EVENT_MANAGER) || FindAccountBan(acc->name)) {
-        c.eventAccount = nullptr;
+    const Account* acc = c.account;
+    if (!(acc->roles & ROLE_EVENT_MANAGER)) {
+        c.eventsOpen = false;
         SendError(c, net::ErrorCode::NoPermission, "Rolle Event Manager");
         return;
     }
@@ -1638,6 +1631,7 @@ void GameServer::HandleTeamAction(Client& c, const net::TeamActionMsg& m) {
                 }
             }
             c.roleChosen = true;
+            c.eventsOpen = false;   // Rollenwahl schließt den Event-Editor
             if (want == PlayerRole::Pilot) LeaveTeam(ps->id);
             world_.SetRole(*ps, want);
             // Nach der Anmeldung war das Schiff bis zur Wahl versteckt (LoginPlayer)
@@ -2434,6 +2428,7 @@ void GameServer::SendWelcome(Client& c) {
     m.tick = static_cast<uint32_t>(tick_);
     if (const PlayerState* ps = c.role == Role::Player ? world_.FindPlayer(c.playerId) : nullptr)
         m.lastRole = static_cast<uint8_t>(ps->lastRole);
+    if (c.role == Role::Player && c.account) m.roles = c.account->roles;
     Send(c, net::Encode(m), true);
     Send(c, mapData_, true);   // Kulisse: aktive Karte (gleicher Kanal, kommt also nach dem Welcome an)
 }
@@ -3306,7 +3301,7 @@ void GameServer::SendEventLists(const Client* skip) {
     std::vector<uint8_t> bytes;
     for (auto& up : clients_) {
         const Client& c = *up;
-        if (&c == skip || !c.eventAccount || c.role != Role::Lobby || c.closing) continue;
+        if (&c == skip || !c.eventsOpen || c.role != Role::Player || c.closing) continue;
         if (bytes.empty()) bytes = net::Encode(MakeEventList());
         Send(*up, bytes, true);
     }

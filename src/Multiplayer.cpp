@@ -4,7 +4,7 @@
 // Aufbau dieser Datei:
 //   1. kleine Hilfsfunktionen (Textfilter, Zeitformat, Zeichenhilfen)
 //   2. Lebenszyklus und Zustandswechsel (Address -> Lobby -> Login/Spectating
-//      -> Playing bzw. Events), Auswertung der NetClient-Zustände und -Ereignisse
+//      -> Playing), Auswertung der NetClient-Zustände und -Ereignisse
 //   3. Update: Eingaben, Autopilot, Kameras, Feuerwerk
 //   4. Ton
 //   5. Zeichnen der einzelnen Phasen
@@ -327,6 +327,7 @@ void MultiplayerScreen::EnterPlaying() {
     chatTypingSent_ = false;
     // Rollenwahl: vorausgewählt ist die zuletzt gespielte Rolle (Serverkonto)
     roleChoice_ = true;
+    eventsOpen_ = false;
     roleSel_ = net_.Welcome().lastRole == 1 ? 1 : 0;
     roleFrames_ = 0;
     inCommand_ = false;
@@ -340,23 +341,6 @@ void MultiplayerScreen::EnterPlaying() {
     g_clientConfig.Save();
     std::fill(passwordField_.text.begin(), passwordField_.text.end(), '\0');
     passwordField_.text.clear();
-}
-
-// Antwort auf EventLogin: Das Konto hat die Rolle Event Manager, der Server
-// schickt Karten und Events. Wie nach der Anmeldung zum Spielen: Name merken,
-// Passwort löschen.
-void MultiplayerScreen::EnterEvents(const net::EventListMsg& list) {
-    SetPhase(Phase::Events);
-    authPending_ = false;
-    const std::string name = Trim(nameField_.text);
-    g_clientConfig.name = name;
-    g_clientConfig.Save();
-    std::fill(passwordField_.text.begin(), passwordField_.text.end(), '\0');
-    passwordField_.text.clear();
-    events_.Open(name);
-    events_.SetList(list);
-    SetStatus("", MUTED);
-    g_audio.Play(Sfx::UiConfirm);
 }
 
 void MultiplayerScreen::EnterSpectating() {
@@ -396,7 +380,6 @@ void MultiplayerScreen::SubmitLogin(bool registerAccount) {
     // shared/Crypto.hpp). Das dauert ein paar Millisekunden; das Passwort
     // selbst verlässt den Rechner nie.
     if (registerAccount) net_.Register(name, passwordField_.text);
-    else if (loginForEvents_) net_.EventLogin(name, passwordField_.text);
     else net_.Login(name, passwordField_.text);
     authPending_ = true;
     authWasRegister_ = registerAccount;
@@ -435,10 +418,6 @@ void MultiplayerScreen::HandleNetwork() {
             }
             if (st == NetState::Playing) { EnterPlaying(); break; }
             if (st == NetState::Spectating) { EnterSpectating(); break; }
-            if (phase_ == Phase::Login && loginForEvents_) {
-                net::EventListMsg list;
-                if (net_.TakeEventList(list)) { EnterEvents(list); break; }
-            }
             if (!err.empty()) {
                 // Antwort des Servers auf Anmeldung/Zuschauen: z. B. "Name vergeben",
                 // "Name oder Passwort falsch", "Keine Zuschauerplätze mehr frei".
@@ -470,18 +449,6 @@ void MultiplayerScreen::HandleNetwork() {
             }
             break;
 
-        case Phase::Events: {
-            if (st == NetState::Disconnected) {
-                BackToAddress(err.empty() ? "Verbindung zum Server verloren." : err);
-                g_audio.Play(Sfx::Denied);
-                return;
-            }
-            if (!err.empty()) events_.SetStatus(err, BAD);   // z. B. Rolle inzwischen entzogen
-            net::EventListMsg list;
-            if (net_.TakeEventList(list)) events_.SetList(list);
-            break;
-        }
-
         case Phase::Playing:
         case Phase::Spectating:
             if (st == NetState::Disconnected) {
@@ -489,8 +456,14 @@ void MultiplayerScreen::HandleNetwork() {
                 g_audio.Play(Sfx::Denied);
                 return;
             }
-            // Fehler während des Spiels (z. B. abgelehnte Aktion): als Meldung zeigen
-            if (!err.empty() && net_.WorldReady()) net_.GetWorld().Notify(err, BAD);
+            // Fehler während des Spiels (z. B. abgelehnte Aktion): als Meldung
+            // zeigen, im Event-Editor in dessen Statuszeile
+            if (!err.empty() && eventsOpen_) events_.SetStatus(err, BAD);
+            else if (!err.empty() && net_.WorldReady()) net_.GetWorld().Notify(err, BAD);
+            if (eventsOpen_) {
+                net::EventListMsg list;
+                if (net_.TakeEventList(list)) events_.SetList(list);
+            }
             break;
     }
 
@@ -609,12 +582,13 @@ void MultiplayerScreen::Update(float frameDt) {
         if (!p.dead && !p.hidden) hadShip_ = true;
 
         // Rollenwahl: Testablauf mit Autopilot nimmt gleich "Pilot", ebenso
-        // ein Server ohne FPS-Modus. Kommt der Spieler nach einem
+        // ein Server ohne FPS-Modus (außer für einen Event Manager, der dort
+        // "Event einrichten" findet). Kommt der Spieler nach einem
         // Verbindungsabbruch zurück und ist noch zu Fuß unterwegs, gilt die
         // Rolle schon (der Server kennt sie).
         if (roleChoice_) {
             ++roleFrames_;
-            if (opt_.autopilot || !w.settings.fpsMode) ChooseRole(0);
+            if (opt_.autopilot || (!w.settings.fpsMode && !EventManager())) ChooseRole(0);
             else if (OwnTrooper()) roleChoice_ = false;
         }
         // Command Center: beim Betreten zurücksetzen, dann jedes Frame die Uhr
@@ -682,7 +656,7 @@ void MultiplayerScreen::Update(float frameDt) {
         backdropOrbit_ += dt * 0.06f;
         // Lobby und Anmeldung: Der Hintergrund zeigt den Mond schon in der Farbe
         // des Servers (Einstellung von dessen Webseite, kommt mit ServerInfo).
-        if ((phase_ == Phase::Lobby || phase_ == Phase::Login || phase_ == Phase::Events) && net_.HasInfo() &&
+        if ((phase_ == Phase::Lobby || phase_ == Phase::Login) && net_.HasInfo() &&
             g_assets.GetMoonColor() != net_.Info().settings.moon)
             g_assets.SetMoonColor(net_.Info().settings.moon);
     }
@@ -765,6 +739,17 @@ void MultiplayerScreen::ChooseRole(int role) {
     net_.GetWorld().Me().role = role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;
     controls_.Reset();
     snapCam_ = true;
+}
+
+bool MultiplayerScreen::EventManager() const { return (net_.Welcome().roles & ROLE_EVENT_MANAGER) != 0; }
+
+// "Event einrichten" in der Rollenwahl: Der Editor liegt über der Rollenwahl,
+// die Liste kommt vom Server (HandleNetwork). Das Schiff bleibt versteckt,
+// bis eine Rolle gewählt ist.
+void MultiplayerScreen::OpenEventEditor() {
+    eventsOpen_ = true;
+    events_.Open(net_.MyName());
+    net_.OpenEvents();
 }
 
 // Autopilot an der Station: Reparatur bzw. Upgrades als Anfrage an den Server
@@ -1055,7 +1040,7 @@ void MultiplayerScreen::OnMuteToggled(bool muted) {
 }
 
 std::string MultiplayerScreen::Report() const {
-    static const char* names[] = {"address", "lobby", "login", "playing", "spectating", "events"};
+    static const char* names[] = {"address", "lobby", "login", "playing", "spectating"};
     std::string r = Fmt("MPREPORT t=%.0f phase=%s state=%d players=%d highscores=%d total=%lld", elapsed_,
                         names[static_cast<int>(phase_)], static_cast<int>(net_.State()), static_cast<int>(net_.Players().size()),
                         static_cast<int>(net_.Highscores().size()), net_.TotalDelivered());
@@ -1086,7 +1071,6 @@ void MultiplayerScreen::Draw() {
         case Phase::Login: DrawLogin(); break;
         case Phase::Playing: DrawPlaying(); break;
         case Phase::Spectating: DrawSpectating(); break;
-        case Phase::Events: DrawEvents(); break;
     }
 }
 
@@ -1222,9 +1206,9 @@ void MultiplayerScreen::DrawLobby() {
     // --- Knöpfe (rechts daneben) -------------------------------------------------
     const float bx = pr.x + pr.width + 40 * s, bw = 340 * s;
     const bool busy = spectatePending_;
-    std::vector<std::string> items = {"Zuschauen", "Mitspielen", "Events einrichten", "Trennen"};
-    int c = ButtonList(items, {!busy, !busy, !busy, true}, lobbySel_, bx + bw * 0.5f, pr.y, bw, 58 * s, 14 * s, 26 * s);
-    if (BackPressed()) c = 3;       // ESC, Controller: B
+    std::vector<std::string> items = {"Zuschauen", "Mitspielen", "Trennen"};
+    int c = ButtonList(items, {!busy, !busy, true}, lobbySel_, bx + bw * 0.5f, pr.y, bw, 58 * s, 14 * s, 26 * s);
+    if (BackPressed()) c = 2;       // ESC, Controller: B
     if (phaseFrames_ < 1) c = -1;   // Taste stammt noch aus dem vorigen Bildschirm
     if (c == 0) {
         g_audio.Play(Sfx::UiConfirm);
@@ -1232,11 +1216,10 @@ void MultiplayerScreen::DrawLobby() {
         spectatePending_ = true;
         spectateStartT_ = elapsed_;
         SetStatus("Zuschauerplatz wird angefragt ...", MUTED);
-    } else if (c == 1 || c == 2) {
+    } else if (c == 1) {
         g_audio.Play(Sfx::UiConfirm);
-        loginForEvents_ = c == 2;
         EnterLogin();
-    } else if (c == 3) {
+    } else if (c == 2) {
         g_audio.Play(Sfx::UiBack);
         BackToAddress("");
         SetStatus("Verbindung getrennt.", MUTED);
@@ -1246,11 +1229,10 @@ void MultiplayerScreen::DrawLobby() {
     static const char* help[] = {
         "Die ganze Karte von oben: alle Spieler mit ihrem Fortschritt, die insgesamt abgelieferten Ressourcen und die Bestenliste.",
         "Mit Namen und Passwort anmelden (oder ein neues Konto anlegen) und mitspielen. Dein Fortschritt wird auf dem Server gespeichert.",
-        "Für Konten mit der Rolle Event Manager: Einsatzkarten für einzelne Tage im Command Center wählbar machen oder sperren.",
         "Verbindung trennen und eine andere Serveradresse eingeben.",
     };
-    float hy = pr.y + 4 * (58 * s + 14 * s) + 10 * s;
-    if (lobbySel_ >= 0 && lobbySel_ < 4) TextBlock(help[lobbySel_], bx, hy, 18 * s, bw, Color{200, 206, 220, 230});
+    float hy = pr.y + 3 * (58 * s + 14 * s) + 10 * s;
+    if (lobbySel_ >= 0 && lobbySel_ < 3) TextBlock(help[lobbySel_], bx, hy, 18 * s, bw, Color{200, 206, 220, 230});
 
     if (!status_.empty()) TextBlock(status_, x, pr.y + pr.height + 18 * s, 22 * s, pw, statusColor_);
     // Fußzeile passend zum Gerät (Controls.hpp): Tastatur oder Controller
@@ -1270,7 +1252,7 @@ void MultiplayerScreen::DrawLogin() {
     const bool busy = authPending_ || net_.State() == NetState::LoggingIn;
     const float x = 90 * s;
     float y = H * 0.08f;
-    Text(loginForEvents_ ? "EVENTS EINRICHTEN" : "MITSPIELEN", x, y, 56 * s, ACCENT);
+    Text("MITSPIELEN", x, y, 56 * s, ACCENT);
     y += 66 * s;
     Text(Fit(info.serverName, 24 * s, 560 * s) + Fmt("    Spieler online: %d / %d", info.playersOnline, info.maxPlayers), x, y, 24 * s, TEXT);
     y += 52 * s;
@@ -1289,33 +1271,23 @@ void MultiplayerScreen::DrawLogin() {
     // Hinweise: Regeln und was mit dem Passwort passiert
     const float hw = 780 * s, hs = 17 * s;
     const Color hc{200, 206, 220, 230};
-    if (loginForEvents_) {
-        // Event-Editor: nur Anmelden, kein neues Konto (die Rolle vergibt der Betreiber)
-        y += TextBlock("Nur für Konten mit der Rolle Event Manager. Der Betreiber vergibt sie auf der Verwaltungsseite "
-                       "(Bereich \"Rollen\").",
-                       x, y, hs, hw, hc);
-        y += TextBlock("Im Spiel angemeldet wirst du dabei nicht: Du richtest nur Events ein und kommst mit \"Zurück\" wieder in "
-                       "die Lobby.",
-                       x, y, hs, hw, MUTED);
-    } else {
-        y += TextBlock(Fmt("Name: %d-%d Zeichen, nur Buchstaben (A-Z), Ziffern, _ und -. Jeden Namen gibt es auf dem Server nur "
-                           "einmal (Groß/Klein egal).",
-                           net::MIN_NAME, net::MAX_NAME),
-                       x, y, hs, hw, hc);
-        y += TextBlock(Fmt("Passwort: mindestens %d Zeichen. Es wird weder gespeichert noch übertragen - der Server erhält nur einen "
-                           "daraus berechneten Schlüssel.",
-                           net::MIN_PASSWORD),
-                       x, y, hs, hw, hc);
-        y += TextBlock("Neu hier? \"Neues Konto anlegen\" legt Name und Passwort fest und meldet dich gleich an. Mit denselben Angaben "
-                       "lädst du später deinen Fortschritt und spielst mit deinem letzten Stand weiter.",
-                       x, y, hs, hw, MUTED);
-    }
+    y += TextBlock(Fmt("Name: %d-%d Zeichen, nur Buchstaben (A-Z), Ziffern, _ und -. Jeden Namen gibt es auf dem Server nur "
+                       "einmal (Groß/Klein egal).",
+                       net::MIN_NAME, net::MAX_NAME),
+                   x, y, hs, hw, hc);
+    y += TextBlock(Fmt("Passwort: mindestens %d Zeichen. Es wird weder gespeichert noch übertragen - der Server erhält nur einen "
+                       "daraus berechneten Schlüssel.",
+                       net::MIN_PASSWORD),
+                   x, y, hs, hw, hc);
+    y += TextBlock("Neu hier? \"Neues Konto anlegen\" legt Name und Passwort fest und meldet dich gleich an. Mit denselben Angaben "
+                   "lädst du später deinen Fortschritt und spielst mit deinem letzten Stand weiter.",
+                   x, y, hs, hw, MUTED);
     y += 16 * s;
 
     const float bh = 56 * s;
     bool login = Button({x, y, 220 * s, bh}, "Anmelden", 24 * s, !busy, !busy);
-    bool reg = !loginForEvents_ && Button({x + 236 * s, y, 320 * s, bh}, "Neues Konto anlegen", 24 * s, false, !busy);
-    bool back = Button({x + (loginForEvents_ ? 236 : 572) * s, y, 190 * s, bh}, "Zurück", 24 * s, false);
+    bool reg = Button({x + 236 * s, y, 320 * s, bh}, "Neues Konto anlegen", 24 * s, false, !busy);
+    bool back = Button({x + 572 * s, y, 190 * s, bh}, "Zurück", 24 * s, false);
     y += bh + 18 * s;
 
     const bool keys = phaseFrames_ >= 1;
@@ -1358,10 +1330,17 @@ void MultiplayerScreen::DrawPlaying() {
     EndMode3D();
     tiltshift::End();
 
-    // Rollenwahl nach der Anmeldung über dem Bild (ESC meldet ab)
+    // Rollenwahl nach der Anmeldung über dem Bild (ESC meldet ab), darüber
+    // gegebenenfalls der Event-Editor
     if (roleChoice_) {
-        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, true, w.settings.sampleGoal);
-        if (pick >= 0) {
+        if (eventsOpen_) {
+            DrawEventEditor();
+            return;
+        }
+        const int pick = DrawRoleChoice(roleSel_, roleFrames_ > 1, true, w.settings.sampleGoal, EventManager(), w.settings.fpsMode);
+        if (pick == 2) {
+            OpenEventEditor();
+        } else if (pick >= 0) {
             ChooseRole(pick);
         } else if (roleFrames_ > 1 && BackPressed()) {
             g_audio.Play(Sfx::UiBack);
@@ -1955,11 +1934,11 @@ void MultiplayerScreen::DrawHighscores(Rectangle r) {
     if (n > visible) Text(Fmt("+%d weitere", n - visible), x, bottom - 20 * s, 17 * s, MUTED);
 }
 
-// --- (f) Event-Editor ------------------------------------------------------------------------
+// --- (f) Event-Editor (über der Rollenwahl) ---------------------------------------------------
 // Bedienung und Anzeige macht EventEditorScreen; hier gehen Speichern und
 // Löschen an den Server (EventEdit), die Antwort kommt in HandleNetwork.
-void MultiplayerScreen::DrawEvents() {
-    DrawBackdrop();
+void MultiplayerScreen::DrawEventEditor() {
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{8, 10, 16, 200});
     const EventEditorAction act = events_.Draw();
     if (act.kind == EventEditorAction::Kind::Save || act.kind == EventEditorAction::Kind::Delete) {
         net::EventEditMsg m;
@@ -1967,10 +1946,11 @@ void MultiplayerScreen::DrawEvents() {
         m.event = act.event;
         net_.SendEventEdit(m);
     } else if (act.kind == EventEditorAction::Kind::Back) {
-        SetPhase(Phase::Lobby);
-        lobbySel_ = 2;
-        SetStatus("", MUTED);
+        eventsOpen_ = false;
+        net_.CloseEvents();
+        roleSel_ = 2;
+        roleFrames_ = 0;   // dasselbe ESC soll in der Rollenwahl nicht abmelden
         return;
     }
-    MenuFooter("Tab: Feld wechseln    Enter / Strg+S: speichern    ESC: zurück zur Lobby");
+    MenuFooter("Tab: Feld wechseln    Enter / Strg+S: speichern    ESC: zurück zur Rollenwahl");
 }

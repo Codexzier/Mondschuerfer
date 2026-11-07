@@ -45,11 +45,9 @@
 //   Karte hochladen (Karteneditor): wie 3b LoginStart -> LoginChallenge, dann
 //   MapUpload statt LoginProof -> Server antwortet MapUploadResult. Das meldet
 //   nicht im Spiel an; der Client trennt danach die Verbindung.
-//   Events einrichten (Konto mit der Rolle Event Manager): wie 3b LoginStart ->
-//   LoginChallenge, dann EventLogin statt LoginProof -> Server antwortet
-//   EventList (oder Error). Danach EventEdit (Event speichern oder löschen)
-//   -> EventList mit dem Ergebnis. Auch das meldet nicht im Spiel an; der
-//   Client bleibt in der Lobby.
+//   Event-Editor (angemeldeter Spieler mit der Rolle Event Manager, Welcome::roles):
+//   in der Rollenwahl EventOpen -> Server antwortet EventList (oder Error).
+//   Danach EventEdit (Event speichern oder löschen) -> EventList mit dem Ergebnis.
 // ---------------------------------------------------------------------------
 #include "GameMap.hpp"
 #include "GameSettings.hpp"
@@ -84,7 +82,7 @@ namespace net {
 // Version 13: Scoreboard aller Spieler, EventKind::TeamHome, GameSettings fpsMode,
 //             yellowShare, sampleGoal, groundPirates und friendlyFire.
 // Version 14: SnapTrooper::hp (HP-Balken über Gegnern), Sfx::DryFire.
-// Version 15: Event-Editor im Spiel (EventLogin, EventEdit, EventList, ErrorCode NoPermission).
+// Version 15: Event-Editor im Spiel (Welcome::roles, EventOpen, EventEdit, EventList, ErrorCode NoPermission).
 constexpr uint16_t PROTOCOL_VERSION = 15;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
@@ -131,7 +129,7 @@ enum class MsgType : uint8_t {
     Chat = 9,
     ChatTyping = 10,
     TeamAction = 11,
-    EventLogin = 12,
+    EventOpen = 12,
     EventEdit = 13,
     // Server -> Client
     ServerInfo = 100,
@@ -311,15 +309,13 @@ struct MapUploadMsg {
     GameMap map;                  // ohne author (den setzt der Server)
 };
 
-// Events einrichten (Event-Editor in der Lobby). Kommt statt LoginProof nach
-// LoginChallenge: Hat das Konto die Rolle Event Manager, antwortet der
-// Server mit EventList und nimmt ab dann EventEdit von dieser Verbindung an
-// (sonst Error NoPermission). Angemeldet wird nicht.
-struct EventLoginMsg {
-    Key32 proof{};                // wie LoginProofMsg::proof
-};
+// Event-Editor öffnen (EventOpen, ohne Inhalt, EncodeSimple): nur als
+// angemeldeter Spieler, in der Rollenwahl. Hat das Konto die Rolle Event
+// Manager, antwortet der Server mit EventList und nimmt ab dann EventEdit an
+// (sonst Error NoPermission). Die Rollenwahl (TeamAction Role) schließt den
+// Editor auf dem Server wieder.
 
-// Event speichern oder löschen (nur nach erfolgreichem EventLogin). Der
+// Event speichern oder löschen (nur bei offenem Editor, EventOpen). Der
 // Server prüft alles wie beim Bereich "Events" der Verwaltungsseite und
 // antwortet mit einer neuen EventList (ok/text = Ergebnis).
 //   Save:   event.id 0 = neues Event, sonst wird es ersetzt; by und created
@@ -409,6 +405,9 @@ struct WelcomeMsg {
     // Zuletzt gewählte Rolle (PlayerRole, aus dem Konto): Vorauswahl der
     // Rollenwahl nach der Anmeldung
     uint8_t lastRole = 0;
+    // Kontorollen (AccountRoleBit, MapEvents.hpp): ROLE_EVENT_MANAGER zeigt
+    // in der Rollenwahl den Knopf "Event einrichten"
+    uint32_t roles = 0;
 };
 
 // Eigene Figur zu Fuß – genau genug für die Vorhersage (wie SnapMe beim Schiff)
@@ -738,7 +737,7 @@ struct ScoreboardMsg {
 };
 
 // Event-Editor: alle Einsatzkarten des Servers und alle Events. Antwort auf
-// EventLogin und auf jedes EventEdit; ändert ein anderer Event Manager oder
+// EventOpen und auf jedes EventEdit; ändert ein anderer Event Manager oder
 // die Verwaltungsseite etwas, bekommen alle offenen Editoren die neue Liste
 // (dann ohne text). Passen nicht alle Events in die Nachricht (Grenze des
 // Clients 1 MB), fehlen die am weitesten in der Zukunft (hidden).
@@ -786,9 +785,8 @@ std::vector<uint8_t> Encode(const MapUploadMsg& m);
 std::vector<uint8_t> Encode(const ChatMsg& m);
 std::vector<uint8_t> Encode(const ChatTypingMsg& m);
 std::vector<uint8_t> Encode(const TeamActionMsg& m);
-std::vector<uint8_t> Encode(const EventLoginMsg& m);
 std::vector<uint8_t> Encode(const EventEditMsg& m);
-std::vector<uint8_t> EncodeSimple(MsgType t);   // Nachrichten ohne Inhalt (Spectate, Leave)
+std::vector<uint8_t> EncodeSimple(MsgType t);   // Nachrichten ohne Inhalt (Spectate, Leave, EventOpen)
 std::vector<uint8_t> Encode(const ServerInfoMsg& m);
 std::vector<uint8_t> Encode(const ErrorMsg& m);
 std::vector<uint8_t> Encode(const LoginChallengeMsg& m);
@@ -818,7 +816,6 @@ bool Decode(Reader& r, MapUploadMsg& m);
 bool Decode(Reader& r, ChatMsg& m);
 bool Decode(Reader& r, ChatTypingMsg& m);
 bool Decode(Reader& r, TeamActionMsg& m);
-bool Decode(Reader& r, EventLoginMsg& m);
 bool Decode(Reader& r, EventEditMsg& m);
 bool Decode(Reader& r, ServerInfoMsg& m);
 bool Decode(Reader& r, ErrorMsg& m);
