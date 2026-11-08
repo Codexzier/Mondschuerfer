@@ -236,6 +236,18 @@ Ship World::MakeShip(ShipKind kind, Vector3 pos) {
             s.turnRate = 1.8f;
             s.cargo = s.cargoMax = 400;   // die Ware: landet bei einem Abschuss im Wrack
             break;
+        case ShipKind::Boss:
+            // Alien-Mutterschiff (nur Weltraumkarte, Orbit.cpp): Schild zehnmal
+            // so hoch wie beim Elite-Piraten, gleich schnell, die Waffe wie die
+            // Spielerwaffe auf Stufe 5. Punkte gibt es statt Beute (BossBounty).
+            s.faction = Faction::Pirate;
+            s.model = ModelId(cfg::ORBIT_BOSS_MODEL);
+            s.maxHp = s.hp = (100.0f + tier * 18.0f) * cfg::ORBIT_BOSS_FACTOR;
+            s.maxSpeed = 18.5f + tier * 0.6f;
+            s.turnRate = 2.6f;
+            s.damage = cfg::WEAPON_DAMAGE[cfg::UPGRADE_LEVELS];
+            s.fireInterval = cfg::WEAPON_RATE[cfg::UPGRADE_LEVELS];
+            break;
     }
     return s;
 }
@@ -629,13 +641,14 @@ void World::Update(float dt) {
     // Piraten nachschieben. Einzelspieler: mehr, je weiter das Spiel fortgeschritten ist
     // (4 + 1 je 12.000 abgelieferte Punkte, höchstens 11; Config.hpp).
     // Mehrspieler: feste Anzahl aus den Server-Einstellungen (Schwierigkeitsgrad).
-    // Elite-Piraten zählen mit (gleiche Fraktion), Missionspiraten nicht.
+    // Elite-Piraten zählen mit (gleiche Fraktion), Missionspiraten und
+    // Alien-Mutterschiffe (eigener Takt, UpdateBosses) nicht.
     // Händler werden einzeln nachgeliefert, alle 25–40 s, bis wieder
     // cfg::MINERS_COUNT unterwegs sind.
     int pirates = 0, miners = 0;
     for (const auto& s : ships) {
         if (s.dead) continue;
-        if (s.faction == Faction::Pirate && s.mission < 0) ++pirates;
+        if (s.faction == Faction::Pirate && s.mission < 0 && s.kind != ShipKind::Boss) ++pirates;
         if (s.kind == ShipKind::Miner) ++miners;
     }
     // Weltraumkarte (Einzelspieler): feste Anzahl cfg::ORBIT_PIRATES.
@@ -1977,6 +1990,17 @@ void World::UpdateBullets(float dt) {
 // Verfolgung aus.
 void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int attackerPlayerId) {
     if (s.crashing || s.dead) return;
+    // Alien-Mutterschiff: Jeder Treffer hält die Erholung auf; der Schaden
+    // der Spieler zählt für die Belohnung (höchstens der restliche Schild)
+    if (s.kind == ShipKind::Boss) {
+        s.calmT = 0.0f;
+        if (attackerPlayerId >= 0) {
+            const float done = std::min(dmg, s.hp);
+            auto it = std::find_if(s.bossDamage.begin(), s.bossDamage.end(), [&](const auto& e) { return e.first == attackerPlayerId; });
+            if (it != s.bossDamage.end()) it->second += done;
+            else s.bossDamage.push_back({attackerPlayerId, done});
+        }
+    }
     s.hp -= dmg;
     s.hitFlash = 1.0f;
 
@@ -2025,6 +2049,9 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
         Explosion(s.pos, 0.7f);
         SoundAt(Sfx::ShipExplode, s.pos);
         if (s.mission >= 0) MissionShipDown(s);
+        // Mutterschiff: Belohnung für alle Beteiligten, auch wenn ein
+        // Geschützturm den letzten Treffer setzt
+        if (s.kind == ShipKind::Boss) BossBounty(s);
         if (s.kind == ShipKind::Player) {
             if (PlayerState* ps = FindPlayer(s.playerId)) {
                 ps->mining = false;
@@ -2037,7 +2064,7 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
             ++attackerPlayer->kills;
             // Weltraumkarte: Punkte gleich aufs Konto statt eines Wracks
             if (orbit) {
-                if (s.faction == Faction::Pirate) OrbitBounty(*attackerPlayer, s);
+                if (s.faction == Faction::Pirate && s.kind != ShipKind::Boss) OrbitBounty(*attackerPlayer, s);
             } else if (!simulation) {
                 Notify(*attackerPlayer, s.faction == Faction::Pirate ? "Pirat abgeschossen! Wrack kann abgebaut werden."
                                                                      : "Händler abgeschossen. Wrack kann abgebaut werden.",

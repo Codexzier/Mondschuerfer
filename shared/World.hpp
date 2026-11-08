@@ -74,7 +74,8 @@ enum class Faction { Player, Pirate, Neutral };
 // übertragen bzw. gespeichert: Zahlenwerte nicht ändern.
 // Convoy = Frachter der Mission "Konvoi verteidigen" (Faction::Player: Spieler
 // treffen sie nicht, Piraten greifen sie an).
-enum class ShipKind { Player = 0, Pirate = 1, Elite = 2, Miner = 3, Convoy = 4 };
+// Boss = Alien-Mutterschiff der Weltraumkarte (Faction::Pirate, Orbit.cpp).
+enum class ShipKind { Player = 0, Pirate = 1, Elite = 2, Miner = 3, Convoy = 4, Boss = 5 };
 // Zustände der KI (Ai.cpp). Wander/Attack: Piraten (und wütende Händler).
 // GoMine -> Mining -> GoSell -> Docked -> GoMine: der Kreislauf der Händler.
 // Flee: Händler flieht vor einem Piraten.
@@ -152,6 +153,12 @@ struct Ship {
     // Gehört zu einer Mini-Mission (Mission::id): Missionspirat oder
     // Konvoi-Frachter. -1 = normales Schiff.
     int mission = -1;
+    // Alien-Mutterschiff (ShipKind::Boss, Orbit.cpp): Schaden je Spieler-ID
+    // (Belohnung nach Anteil), Sekunden seit dem letzten Treffer (Erholung)
+    // und die Spieler, die es entdeckt haben (Minikarte, HUD).
+    std::vector<std::pair<int, float>> bossDamage;
+    float calmT = 0.0f;
+    std::vector<int> seenBy;
 };
 
 // Zustand einer Lagerstätte im FPS-Modus (Zahlenwerte bleiben fest, sie
@@ -611,6 +618,13 @@ struct MissionMarker {
     Vector3 pos{};
 };
 
+// Entdecktes Alien-Mutterschiff (Weltraumkarte) für Minikarte und HUD des
+// Spielers (World::UpdateBosses, im Mehrspieler vom Server).
+struct BossMark {
+    Vector3 pos{};
+    float hp = 0.0f, maxHp = 0.0f;
+};
+
 // Ausgang einer Einzelspieler-Partie (der Mehrspieler kennt kein Spielende).
 enum class Outcome { None, Dead, Won };
 
@@ -667,6 +681,7 @@ struct PlayerState {
 
     int mission = -1;            // Mission::id der laufenden Mini-Mission, -1 = keine
     std::vector<MissionMarker> markers;   // Ziele dieser Mission für die Minikarte (World::UpdateMissions)
+    std::vector<BossMark> bosses;         // entdeckte Alien-Mutterschiffe (World::UpdateBosses)
     // Funkspruch unten rechts (Clip und Untertitel): Missionstyp * 3 +
     // Phase (0 Start, 1 Ende, 2 Fehlschlag), cfg::CUE_NEWSTART/CUE_RETURN
     // (neues Spiel, Fortsetzen), -1 = keiner. cueT = Restzeit;
@@ -944,6 +959,7 @@ public:
     bool orbit = false;
     std::vector<Asteroid> asteroids;
     float asteroidT = 0.0f;        // Sekunden bis zum nächsten Asteroiden
+    float bossT = 0.0f;            // Sekunden bis zum nächsten Alien-Mutterschiff
     float stationDownT = 0.0f;     // > 0: Station explodiert, so lange bis zur neuen
     int stationVariant = 0;        // Modell der Station: 0 = station-a, 1 = station-b (wechselt nach jeder Explosion)
     GameSettings settings;     // Einzelspieler: Standardwerte; Server/Client: vom Server
@@ -1091,6 +1107,9 @@ public:
     void DamageAsteroid(Asteroid& a, float dmg, int attackerPlayerId);   // Treffer eines Spielergeschosses (UpdateBullets)
     void StationExplodes();                            // Strukturpunkte 0: alle Konten auf 0
     void OrbitBounty(PlayerState& ps, const Ship& s);  // Abschuss eines Piraten: Punkte, Ziel prüfen (DamageShip)
+    void OrbitPay(PlayerState& ps, int points, const std::string& text);   // Punkte aufs Konto, Ziel prüfen
+    void UpdateBosses(float dt);                       // Alien-Mutterschiffe: kommen, erholen sich, werden entdeckt
+    void BossBounty(const Ship& s);                    // Mutterschiff zerstört: Belohnung nach Schadensanteil (DamageShip)
     void NextRound(PlayerState& ps);                   // Einzelspieler, Ziel bei freiem Kartenwechsel: neue Runde auf dieser Karte
     void UpdateTrooperAi(Trooper& t, float dt);        // Eingabe einer KI-Figur (Ai.cpp)
     // Bodengegner (Ai.cpp): beschossen oder getroffen, Schuss gehört, Gruppe alarmieren

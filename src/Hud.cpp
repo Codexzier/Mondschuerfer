@@ -287,6 +287,15 @@ void Minimap(const World& w) {
         DrawCircleV(m, (5.0f + 3.0f * pulse) * s, Fade(c, 0.25f + 0.25f * pulse));
         DrawCircleV(m, 3.0f * s, c);
     }
+    // Entdeckte Alien-Mutterschiffe (Weltraumkarte, PlayerState::bosses):
+    // überall, groß und violett pulsierend, bis sie zerstört sind
+    for (const BossMark& b : w.Me().bosses) {
+        const Vector2 m = map(b.pos);
+        const Color c{215, 140, 255, 255};
+        DrawCircleV(m, (7.0f + 3.0f * pulse) * s, Fade(c, 0.25f + 0.25f * pulse));
+        DrawCircleLinesV(m, 8.0f * s, c);
+        DrawCircleV(m, 4.0f * s, c);
+    }
     // Eigenes Schiff als Pfeil in Flugrichtung. fd = Vorwärtsrichtung auf der
     // Karte (Welt-x/z), sd = fd um 90° gedreht (seitlich). Spitze 8 px nach
     // vorn, die beiden hinteren Ecken 5 px zurück und 5 px zur Seite.
@@ -770,6 +779,31 @@ static void DrawOrbitHud(const World& w, const Camera3D& cam) {
         TextCentered("Keine Asteroiden in Sicht", W * 0.5f, y, 18 * s, MUTED);
 }
 
+// Weltraumkarte: rechts unter der Minikarte (und ihrer Legende) der Schild
+// jedes entdeckten Alien-Mutterschiffs mit Entfernung (PlayerState::bosses).
+static void DrawBossHud(const World& w) {
+    const PlayerState& me = w.Me();
+    if (me.bosses.empty()) return;
+    const float s = Scale();
+    const float size = 230 * s;
+    const float rowH = 46 * s;
+    const Rectangle r{GetScreenWidth() - size - 16 * s, 16 * s + size + 58 * s, size, 14 * s + rowH * static_cast<float>(me.bosses.size())};
+    Panel(r);
+    const Color c{215, 140, 255, 255};
+    const float x = r.x + 12 * s, bw = r.width - 24 * s;
+    float y = r.y + 8 * s;
+    const Ship& p = w.Player();
+    for (const BossMark& b : me.bosses) {
+        const float k = b.maxHp > 0.0f ? std::clamp(b.hp / b.maxHp, 0.0f, 1.0f) : 0.0f;
+        Text("MUTTERSCHIFF", x, y, 16 * s, c);
+        TextRight(TextFormat("%d m", static_cast<int>(Dist2D(p.pos, b.pos))), x + bw, y, 16 * s, MUTED);
+        y += 20 * s;
+        Bar({x, y, bw, 8 * s}, k, c);
+        TextRight(TextFormat("%d / %d HP", static_cast<int>(ceilf(b.hp)), static_cast<int>(ceilf(b.maxHp))), x + bw, y + 9 * s, 13 * s, TEXT);
+        y += rowH - 20 * s;
+    }
+}
+
 // ===========================================================================
 // HUD während des Fluges (Ablauf siehe Dateikopf)
 // ===========================================================================
@@ -864,7 +898,10 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     TextRight(TextFormat("LEBEN  %d", me.lives), x + bw, y, 18 * s, me.lives <= 1 ? BAD : TEXT);
 
     Minimap(w);
-    if (w.orbit) DrawOrbitHud(w, cam);
+    if (w.orbit) {
+        DrawOrbitHud(w, cam);
+        DrawBossHud(w);
+    }
 
     // --- Laufende Mission oben in der Mitte -------------------------------------------
     // Name und Fortschritt ("Personen 2 / 3", "Abschüsse 1 / 3" ...) in einem

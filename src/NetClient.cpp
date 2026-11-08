@@ -231,7 +231,8 @@ Faction FactionOf(ShipKind k) {
         case ShipKind::Player:
         case ShipKind::Convoy: return Faction::Player;
         case ShipKind::Pirate:
-        case ShipKind::Elite: return Faction::Pirate;
+        case ShipKind::Elite:
+        case ShipKind::Boss: return Faction::Pirate;
         case ShipKind::Miner: return Faction::Neutral;
     }
     return Faction::Neutral;
@@ -1331,6 +1332,8 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
         m.type = static_cast<MissionType>(me.offers[i]);
         world.missions.push_back(m);
     }
+    ps.bosses.clear();
+    for (const auto& b : me.bosses) ps.bosses.push_back({Vector3{b.x, cfg::SHIP_ALTITUDE, b.z}, b.hp, b.maxHp});
     ps.markers.clear();
     world.persons.clear();
     for (const auto& mk : me.markers) {
@@ -1920,7 +1923,7 @@ void NetClient::Impl::UpdateRemoteShips() {
         }
         Ship s;
         s.id = static_cast<int>(b.id);
-        s.kind = b.kind <= static_cast<uint8_t>(ShipKind::Convoy) ? static_cast<ShipKind>(b.kind) : ShipKind::Pirate;
+        s.kind = b.kind <= static_cast<uint8_t>(ShipKind::Boss) ? static_cast<ShipKind>(b.kind) : ShipKind::Pirate;
         s.faction = FactionOf(s.kind);
         s.model = net::ShipModel(models, b.variant);
         s.playerId = b.playerId;

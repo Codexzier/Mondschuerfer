@@ -383,11 +383,11 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
 // +1 rechts). fwd = Flugrichtung aus dem Kurs, side = fwd um 90° in der
 // Waagerechten gedreht (zeigt zur Seite). back Meter hinter der Schiffsmitte
 // (das Modell der Händler/Miner, ShipKind::Miner, ist länger: 1.4 statt
-// 1.15), 0.45 m zur Seite, 0.35 m hoch.
+// 1.15, das Alien-Mutterschiff 1.7), 0.45 m zur Seite, 0.35 m hoch.
 Vector3 EnginePos(const Ship& s, int k) {
     const Vector3 fwd = ForwardFromYaw(s.yaw);
     const Vector3 side{fwd.z, 0, -fwd.x};
-    const float back = s.kind == ShipKind::Miner ? 1.4f : 1.15f;
+    const float back = s.kind == ShipKind::Boss ? 1.7f : (s.kind == ShipKind::Miner ? 1.4f : 1.15f);
     Vector3 base = Vector3Add(s.pos, Vector3Add(Vector3Scale(fwd, -back), Vector3Scale(side, 0.45f * k)));
     base.y += 0.35f;
     return base;

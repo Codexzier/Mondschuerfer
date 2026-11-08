@@ -309,7 +309,12 @@ glimmen.
   bei 0, das Ziel sind wieder 100.000. Es gibt keinen Boden und keine Kristalle: Punkte bringen nur
   abgeschossene Piraten (2.000, Elite-Piraten 5.000). Die Piraten fliegen dort Alien-Raumschiffe
   (Elite-Piraten violett getönt). Abgeschossene Schiffe stürzen im All nicht ab, sondern taumeln
-  geradeaus weiter und explodieren nach 2,5 Sekunden. In der Mitte steht die Raumstation, im Süden
+  geradeaus weiter und explodieren nach 2,5 Sekunden. Alle fünf Minuten taucht ein
+  **Alien-Mutterschiff** auf (höchstens vier gleichzeitig): zehnfacher Schild, Waffe wie Stufe 5.
+  Sobald es in deinem Radarkreis war, bleibt es violett auf der Minikarte, und rechts unter der
+  Minikarte steht sein Schild. Wird es zwei Minuten nicht getroffen, erholt sich der Schild. Der
+  Abschuss bringt 50.000 Punkte, aufgeteilt nach dem Schaden, den jeder Spieler angerichtet hat.
+  In der Mitte steht die Raumstation, im Süden
   das Trägerschiff mit Werft und Raumschiffsverkäufer (dort schützen Geschütztürme). Etwa jede
   Minute fliegt ein Asteroid langsam auf die Station zu (Warnung mit Himmelsrichtung, orange auf dem
   Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.

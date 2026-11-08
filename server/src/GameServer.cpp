@@ -2825,6 +2825,11 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
             if (e.markers.size() >= static_cast<size_t>(net::MAX_MARKERS)) break;
             e.markers.push_back({static_cast<uint8_t>(mk.kind), mk.pos.x, mk.pos.z});
         }
+        // Weltraumkarte: entdeckte Alien-Mutterschiffe (auch außerhalb der Sichtweite)
+        for (const BossMark& b : ps->bosses) {
+            if (e.bosses.size() >= static_cast<size_t>(cfg::ORBIT_BOSS_MAX)) break;
+            e.bosses.push_back({b.pos.x, b.pos.z, b.hp, b.maxHp});
+        }
         e.cue = static_cast<int8_t>(ps->cueT > 0.0f ? ps->cue : -1);
         e.cueT = ps->cueT;
         e.role = static_cast<uint8_t>(ps->role);

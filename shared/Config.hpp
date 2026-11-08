@@ -465,5 +465,21 @@ constexpr const char* ORBIT_PIRATE_MODEL = "ships/alien-spacecraft";
 // Flugrichtung weiter (mindestens so schnell) und explodieren dann.
 constexpr float ORBIT_TUMBLE_TIME = 2.5f;        // Sekunden bis zur Explosion
 constexpr float ORBIT_TUMBLE_SPEED = 6.0f;       // Mindestgeschwindigkeit beim Taumeln
+// Alien-Mutterschiff (ShipKind::Boss, Orbit.cpp): alle ORBIT_BOSS_INTERVAL
+// Sekunden kommt eins, solange weniger als ORBIT_BOSS_MAX da sind. Schild und
+// Belohnung sind zehnmal so hoch wie beim Elite-Piraten, die Waffe schießt wie
+// die Spielerwaffe auf Stufe 5. Nach ORBIT_BOSS_REGEN_DELAY Sekunden ohne
+// Treffer erholt sich der Schild (von 0 auf voll in ORBIT_BOSS_REGEN_TIME).
+// Die Belohnung teilen sich die Spieler nach ihrem Anteil am Schaden.
+// Entdeckt ist es, sobald es im Radarkreis eines Spielers war (wie die
+// Minikarte, Hud.cpp); dann bleibt es für ihn bis zur Zerstörung auf der Karte.
+constexpr const char* ORBIT_BOSS_MODEL = "ships/alien-mothership";
+constexpr float ORBIT_BOSS_INTERVAL = 300.0f;    // fünf Minuten (auch bis zum ersten)
+constexpr int ORBIT_BOSS_MAX = 4;
+constexpr float ORBIT_BOSS_FACTOR = 10.0f;       // Schild: Elite-Pirat mal 10
+constexpr int ORBIT_BOSS_BOUNTY = 10 * ORBIT_BOUNTY_ELITE;   // 50.000, geteilt nach Schaden
+constexpr float ORBIT_BOSS_REGEN_DELAY = 120.0f;
+constexpr float ORBIT_BOSS_REGEN_TIME = 30.0f;
+constexpr float ORBIT_BOSS_SIGHT = 90.0f;        // Radarkreis der Minikarte
 
 } // namespace cfg

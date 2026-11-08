@@ -90,7 +90,8 @@ namespace net {
 //             Trägerschiffe; SnapMeTrooper: Wellen und Zustand der Raumstation).
 // Version 18: Weltraumkarte der Piloten (OrbitStart; Snapshot: Raumstation und Asteroiden;
 //             DockAction SwitchMap und SnapMe::orbitGoal für den Kartenwechsel).
-constexpr uint16_t PROTOCOL_VERSION = 18;
+// Version 19: Alien-Mutterschiff (ShipKind::Boss, Modellvariante, SnapMe::bosses).
+constexpr uint16_t PROTOCOL_VERSION = 19;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -495,6 +496,12 @@ struct SnapMe {
         float x = 0, z = 0;
     };
     std::vector<Marker> markers;  // höchstens MAX_MARKERS
+    // Entdeckte Alien-Mutterschiffe (PlayerState::bosses), höchstens cfg::ORBIT_BOSS_MAX
+    struct Boss {
+        float x = 0, z = 0;
+        float hp = 0, maxHp = 0;
+    };
+    std::vector<Boss> bosses;
     int8_t cue = -1;
     float cueT = 0;
     // SG-Team: Rolle (PlayerRole), Team (SG-Nummer, 0 = keins) und die
@@ -888,7 +895,8 @@ struct ModelIds {
     int crystalSmall, crystalA, crystalB;
     // Alle Schiffsmodelle in fester Reihenfolge: die sieben oben, danach die
     // übrigen aus ShipModelNames (Spielerschiffe können jedes davon haben),
-    // zuletzt das Modell der Piraten im All (cfg::ORBIT_PIRATE_MODEL).
+    // zuletzt die Modelle der Piraten im All (cfg::ORBIT_PIRATE_MODEL) und des
+    // Alien-Mutterschiffs (cfg::ORBIT_BOSS_MODEL).
     std::vector<int> ships;
 };
 ModelIds DefaultModelIds();                           // dieselben Modelle wie World::ResolveModels

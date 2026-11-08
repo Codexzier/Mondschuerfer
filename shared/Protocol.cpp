@@ -834,6 +834,15 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
             w.I16(QPos(e.markers[i].x));
             w.I16(QPos(e.markers[i].z));
         }
+        // Entdeckte Alien-Mutterschiffe (Weltraumkarte): Ort und Schild
+        const size_t nb = std::min<size_t>(e.bosses.size(), cfg::ORBIT_BOSS_MAX);
+        w.U8(static_cast<uint8_t>(nb));
+        for (size_t i = 0; i < nb; ++i) {
+            w.I16(QPos(e.bosses[i].x));
+            w.I16(QPos(e.bosses[i].z));
+            w.F32(e.bosses[i].hp);
+            w.F32(e.bosses[i].maxHp);
+        }
         // Funkspruch: Restzeit in Zehntelsekunden (höchstens 25,5 s)
         w.I8(e.cue);
         w.U8(static_cast<uint8_t>(std::clamp(e.cueT * 10.0f, 0.0f, 255.0f)));
@@ -1057,6 +1066,15 @@ bool Decode(Reader& r, SnapshotMsg& m) {
             mk.kind = r.U8();
             mk.x = DPos(r.I16());
             mk.z = DPos(r.I16());
+        }
+        const uint8_t nb = r.U8();
+        if (nb > cfg::ORBIT_BOSS_MAX) return false;
+        e.bosses.assign(nb, SnapMe::Boss{});
+        for (auto& b : e.bosses) {
+            b.x = DPos(r.I16());
+            b.z = DPos(r.I16());
+            b.hp = r.F32();
+            b.maxHp = r.F32();
         }
         e.cue = r.I8();
         e.cueT = r.U8() / 10.0f;
@@ -1786,6 +1804,7 @@ ModelIds DefaultModelIds() {
         if (std::find(m.ships.begin(), m.ships.end(), id) == m.ships.end()) m.ships.push_back(id);
     }
     m.ships.push_back(ModelId(cfg::ORBIT_PIRATE_MODEL));   // Piraten im All (World::NewOrbit)
+    m.ships.push_back(ModelId(cfg::ORBIT_BOSS_MODEL));     // Alien-Mutterschiff (World::MakeShip)
     return m;
 }
 
