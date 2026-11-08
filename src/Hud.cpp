@@ -982,11 +982,12 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // und Texte über cfg::CueInfo). Fehlt der Clip, steht nur der Untertitel
     // da. Sind die Untertitel in den Optionen aus, bleibt nur der Clip mit
     // Überschrift (ohne Clip dann gar nichts). Die Restzeit läuft nur außerhalb
-    // der Station (World::UpdateMissions), angedockt wird er nicht gezeigt. Die
-    // letzten 0,6 s blendet er aus.
+    // der Station (World::Update), angedockt wird er nicht gezeigt. Die
+    // letzten 0,6 s blendet er aus. Auf der Weltraumkarte gibt es vorerst
+    // keine Funksprüche (die Clips handeln vom Mond).
     const Texture2D* clip = g_clip.Frame(me.cue);
     const bool subs = g_clientConfig.subtitles;
-    if (me.cue >= 0 && me.cue < cfg::CUE_COUNT && me.cueT > 0.0f && me.dockedAt < 0 && (clip || subs)) {
+    if (!w.orbit && me.cue >= 0 && me.cue < cfg::CUE_COUNT && me.cueT > 0.0f && me.dockedAt < 0 && (clip || subs)) {
         const cfg::CueDef def = cfg::CueInfo(me.cue);
         const std::string title = std::string("FUNKSPRUCH  ") + def.name;
         const float a = std::clamp(me.cueT / 0.6f, 0.0f, 1.0f);

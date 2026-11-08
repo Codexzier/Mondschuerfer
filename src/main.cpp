@@ -823,7 +823,7 @@ private:
         if (screen_ == Screen::Playing || screen_ == Screen::Paused ||
             (screen_ == Screen::Options && optionsReturn_ == Screen::Paused)) {
             const PlayerState& me = world_.Me();
-            if (me.cueT > 0.0f) cue = me.cue;
+            if (me.cueT > 0.0f && !world_.orbit) cue = me.cue;   // im All vorerst keine Funksprüche
             showClip = screen_ == Screen::Playing && me.dockedAt < 0;
         }
         g_clip.Update(dt, cue, showClip);
