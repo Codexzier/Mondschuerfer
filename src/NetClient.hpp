@@ -27,7 +27,8 @@
 //   - Die aktive Karte des Servers (MapData) in die Spiegelwelt setzen.
 //   - Einsatzkarte des eigenen SG-Teams (InstanceStart/InstanceEnd): die
 //     Spiegelwelt wird für den Einsatz die Welt der Instanz und danach
-//     wieder die Mondkarte.
+//     wieder die Mondkarte. Ebenso die Weltraumkarte der Piloten
+//     (OrbitStart, zurück mit InstanceEnd).
 //   - Chat: Nachrichten und "tippt gerade" schicken, empfangene Zeilen
 //     weitergeben (das Chatfenster selbst ist src/Chat.hpp).
 //   - Karten hochladen (Karteneditor, UploadMap).

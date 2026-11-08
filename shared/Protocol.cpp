@@ -961,6 +961,30 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.I16(g.playerId);
         w.U8(g.team);
     }
+    w.U8(m.hasOrbit ? 1 : 0);
+    if (m.hasOrbit) {
+        w.F32(m.stationHp);
+        w.F32(m.stationMaxHp);
+        w.F32(m.stationDownT);
+        w.U8(m.stationVariant);
+        w.U8(static_cast<uint8_t>(std::min<size_t>(m.asteroids.size(), 255)));
+        for (size_t i = 0; i < m.asteroids.size() && i < 255; ++i) {
+            const SnapAsteroid& a = m.asteroids[i];
+            w.U32(a.id);
+            w.U8(a.variant);
+            w.I16(QPos(a.x));
+            w.I16(QPos(a.y));
+            w.I16(QPos(a.z));
+            w.I16(QVel(a.vx));
+            w.I16(QVel(a.vz));
+            w.I16(QPos(a.r));
+            w.I16(QPos(a.scale));
+            w.U16(QAngle(a.yaw));
+            w.I16(QVel(a.spin));
+            w.U8(QUnit(a.hpFrac));
+            w.U8(QUnit(a.hitFlash));
+        }
+    }
     return w.buf;
 }
 
@@ -1172,6 +1196,32 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         g.playerId = r.I16();
         g.team = r.U8();
         m.gates.push_back(g);
+    }
+    m.hasOrbit = r.U8() != 0;
+    m.asteroids.clear();
+    if (m.hasOrbit) {
+        m.stationHp = r.F32();
+        m.stationMaxHp = r.F32();
+        m.stationDownT = r.F32();
+        m.stationVariant = r.U8();
+        const uint8_t na = r.U8();
+        for (uint8_t i = 0; i < na && r.ok(); ++i) {
+            SnapAsteroid a;
+            a.id = r.U32();
+            a.variant = r.U8();
+            a.x = DPos(r.I16());
+            a.y = DPos(r.I16());
+            a.z = DPos(r.I16());
+            a.vx = DVel(r.I16());
+            a.vz = DVel(r.I16());
+            a.r = DPos(r.I16());
+            a.scale = DPos(r.I16());
+            a.yaw = DAngle(r.U16());
+            a.spin = DVel(r.I16());
+            a.hpFrac = DUnit(r.U8());
+            a.hitFlash = DUnit(r.U8());
+            m.asteroids.push_back(a);
+        }
     }
     return r.ok();
 }
@@ -1607,6 +1657,20 @@ std::vector<uint8_t> Encode(const InstanceEndMsg& m) {
 
 bool Decode(Reader& r, InstanceEndMsg& m) {
     m.tick = r.U32();
+    return r.ok();
+}
+
+std::vector<uint8_t> Encode(const OrbitStartMsg& m) {
+    Writer w;
+    Start(MsgType::OrbitStart, w);
+    w.U32(m.tick);
+    w.U32(m.seed);
+    return w.buf;
+}
+
+bool Decode(Reader& r, OrbitStartMsg& m) {
+    m.tick = r.U32();
+    m.seed = r.U32();
     return r.ok();
 }
 

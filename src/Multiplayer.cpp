@@ -583,12 +583,13 @@ void MultiplayerScreen::Update(float frameDt) {
 
         // Rollenwahl: Testablauf mit Autopilot nimmt gleich "Pilot", ebenso
         // ein Server ohne FPS-Modus (außer für einen Event Manager, der dort
-        // "Event einrichten" findet). Kommt der Spieler nach einem
+        // "Event einrichten" findet) und die Weltraumkarte der Piloten (dort
+        // gibt es keine SG-Teams). Kommt der Spieler nach einem
         // Verbindungsabbruch zurück und ist noch zu Fuß unterwegs, gilt die
         // Rolle schon (der Server kennt sie).
         if (roleChoice_) {
             ++roleFrames_;
-            if (opt_.autopilot || (!w.settings.fpsMode && !EventManager())) ChooseRole(0);
+            if (opt_.autopilot || ((!w.settings.fpsMode || w.orbit) && !EventManager())) ChooseRole(0);
             else if (OwnTrooper()) roleChoice_ = false;
         }
         // Command Center: beim Betreten zurücksetzen, dann jedes Frame die Uhr

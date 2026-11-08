@@ -370,8 +370,10 @@ void World::SpawnPlayerShip(PlayerState& ps) {
     const Vector3 c = trades.empty() ? Vector3{0, 0, 0} : stations[trades[RandInt(0, static_cast<int>(trades.size()) - 1)]].pos;
     const float a = Rand(0, 2 * PI);
     Vector3 pos{c.x + cosf(a) * cfg::MP_SPAWN_DISTANCE, cfg::SHIP_ALTITUDE, c.z + sinf(a) * cfg::MP_SPAWN_DISTANCE};
+    // Weltraumkarte der Piloten: vor dem Trägerschiff (nebeneinander), Blick zur Raumstation
+    if (orbit) pos = Vector3Add(StartPos(), Vector3{Rand(-15.0f, 15.0f), 0.0f, Rand(-4.0f, 4.0f)});
     Ship s = MakeShip(ShipKind::Player, pos);
-    s.yaw = YawTowards(c, pos);
+    s.yaw = orbit ? StartYaw() : YawTowards(c, pos);
     s.playerId = ps.id;
     s.hidden = ps.role == PlayerRole::Trooper;   // SG-Team: das Schiff wartet versteckt (SetRole)
     ships.push_back(s);

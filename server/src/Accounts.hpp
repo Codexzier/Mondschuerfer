@@ -109,6 +109,9 @@ struct PlayerProgress {
     bool hasPos = false;
     float posX = 0.0f, posZ = 0.0f, yaw = 0.0f;
     uint32_t posSeed = 0;
+    // Pilot auf der Weltraumkarte (100.000 auf dem Mond geschafft): beim
+    // nächsten Anmelden geht es dort weiter
+    bool orbit = false;
 };
 
 struct Account {
