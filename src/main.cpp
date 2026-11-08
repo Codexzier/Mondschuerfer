@@ -418,10 +418,38 @@ private:
     // Ziel auf dem Mond erreicht, "Weiter ins All": Die Weltraumkarte der
     // Piloten ersetzt die Mondwelt (World::NewOrbit). Aufrüstungen, Schiffe,
     // Leben und Statistik kommen mit (CarryPilot), dann gleich speichern.
-    void EnterOrbit() {
+    // keepBalance: Kartenwechsel an der Handelsstation (Reiter "Karte"), der
+    // Kontostand bleibt. Die eigene Mondkarte (mapFile) wird für den Rückweg gemerkt.
+    void EnterOrbit(bool keepBalance = false) {
         auto next = std::make_unique<World>();
         next->NewOrbit(static_cast<unsigned int>(std::time(nullptr)), world_.totalDelivered);
-        next->CarryPilot(next->Me(), world_.Me());
+        next->CarryPilot(next->Me(), world_.Me(), keepBalance);
+        next->mapFile = world_.mapFile;
+        world_ = std::move(*next);
+        SaveGame(world_);
+        controls_.Reset();
+        screen_ = Screen::Playing;
+        camTarget_ = world_.Player().pos;
+        endHandled_ = false;
+        dockFrames_ = 0;
+    }
+
+    // Kartenwechsel am Trägerschiff (Reiter "Karte"): zurück auf den Mond, mit
+    // der Karte von vor dem Sprung ins All. Lagerstätten und Gegner entstehen
+    // neu; Kontostand, Aufrüstungen, Schiffe, Leben und Statistik bleiben.
+    void EnterMoon() {
+        auto next = std::make_unique<World>();
+        next->NewGame(static_cast<unsigned int>(std::time(nullptr)), false);
+        GameMap map;
+        if (!world_.mapFile.empty() && LoadMapFile(world_.mapFile, map) && map.kind == MapKind::Moon) {
+            next->ApplyMap(map);
+            next->mapFile = world_.mapFile;
+        }
+        next->totalDelivered = world_.totalDelivered;
+        next->lastStage = next->StationStage();
+        next->CarryPilot(next->Me(), world_.Me(), true);
+        next->Me().notices.clear();
+        next->Notify("Zurück auf dem Mond. Dein Kontostand ist derselbe wie im All.", Color{200, 220, 255, 255});
         world_ = std::move(*next);
         SaveGame(world_);
         controls_.Reset();
@@ -1106,6 +1134,12 @@ private:
                 g_audio.Play(Sfx::UiConfirm);
                 world_.SetRole(world_.Me(), PlayerRole::Trooper);
                 OpenCommand();
+            }
+            // Reiter "Karte": Mond <-> Weltraumkarte (ersetzt die Welt, daher zuletzt)
+            else if (req.switchMap && world_.CanSwitchMap(world_.Me())) {
+                g_audio.Play(Sfx::UiConfirm);
+                if (world_.orbit) EnterMoon();
+                else EnterOrbit(true);
             }
         }
     }

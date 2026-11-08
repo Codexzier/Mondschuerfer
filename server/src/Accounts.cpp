@@ -52,6 +52,7 @@ constexpr const char* SHIPS_FILE = "ships.txt";
 constexpr const char* BANS_FILE = "bans.txt";
 constexpr const char* EVENTS_FILE = "events.txt";
 constexpr const char* LOGS_DIR = "logs";
+constexpr const char* BALANCE_LOG_FILE = "kontostand.csv";   // in LOGS_DIR, WebServer.cpp liest sie (kBalanceLogName)
 constexpr const char* MAPS_DIR = "karten";
 constexpr const char* MAP_EXT = ".karte";
 
@@ -555,6 +556,8 @@ bool Accounts::Load(std::string& error) {
             else if (k == "sgReturns") ParseInt(v, p.sgReturns, 0, 1000000000);
             else if (k == "sgDowns") ParseInt(v, p.sgDowns, 0, 1000000000);
             else if (k == "lives") ParseInt(v, p.lives, 1, limits::MAX_LIVES);
+            else if (k == "orbit") p.orbit = v == "1";
+            else if (k == "orbitGoal") p.orbitGoal = v == "1";
             else if (k == "upgrades") {
                 // "1,2,0,3" -> vier Stufen, jeweils auf 0..UPGRADE_LEVELS begrenzt
                 std::istringstream is(v);
@@ -812,6 +815,8 @@ void Accounts::SaveAccounts() {
                " sgDowns=" + std::to_string(p.sgDowns);
         if (p.hasPos)
             out += " pos=" + NumText(p.posX) + "," + NumText(p.posZ) + "," + NumText(p.yaw) + "," + std::to_string(p.posSeed);
+        if (p.orbit) out += " orbit=1";
+        if (p.orbitGoal) out += " orbitGoal=1";
         out += "\n";
     }
     QueueWrite(PathOf(ACCOUNTS_FILE), std::move(out), false, "Konten");
@@ -1186,6 +1191,21 @@ void Accounts::AppendLoadLog(const std::string& day, const std::string& pruneBef
         job.append = true;
         job.header = header;
         job.what = "Lastprotokoll";
+    }
+    job.content += line;
+    if (!writer_.joinable()) writer_ = std::thread(&Accounts::WriterLoop, this);
+    writeCv_.notify_one();
+}
+
+void Accounts::AppendBalanceLog(const std::string& header, const std::string& line) {
+    if (dir_.empty()) return;
+    std::lock_guard<std::mutex> lock(writeMutex_);
+    WriteJob& job = pendingWrites_[(fs::path(LoadLogDir()) / BALANCE_LOG_FILE).string()];
+    if (!job.append) {
+        job = WriteJob{};
+        job.append = true;
+        job.header = header;
+        job.what = "Kontostand-Protokoll";
     }
     job.content += line;
     if (!writer_.joinable()) writer_ = std::thread(&Accounts::WriterLoop, this);

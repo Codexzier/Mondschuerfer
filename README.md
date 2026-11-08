@@ -304,8 +304,8 @@ glimmen.
   - Abgeschossene Schiffe stürzen ab und hinterlassen ein **Wrack**, das du wie eine
     Lagerstätte abbauen kannst (orangefarbener Lichtstrahl).
   - Die Geschütztürme der Stationen schützen dich vor Piraten.
-- **Weltraumkarte (Einzelspieler):** Hast du auf dem Mond 100.000 Punkte, geht es mit *Weiter ins
-  All* auf die Weltraumkarte. Aufrüstungen, Schiffe und Leben kommen mit, der Kontostand beginnt
+- **Weltraumkarte:** Hast du auf dem Mond 100.000 Punkte, geht es mit *Weiter ins
+  All* auf die Weltraumkarte (im Mehrspieler gleich nach dem Ziel, siehe unten). Aufrüstungen, Schiffe und Leben kommen mit, der Kontostand beginnt
   bei 0, das Ziel sind wieder 100.000. Es gibt keinen Boden und keine Kristalle: Punkte bringen nur
   abgeschossene Piraten (2.000, Elite-Piraten 5.000). In der Mitte steht die Raumstation, im Süden
   das Trägerschiff mit Werft und Raumschiffsverkäufer (dort schützen Geschütztürme). Etwa jede
@@ -313,6 +313,10 @@ glimmen.
   Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.
   Explodiert die Station, stehen alle Kontostände auf 0, und nach 30 Sekunden kommt eine neue.
   Die nächste Karte folgt später; bis dahin beginnt nach dem Ziel eine neue Runde im All.
+  Ab dem ersten Ziel im All ist der **Kartenwechsel** frei: Reiter *Karte* an der Handelsstation
+  (Mond) bzw. an Werft und Raumschiffsverkäufer (Trägerschiff). Der Kontostand gilt für beide Karten
+  und bleibt beim Wechsel; das Ziel auf dem Mond bringt dann ebenfalls eine neue Runde statt des
+  Sprungs ins All. *Fortsetzen* führt auf die Karte, auf der du zuletzt warst.
 - **Fortsetzen:** Das Spiel speichert automatisch beim Andocken, nach jedem SG-Einsatz und beim Schließen des Fensters,
   außerdem über *Pause → Speichern & zum Hauptmenü*. Der Spielstand liegt als
   `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach einem Absturz wird er gelöscht.
@@ -413,6 +417,12 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
 - **Ziel erreicht** (100.000 Punkte): Eintrag in die **Bestenliste** (die schnellsten Runden),
   alle Spieler sehen es, und eine **neue Runde** beginnt mit Kontostand 0 – die Aufrüstungen
   behältst du.
+- **Weltraumkarte:** Als Pilot geht es nach dem Ziel auf dem Mond gleich ins All, auf eine
+  gemeinsame Weltraumkarte für alle, die es geschafft haben (Regeln wie im Einzelspieler: nur
+  Piratenabschüsse bringen Punkte, Asteroiden abschießen, die Raumstation schützen). Explodiert die
+  Station, stehen die Kontostände **aller** Piloten im All auf 0. Wer sich im All abmeldet, kommt
+  dort wieder an. Sind alle Leben verbraucht, beginnt der Fortschritt von vorn auf dem Mond.
+  Den Kartenwechsel (Reiter *Karte*) gibt es wie im Einzelspieler ab dem ersten Ziel im All.
 - Was alle zusammen abliefern, lässt die Handelsstationen wachsen.
 - **SG-Teams:** Im Command Center gründest du ein Team (SG1, SG2 …, bis zu 4 Spieler) oder trittst
   einem bei. Der Gründer wählt das **Ziel** (*Mondkarte (gemeinsam)* oder eine Einsatzkarte, die der

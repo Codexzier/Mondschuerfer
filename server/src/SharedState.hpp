@@ -15,9 +15,10 @@
 //   - Die Webseite legt geänderte Einstellungen hier ab (RequestSettings,
 //     Schiffe getrennt mit RequestShips, Karten mit RequestMapCommand, Sperren
 //     mit RequestBanCommand, Events mit RequestEventCommand, Rollen mit
-//     RequestRoleCommand); der Spiel-Thread holt sie zu Beginn des nächsten
-//     Schritts ab und wendet sie an (TakeSettingsRequest, TakeShipsRequest,
-//     TakeMapCommands, TakeBanCommands, TakeEventCommands, TakeRoleCommands).
+//     RequestRoleCommand, Kontostände mit RequestBalanceCommand); der
+//     Spiel-Thread holt sie zu Beginn des nächsten Schritts ab und wendet sie
+//     an (TakeSettingsRequest, TakeShipsRequest, TakeMapCommands,
+//     TakeBanCommands, TakeEventCommands, TakeRoleCommands, TakeBalanceCommands).
 // So greift der Web-Thread nie direkt auf die Spielwelt zu.
 // ---------------------------------------------------------------------------
 #include "GameSettings.hpp"
@@ -94,6 +95,16 @@ struct RoleCommand {
     std::string role;               // Schlüssel (AccountRoleInfo::key)
 };
 
+// Auftrag der Webseite für den Bereich "Kontostand" (für Tests): Kontostand
+// eines Kontos von Hand setzen. Der Spiel-Thread protokolliert jede Änderung
+// (logs/kontostand.csv, GameServer::ApplyBalanceCommands).
+struct BalanceCommand {
+    std::string name;               // Spielername (vom Web-Thread geprüft)
+    long long balance = 0;          // neuer Kontostand (vom Web-Thread begrenzt)
+    std::string by;                 // Benutzer der Verwaltungsseite (ADMIN_USER)
+    std::string address;            // Adresse, von der die Änderung kam
+};
+
 // Eine Sperre (Bereich "Sperren" der Webseite), Kopie von Ban aus Accounts.hpp
 struct BanStatus {
     bool isIp = false;
@@ -157,6 +168,9 @@ struct ServerStatus {
     std::string roleNotice;         // wie mapNotice, für den Bereich "Rollen"
     int roleNoticeSeq = 0;
     bool roleNoticeError = false;
+    std::string balanceNotice;      // wie mapNotice, für den Bereich "Kontostand"
+    int balanceNoticeSeq = 0;       // zählt bei jeder Änderung hoch (Webseite lädt dann das Protokoll neu)
+    bool balanceNoticeError = false;
     std::vector<BanStatus> bans;
     std::string banNotice;          // wie mapNotice, für den Bereich "Sperren"
     int banNoticeSeq = 0;
@@ -228,6 +242,15 @@ public:
         return true;
     }
 
+    // Holt alle Aufträge für den Bereich "Kontostand" (älteste zuerst).
+    bool TakeBalanceCommands(std::vector<BalanceCommand>& out) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (balanceCommands_.empty()) return false;
+        out.swap(balanceCommands_);
+        balanceCommands_.clear();
+        return true;
+    }
+
     // --- Web-Thread -------------------------------------------------------------
     bool GetStatus(ServerStatus& out) const {
         std::lock_guard<std::mutex> lock(m_);
@@ -284,6 +307,14 @@ public:
         return true;
     }
 
+    // false, wenn schon zu viele Aufträge warten (der Spiel-Thread hängt)
+    bool RequestBalanceCommand(const BalanceCommand& c) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (balanceCommands_.size() >= 32) return false;
+        balanceCommands_.push_back(c);
+        return true;
+    }
+
 private:
     mutable std::mutex m_;
     ServerStatus status_;
@@ -297,4 +328,5 @@ private:
     std::vector<BanCommand> banCommands_;
     std::vector<EventCommand> eventCommands_;
     std::vector<RoleCommand> roleCommands_;
+    std::vector<BalanceCommand> balanceCommands_;
 };

@@ -42,6 +42,8 @@
 //      Nach jedem Welcome und beim Kartenwechsel: MapData (aktive Karte).
 //      SG-Team auf einer Einsatzkarte: InstanceStart (eigene Welt des Teams)
 //      und bei der Rückkehr InstanceEnd (wieder die Mondkarte).
+//      Pilot mit 100.000 auf dem Konto: OrbitStart (Weltraumkarte der Piloten,
+//      gemeinsame Welt aller, die dort sind); zurück zum Mond mit InstanceEnd.
 //   Karte hochladen (Karteneditor): wie 3b LoginStart -> LoginChallenge, dann
 //   MapUpload statt LoginProof -> Server antwortet MapUploadResult. Das meldet
 //   nicht im Spiel an; der Client trennt danach die Verbindung.
@@ -86,7 +88,9 @@ namespace net {
 // Version 16: Fundstücke auf Einsatzkarten (Kartenteile marker_item_*, NetDeposit::variant ab 3).
 // Version 17: Weltraumkarte (MapTheme::Space, Kartenteile für Decks, Raumstationen und
 //             Trägerschiffe; SnapMeTrooper: Wellen und Zustand der Raumstation).
-constexpr uint16_t PROTOCOL_VERSION = 17;
+// Version 18: Weltraumkarte der Piloten (OrbitStart; Snapshot: Raumstation und Asteroiden;
+//             DockAction SwitchMap und SnapMe::orbitGoal für den Kartenwechsel).
+constexpr uint16_t PROTOCOL_VERSION = 18;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -154,6 +158,7 @@ enum class MsgType : uint8_t {
     MissionMaps = 116,
     Scoreboard = 117,
     EventList = 118,
+    OrbitStart = 119,
 };
 
 enum class ErrorCode : uint8_t {
@@ -292,7 +297,8 @@ struct InputMsg {
     std::vector<InputRecord> records;   // älteste zuerst, höchstens MAX_INPUTS_PER_MSG
 };
 
-enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4, AcceptMission = 5 };
+// SwitchMap: Reiter "Karte", Wechsel Mond <-> Weltraumkarte (World::CanSwitchMap)
+enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4, AcceptMission = 5, SwitchMap = 6 };
 
 struct DockActionMsg {
     DockActionType action = DockActionType::Undock;
@@ -464,6 +470,7 @@ struct SnapMe {
     bool scanOn = false;
     float scanPhase = 0;          // Fortschritt des aktuellen Scannerrings in Sekunden (0..PULSE_TIME)
     bool mining = false;
+    bool orbitGoal = false;       // im All schon einmal 100.000: Kartenwechsel frei (PlayerState::orbitGoal)
     uint8_t mineKind = 0;
     int32_t mineId = -1;
     float mineT = 0;
@@ -560,6 +567,18 @@ struct SnapWreck {
     float age = 0;
 };
 
+// Asteroid auf der Weltraumkarte der Piloten (alle, es sind nur wenige)
+struct SnapAsteroid {
+    uint32_t id = 0;
+    uint8_t variant = 0;          // 0 meteor, 1 meteor_detailed
+    float x = 0, y = 0, z = 0;    // Mitte des Modells
+    float vx = 0, vz = 0;
+    float r = 0, scale = 1;       // Radius (Treffer, Einschlag) und Größe des Modells
+    float yaw = 0, spin = 0;
+    float hpFrac = 1;             // 0..1
+    float hitFlash = 0;
+};
+
 struct SnapshotMsg {
     uint32_t tick = 0;
     float serverTime = 0;
@@ -572,6 +591,12 @@ struct SnapshotMsg {
     std::vector<SnapWreck> wrecks;
     std::vector<SnapTrooper> troopers;  // ohne die eigene Figur
     std::vector<SnapGate> gates;
+    // Weltraumkarte der Piloten (nur dort): Raumstation und Asteroiden
+    bool hasOrbit = false;
+    float stationHp = 0, stationMaxHp = 0;
+    float stationDownT = 0;       // > 0: Station explodiert, neue in so vielen Sekunden
+    uint8_t stationVariant = 0;   // 0 station-a, 1 station-b
+    std::vector<SnapAsteroid> asteroids;
 };
 
 struct NetDeposit {
@@ -781,6 +806,14 @@ struct InstanceEndMsg {
     uint32_t tick = 0;
 };
 
+// Ein Pilot fliegt auf der Weltraumkarte weiter (World::NewOrbit mit Seed):
+// Snapshots bis einschließlich tick gehören noch zur Mondkarte. Zurück zum
+// Mond geht es mit InstanceEnd.
+struct OrbitStartMsg {
+    uint32_t tick = 0;
+    uint32_t seed = 0;
+};
+
 // ---------------------------------------------------------------------------
 // Kodieren (inkl. Typ-Byte) und Dekodieren (Typ-Byte bereits gelesen)
 // ---------------------------------------------------------------------------
@@ -812,6 +845,7 @@ std::vector<uint8_t> Encode(const TeamsMsg& m);
 std::vector<uint8_t> Encode(const MissionMapsMsg& m);
 std::vector<uint8_t> Encode(const InstanceStartMsg& m);
 std::vector<uint8_t> Encode(const InstanceEndMsg& m);
+std::vector<uint8_t> Encode(const OrbitStartMsg& m);
 std::vector<uint8_t> Encode(const ScoreboardMsg& m);
 std::vector<uint8_t> Encode(const EventListMsg& m);
 
@@ -842,6 +876,7 @@ bool Decode(Reader& r, TeamsMsg& m);
 bool Decode(Reader& r, MissionMapsMsg& m);
 bool Decode(Reader& r, InstanceStartMsg& m);
 bool Decode(Reader& r, InstanceEndMsg& m);
+bool Decode(Reader& r, OrbitStartMsg& m);
 bool Decode(Reader& r, ScoreboardMsg& m);
 bool Decode(Reader& r, EventListMsg& m);
 

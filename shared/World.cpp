@@ -370,8 +370,10 @@ void World::SpawnPlayerShip(PlayerState& ps) {
     const Vector3 c = trades.empty() ? Vector3{0, 0, 0} : stations[trades[RandInt(0, static_cast<int>(trades.size()) - 1)]].pos;
     const float a = Rand(0, 2 * PI);
     Vector3 pos{c.x + cosf(a) * cfg::MP_SPAWN_DISTANCE, cfg::SHIP_ALTITUDE, c.z + sinf(a) * cfg::MP_SPAWN_DISTANCE};
+    // Weltraumkarte der Piloten: vor dem Trägerschiff (nebeneinander), Blick zur Raumstation
+    if (orbit) pos = Vector3Add(StartPos(), Vector3{Rand(-15.0f, 15.0f), 0.0f, Rand(-4.0f, 4.0f)});
     Ship s = MakeShip(ShipKind::Player, pos);
-    s.yaw = YawTowards(c, pos);
+    s.yaw = orbit ? StartYaw() : YawTowards(c, pos);
     s.playerId = ps.id;
     s.hidden = ps.role == PlayerRole::Trooper;   // SG-Team: das Schiff wartet versteckt (SetRole)
     ships.push_back(s);
@@ -400,6 +402,7 @@ void World::ResetProgress(PlayerState& ps) {
     ps.roundTime = 0.0f;
     ps.round = 1;
     ps.lives = settings.lives;
+    ps.progressLost = true;
 }
 
 bool World::PlayerAlive(const PlayerState& ps) const {
@@ -1172,9 +1175,12 @@ void World::Dock(PlayerState& ps, int station) {
             }
         }
         // Spielziel: Im Mehrspieler beginnt danach eine neue Runde, im
-        // Einzelspieler ist die Partie gewonnen.
+        // Einzelspieler ist die Partie gewonnen (weiter ins All). Ist der
+        // Kartenwechsel schon frei, beginnt auch hier eine neue Runde.
         if (isServer) {
             if (ps.balance >= cfg::GOAL_POINTS) GoalReached(ps);
+        } else if (ps.balance >= cfg::GOAL_POINTS && ps.orbitGoal && !simulation) {
+            NextRound(ps);
         } else if (ps.balance >= cfg::GOAL_POINTS && outcome == Outcome::None) {
             outcome = Outcome::Won;
             outcomeT = 0.0f;

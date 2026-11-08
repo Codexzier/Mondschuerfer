@@ -584,6 +584,56 @@
             <p id="players-empty" class="empty" hidden></p>
         </section>
 
+        <!-- ============================= Kontostand ============================= -->
+        <section class="panel" id="balance-panel" aria-labelledby="balance-title">
+            <div class="panel-head">
+                <h2 id="balance-title">Kontostand</h2>
+                <span class="muted small" id="balance-count">–</span>
+            </div>
+            <div class="settings">
+                <p class="muted small ships-help">
+                    Für Tests: Kontostand eines Kontos von Hand setzen. Spielt der Spieler gerade, gilt der neue Wert sofort
+                    auf seiner Karte (Mond oder All), sonst beim nächsten Anmelden. Jede Änderung wird mit Zeit, altem und
+                    neuem Wert und Absender protokolliert (Datei logs/kontostand.csv im Datenordner).
+                </p>
+                <form id="balance-form" class="settings" novalidate>
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="balance-name">Spielername</label>
+                            <input id="balance-name" type="text" maxlength="16" autocomplete="off" spellcheck="false">
+                        </div>
+                        <div class="field">
+                            <label for="balance-value">Neuer Kontostand</label>
+                            <input id="balance-value" type="number" min="0" max="1000000000" step="1" inputmode="numeric">
+                        </div>
+                    </div>
+                    <div class="actions">
+                        <button type="submit" id="btn-balance" class="btn btn-primary">Kontostand setzen</button>
+                    </div>
+                </form>
+                <div id="balance-msg" class="note" role="status" aria-live="polite" hidden></div>
+
+                <h3 class="form-title">Manuelle Änderungen</h3>
+                <div class="table-wrap">
+                    <table class="data-table balance-table">
+                        <thead>
+                        <tr>
+                            <th scope="col">Zeit</th>
+                            <th scope="col">Spieler</th>
+                            <th scope="col" class="num">Vorher</th>
+                            <th scope="col" class="num">Nachher</th>
+                            <th scope="col" class="num">Änderung</th>
+                            <th scope="col">Karte</th>
+                            <th scope="col">Geändert von</th>
+                        </tr>
+                        </thead>
+                        <tbody id="balance-body"></tbody>
+                    </table>
+                </div>
+                <p id="balance-empty" class="empty" hidden>Noch wurde kein Kontostand von Hand geändert.</p>
+            </div>
+        </section>
+
         <div class="columns">
             <!-- ============================ Bestenliste ============================ -->
             <section class="panel" aria-labelledby="hs-title">

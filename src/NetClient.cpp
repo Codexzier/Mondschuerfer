@@ -336,6 +336,7 @@ struct NetClient::Impl {
     std::vector<Deco> baseDecos;       // Zufalls-Deko aus BuildMirror (für den Wechsel zurück zur Standardkarte)
     net::MapDataMsg lastMap;           // aktive Karte des Servers (nach einer Einsatzkarte wieder darüberlegen)
     bool inInstance = false;           // Spiegelwelt zeigt gerade die Einsatzkarte des Teams (InstanceStart)
+    bool inOrbit = false;              // Spiegelwelt zeigt gerade die Weltraumkarte der Piloten (OrbitStart)
 
     // --- Listen ---------------------------------------------------------------------
     std::vector<net::PlayerEntry> players;
@@ -446,6 +447,8 @@ struct NetClient::Impl {
     void HandleTeams(const net::TeamsMsg& m);
     void HandleInstanceStart(const net::InstanceStartMsg& m);
     void HandleInstanceEnd(const net::InstanceEndMsg& m);
+    void HandleOrbitStart(const net::OrbitStartMsg& m);
+    void ApplyOrbit(const net::SnapshotMsg& m);
     void SwitchedWorld(uint32_t tick, const PlayerState& me);
 
     void SyncTime(double serverTime);
@@ -545,6 +548,7 @@ void NetClient::Impl::ResetSession() {
     scoreboard = net::ScoreboardMsg{};
     lastMap = net::MapDataMsg{};
     inInstance = false;
+    inOrbit = false;
 }
 
 // Vorhersage komplett verwerfen (neue Verbindung, neue Welt): auch die
@@ -848,6 +852,11 @@ void NetClient::Impl::OnPacket(const uint8_t* data, size_t len) {
             if (net::Decode(r, m)) HandleInstanceEnd(m);
             break;
         }
+        case net::MsgType::OrbitStart: {
+            net::OrbitStartMsg m;
+            if (net::Decode(r, m)) HandleOrbitStart(m);
+            break;
+        }
         case net::MsgType::ChatLine: {
             net::ChatLineMsg m;
             if (net::Decode(r, m) && state == NetState::Playing) {
@@ -955,11 +964,11 @@ void NetClient::Impl::HandleMapUploadResult(const net::MapUploadResultMsg& m) {
 // die Karte wechselt. Erst die Zufalls-Deko aus BuildMirror zurückholen, dann
 // die Karte darüberlegen (World::ApplyMap); die Standardkarte ist nur die
 // Zufalls-Deko. Die Rover kommen jeweils aus der Deko (SpawnRovers, das macht
-// ApplyMap selbst). Auf einer Einsatzkarte erst nach der Rückkehr (HandleInstanceEnd).
+// ApplyMap selbst). Auf einer Einsatzkarte und im All erst nach der Rückkehr (HandleInstanceEnd).
 void NetClient::Impl::HandleMapData(const net::MapDataMsg& m) {
     if (!worldReady) return;
     lastMap = m;
-    if (!inInstance) ApplyMapData(m);
+    if (!inInstance && !inOrbit) ApplyMapData(m);
 }
 
 void NetClient::Impl::ApplyMapData(const net::MapDataMsg& m) {
@@ -999,11 +1008,66 @@ void NetClient::Impl::HandleInstanceStart(const net::InstanceStartMsg& m) {
     SwitchedWorld(m.tick, me);
 }
 
-// Zurück von der Einsatzkarte: die Mondkarte wieder aufbauen wie bei
-// HandleWelcome (gleicher Seed und Einstellungen wie der Server) und die
-// aktive Karte darüberlegen.
+// Der Pilot fliegt auf der Weltraumkarte weiter: Die Spiegelwelt wird wie
+// beim Server mit World::NewOrbit gebaut (Trägerschiff mit Werft und
+// Raumschiffsverkäufer in derselben Reihenfolge: dockedAt passt). Raumstation
+// und Asteroiden kommen mit jedem Snapshot (ApplyOrbit).
+void NetClient::Impl::HandleOrbitStart(const net::OrbitStartMsg& m) {
+    if (!worldReady || state != NetState::Playing) return;
+    const PlayerState me = world.Me();
+    const GameSettings settings = world.settings;
+    const float keepDrawRange = world.drawRange;
+    world.NewOrbit(m.seed, totalDelivered);
+    world.isMirror = true;
+    world.settings = settings;
+    world.drawRange = keepDrawRange;
+    world.deposits.clear();
+    inInstance = false;
+    inOrbit = true;
+    SwitchedWorld(m.tick, me);
+}
+
+// Weltraumkarte: Zustand der Raumstation und alle Asteroiden vom Server.
+// Explodiert die Station, verschwindet sie bis zur neuen (anderes Modell).
+// Asteroiden fliegen zwischen zwei Snapshots mit ihrer Geschwindigkeit
+// weiter (NetClient::Update); ihre Drehung läuft lokal, damit sie nicht springt.
+void NetClient::Impl::ApplyOrbit(const net::SnapshotMsg& m) {
+    if (m.stationDownT > 0.0f) {
+        world.spaceStations.clear();
+    } else if (world.spaceStations.empty() || world.stationVariant != m.stationVariant) {
+        world.stationVariant = m.stationVariant;
+        world.PlaceOrbitStation();
+    }
+    world.stationHp = m.stationHp;
+    world.stationMaxHp = m.stationMaxHp;
+    world.stationDownT = m.stationDownT;
+    std::vector<Asteroid> list;
+    list.reserve(m.asteroids.size());
+    for (const net::SnapAsteroid& k : m.asteroids) {
+        Asteroid a;
+        const auto old = std::find_if(world.asteroids.begin(), world.asteroids.end(),
+                                      [&](const Asteroid& o) { return o.id == static_cast<int>(k.id); });
+        a.id = static_cast<int>(k.id);
+        a.model = ModelId(k.variant == 1 ? "meteor_detailed" : "meteor");
+        a.pos = {k.x, k.y, k.z};
+        a.vel = {k.vx, 0.0f, k.vz};
+        a.r = k.r;
+        a.scale = k.scale;
+        a.yaw = old != world.asteroids.end() ? old->yaw : k.yaw;
+        a.spin = k.spin;
+        a.hp = k.hpFrac;
+        a.maxHp = 1.0f;
+        a.hitFlash = k.hitFlash;
+        list.push_back(a);
+    }
+    world.asteroids.swap(list);
+}
+
+// Zurück von der Einsatzkarte bzw. aus dem All: die Mondkarte wieder aufbauen
+// wie bei HandleWelcome (gleicher Seed und Einstellungen wie der Server) und
+// die aktive Karte darüberlegen.
 void NetClient::Impl::HandleInstanceEnd(const net::InstanceEndMsg& m) {
-    if (!worldReady || !inInstance) return;
+    if (!worldReady || (!inInstance && !inOrbit)) return;
     const PlayerState me = world.Me();
     const GameSettings settings = world.settings;
     const float keepDrawRange = world.drawRange;
@@ -1015,6 +1079,7 @@ void NetClient::Impl::HandleInstanceEnd(const net::InstanceEndMsg& m) {
     world.lastStage = world.StationStage();
     world.stageAnim = 0.0f;
     inInstance = false;
+    inOrbit = false;
     ApplyMapData(lastMap);
     SwitchedWorld(m.tick, me);
 }
@@ -1057,6 +1122,7 @@ void NetClient::Impl::HandleWelcome(const net::WelcomeMsg& m) {
 
     welcome = m;
     inInstance = false;   // ein (neues) Welcome beginnt immer auf der Mondkarte
+    inOrbit = false;
     world.BuildMirror(m.worldSeed, m.settings);
     world.BuildStargates();   // Tore der Zufallskarte (eine eigene Karte folgt mit MapData)
     baseDecos = world.decos;
@@ -1162,6 +1228,7 @@ void NetClient::Impl::HandleSnapshot(net::SnapshotMsg& m) {
     }
 
     ApplyGates(m.gates);
+    if (m.hasOrbit && world.orbit) ApplyOrbit(m);
     if (m.hasMe && state == NetState::Playing) ApplyMe(m.me);
 }
 
@@ -1228,6 +1295,7 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     }
     ps.scanOn = me.scanOn;
     ps.mining = me.mining;
+    ps.orbitGoal = me.orbitGoal;
     ps.mineKind = me.mineKind;
     ps.mineId = me.mineId;
     ps.mineT = me.mineT;
@@ -2238,6 +2306,11 @@ void NetClient::Update(float dt, const ShipInput& held, bool scanPressed, bool i
         }
         for (Stargate& g : d.world.stargates)
             if (g.state != GateState::Idle) g.t += viewDt;
+        for (Asteroid& a : d.world.asteroids) {   // Weltraumkarte (ApplyOrbit)
+            a.pos = Vector3Add(a.pos, Vector3Scale(a.vel, viewDt));
+            a.yaw += a.spin * viewDt;
+            a.hitFlash = std::max(0.0f, a.hitFlash - viewDt * 3.0f);
+        }
         d.world.UpdateCosmetics(viewDt);
     }
 

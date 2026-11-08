@@ -14,7 +14,10 @@
 //     auf der Karte haben Kontostand 0, nach cfg::ORBIT_STATION_RESPAWN kommt
 //     eine neue Station (abwechselnd das andere Modell).
 // Ziel: wieder cfg::GOAL_POINTS auf dem Konto. Die nächste Karte gibt es noch
-// nicht; bis dahin beginnt danach eine neue Runde auf dieser Karte.
+// nicht; bis dahin beginnt danach eine neue Runde auf dieser Karte. Ab dann
+// ist der Kartenwechsel frei (PlayerState::orbitGoal): angedockt an der
+// Handelsstation bzw. am Trägerschiff (Reiter "Karte"), mit demselben
+// Kontostand; das Ziel auf dem Mond ist dann ebenfalls eine neue Runde dort.
 //
 // Aufrufer: main.cpp (NewOrbit und CarryPilot beim Sprung ins All), Save.cpp
 // (NewOrbit beim Laden), World::Update (UpdateOrbit), World::UpdateBullets
@@ -97,10 +100,12 @@ void World::NewOrbit(unsigned int newSeed, long long delivered) {
     Notify(ps, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
 }
 
-void World::CarryPilot(PlayerState& ps, const PlayerState& from) {
+void World::CarryPilot(PlayerState& ps, const PlayerState& from, bool keepBalance) {
     ps.name = from.name;
     // Ziel auf dieser Karte: wieder 100.000, der Kontostand beginnt bei 0
-    ps.balance = 0;
+    // (Kartenwechsel: ein Konto für beide Karten)
+    ps.balance = keepBalance ? from.balance : 0;
+    ps.orbitGoal = from.orbitGoal;
     ps.delivered = from.delivered;
     ps.lives = from.lives;
     for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = from.upgrades[u];
@@ -242,22 +247,36 @@ void World::StationExplodes() {
     }
 }
 
+bool World::CanSwitchMap(const PlayerState& ps) const {
+    if (!ps.orbitGoal || ps.dockedAt < 0 || ps.dockedAt >= static_cast<int>(stations.size())) return false;
+    const StationType t = stations[static_cast<size_t>(ps.dockedAt)].type;
+    return orbit ? t == StationType::Shipyard || t == StationType::Dealer : t == StationType::Trade;
+}
+
 // Abschuss eines Piraten durch einen Spieler: Punkte aufs Konto. Ist das
 // Ziel erreicht, beginnt eine neue Runde auf dieser Karte (im Mehrspieler
-// mit Eintrag in die Bestenliste, World::GoalReached).
+// mit Eintrag in die Bestenliste, World::GoalReached). Beim ersten Mal wird
+// der Kartenwechsel frei.
 void World::OrbitBounty(PlayerState& ps, const Ship& s) {
     const bool elite = s.kind == ShipKind::Elite;
     const int bounty = elite ? cfg::ORBIT_BOUNTY_ELITE : cfg::ORBIT_BOUNTY_PIRATE;
     ps.balance += bounty;
     Notify(ps, Fmt("%s abgeschossen! +%s Punkte", elite ? "Elite-Pirat" : "Pirat", Points(bounty).c_str()), Color{255, 210, 130, 255});
     if (ps.balance < cfg::GOAL_POINTS) return;
-    if (isServer) {
-        GoalReached(ps);
-        return;
+    if (!ps.orbitGoal) {
+        ps.orbitGoal = true;
+        Notify(ps, "Kartenwechsel frei: Mond und All im Reiter Karte (Handelsstation, Trägerschiff).", Color{150, 230, 255, 255});
     }
+    if (isServer) GoalReached(ps);
+    else NextRound(ps);
+}
+
+// Einzelspieler: Ziel erreicht auf der Weltraumkarte oder, bei freiem
+// Kartenwechsel, auf dem Mond. Statt Siegesbildschirm eine neue Runde auf
+// derselben Karte.
+void World::NextRound(PlayerState& ps) {
     ++ps.goals;
-    Notify(ps, "ZIEL ERREICHT! Die nächste Karte folgt bald.", Color{110, 240, 170, 255});
-    Notify(ps, "Neue Runde im All: Dein Kontostand beginnt wieder bei 0.", Color{200, 220, 255, 255});
+    Notify(ps, "ZIEL ERREICHT! Neue Runde: Dein Kontostand beginnt wieder bei 0.", Color{110, 240, 170, 255});
     if (const Ship* sp = PlayerShip(ps)) SoundAt(Sfx::Victory, sp->pos, 1.0f, 0.4f, ps.id);
     ps.balance = 0;
 }

@@ -27,6 +27,9 @@
 //     bekommt es eine eigene Welt (World::NewInstance),
 //     die in jedem Schritt mitgerechnet wird (höchstens
 //     GameSettings::maxInstances gleichzeitig).
+//   - Weltraumkarte der Piloten (shared/Orbit.cpp): Wer auf dem Mond das Ziel
+//     (100.000) erreicht, fliegt in einer gemeinsamen zweiten Welt weiter
+//     (orbit_), bis alle Leben verbraucht sind. Ohne Spieler wird sie aufgelöst.
 //   - Veröffentlicht jede Sekunde einen Statusbericht für die Webseite und
 //     übernimmt dort geänderte Einstellungen (SharedState).
 //
@@ -39,8 +42,8 @@
 //     -> Pakete verarbeiten (Anmeldung, Eingaben in Warteschlangen legen ...)
 //   alle 33,3 ms ein Schritt (Step):
 //     Einstellungen von der Webseite anwenden -> je Spieler eine Eingabe aus
-//     der Warteschlange nehmen -> World::Update (Mondwelt und alle
-//     Instanzen) -> Ereignisse verteilen ->
+//     der Warteschlange nehmen -> World::Update (Mondwelt, alle
+//     Instanzen und die Weltraumkarte) -> Ereignisse verteilen ->
 //     Snapshots/Lagerstätten/Listen senden -> ggf. speichern
 //
 // Benchmark (RunBenchmark): dieselbe Step()-Funktion, aber ohne Netzwerk.
@@ -260,6 +263,8 @@ private:
     void SendEventLists(const Client* skip);     // an alle offenen Event-Editoren (außer skip)
     void ApplyRoleCommands();   // Bereich "Rollen" der Webseite: Rolle zuweisen, entziehen
     void RoleNotice(const std::string& text, bool error = false);  // wie MapNotice
+    void ApplyBalanceCommands();   // Bereich "Kontostand" der Webseite: Kontostand setzen und protokollieren
+    void BalanceNotice(const std::string& text, bool error = false);  // wie MapNotice
     void RemoveSurplusPirates();
     // Aktive Karte auch in der eigenen Welt: Stargates und Hindernisse der
     // Figuren kommen aus der Deko und müssen zu dem passen, was die Clients
@@ -274,6 +279,7 @@ private:
     void ApplyInputs();
     void DistributeWorldEvents(int stageBefore);
     void SendEvents();
+    void FlushEvents(Client& c);   // gesammelte Ereignisse dieses Clients jetzt schicken
     void SendSnapshots();
     void SendDepositUpdates();
     void Housekeeping();
@@ -308,7 +314,24 @@ private:
     void EndAllInstances();                              // Neuaufbau der Welt: alle Einsätze enden ohne Wertung
     Instance* InstanceOf(int playerId);
     const Instance* InstanceOf(int playerId) const;
-    const World& WorldOf(int playerId) const;            // Instanzwelt oder world_
+    const World& WorldOf(int playerId) const;            // Instanzwelt, Weltraumkarte oder world_
+    // --- Weltraumkarte der Piloten (orbit_) ---
+    // Ein Spieler steht mit Konto und Schiff entweder in world_ (Mond) oder in
+    // orbit_, nie in beiden. HomeOf liefert die Welt, in der er steht.
+    World* OrbitOf(int playerId);                        // orbit_, wenn der Spieler dort ist, sonst nullptr
+    const World* OrbitOf(int playerId) const;
+    World& HomeOf(int playerId);
+    const World& HomeOf(int playerId) const;
+    World& OrbitWorld();                                 // orbit_, bei Bedarf neu angelegt (World::NewOrbit)
+    void EnterOrbit(Client& c);                          // Ziel auf dem Mond erreicht oder Kartenwechsel: Spieler wechselt ins All
+    void LeaveOrbit(Client& c, bool lost);               // alle Leben verbraucht (lost) oder Kartenwechsel: zurück auf den Mond
+    void SendOrbitStart(Client& c);
+    // Weltraumkarte rechnen, Ereignisse verteilen, Rückkehrer auf den Mond
+    // holen, leere Weltraumkarte auflösen
+    void UpdateOrbitWorld();
+    void DistributeOrbitEvents();
+    // Ziel erreicht (Mond oder All): Bestenliste, Nachricht an alle, speichern
+    void AnnounceGoal(const World& w, const GoalEvent& g);
 
     // --- Netzwerk -------------------------------------------------------------------
     void ServiceNetwork(uint32_t timeoutMs);
@@ -406,6 +429,7 @@ private:
     std::vector<SgTeam> teams_;
     bool teamsChanged_ = false;         // Teamliste neu schicken (SendTeams)
     std::vector<Instance> instances_;   // laufende Einsätze auf Einsatzkarten
+    std::unique_ptr<World> orbit_;      // Weltraumkarte der Piloten (nullptr, solange niemand dort ist)
     int missionMapsRev_ = 0;            // zählt hoch, wenn sich die heute wählbaren Einsatzkarten ändern
     std::vector<std::string> missionFiles_;   // heute wählbare Einsatzkarten (Dateien), Reihenfolge wie net::MissionMapsMsg
     std::string missionDay_;            // Tag, für den missionFiles_ gilt (JJJJ-MM-TT, Ortszeit)
@@ -445,6 +469,9 @@ private:
     std::string roleNotice_;            // für den Status (ServerStatus::roleNotice)
     int roleNoticeSeq_ = 0;
     bool roleNoticeError_ = false;
+    std::string balanceNotice_;         // für den Status (ServerStatus::balanceNotice)
+    int balanceNoticeSeq_ = 0;
+    bool balanceNoticeError_ = false;
     uint64_t halfOpenDropped_ = 0;      // verworfene halboffene Verbindungen (Meldung 1x pro Minute)
 
     // Messwerte für den Status (werden jede Sekunde ausgewertet und geleert)

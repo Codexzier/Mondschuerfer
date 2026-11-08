@@ -524,7 +524,7 @@ fieldset { border: 0; padding: 0; }
 /* Bereich "Events": Auswahl der Einsatzkarten (kann lang werden) */
 .check-list { display: grid; gap: 8px; max-height: 260px; overflow-y: auto; padding: 2px; }
 .check-list .check { font-weight: 400; }
-.events-table td.name, .roles-table td.name { font-weight: 600; }
+.events-table td.name, .roles-table td.name, .balance-table td.name { font-weight: 600; }
 .events-table td.list { white-space: normal; overflow-wrap: anywhere; min-width: 140px; }
 input[type="date"] { color-scheme: dark; }
 
