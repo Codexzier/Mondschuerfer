@@ -887,7 +887,8 @@ struct ModelIds {
     int player, pirateA, pirateB, elite, miner, cargoA, cargoB;
     int crystalSmall, crystalA, crystalB;
     // Alle Schiffsmodelle in fester Reihenfolge: die sieben oben, danach die
-    // übrigen aus ShipModelNames (Spielerschiffe können jedes davon haben).
+    // übrigen aus ShipModelNames (Spielerschiffe können jedes davon haben),
+    // zuletzt das Modell der Piraten im All (cfg::ORBIT_PIRATE_MODEL).
     std::vector<int> ships;
 };
 ModelIds DefaultModelIds();                           // dieselben Modelle wie World::ResolveModels

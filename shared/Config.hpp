@@ -458,5 +458,12 @@ constexpr float ORBIT_ASTEROID_SPEED = 3.5f;     // Einheiten pro Sekunde (gut e
 constexpr float ORBIT_ASTEROID_HP = 250.0f;      // so viel Schaden hält ein Asteroid aus
 constexpr float ORBIT_ASTEROID_DAMAGE = 250.0f;  // Strukturpunkte je Einschlag (vier Treffer: Station zerstört)
 constexpr float ORBIT_ASTEROID_SIZE = 7.0f;      // Maßstab des Modells (gut 6 m breit)
+// Piraten und Elite-Piraten im All fliegen das Alien-Raumschiff des Nutzers
+// (assets/models/ships/, Farbton wie auf dem Mond: Render.cpp).
+constexpr const char* ORBIT_PIRATE_MODEL = "ships/alien-spacecraft";
+// Abgeschossene Schiffe im All stürzen nicht ab: Sie taumeln in ihrer
+// Flugrichtung weiter (mindestens so schnell) und explodieren dann.
+constexpr float ORBIT_TUMBLE_TIME = 2.5f;        // Sekunden bis zur Explosion
+constexpr float ORBIT_TUMBLE_SPEED = 6.0f;       // Mindestgeschwindigkeit beim Taumeln
 
 } // namespace cfg

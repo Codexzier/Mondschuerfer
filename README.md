@@ -307,7 +307,9 @@ glimmen.
 - **Weltraumkarte:** Hast du auf dem Mond 100.000 Punkte, geht es mit *Weiter ins
   All* auf die Weltraumkarte (im Mehrspieler gleich nach dem Ziel, siehe unten). Aufrüstungen, Schiffe und Leben kommen mit, der Kontostand beginnt
   bei 0, das Ziel sind wieder 100.000. Es gibt keinen Boden und keine Kristalle: Punkte bringen nur
-  abgeschossene Piraten (2.000, Elite-Piraten 5.000). In der Mitte steht die Raumstation, im Süden
+  abgeschossene Piraten (2.000, Elite-Piraten 5.000). Die Piraten fliegen dort Alien-Raumschiffe
+  (Elite-Piraten violett getönt). Abgeschossene Schiffe stürzen im All nicht ab, sondern taumeln
+  geradeaus weiter und explodieren nach 2,5 Sekunden. In der Mitte steht die Raumstation, im Süden
   das Trägerschiff mit Werft und Raumschiffsverkäufer (dort schützen Geschütztürme). Etwa jede
   Minute fliegt ein Asteroid langsam auf die Station zu (Warnung mit Himmelsrichtung, orange auf dem
   Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.

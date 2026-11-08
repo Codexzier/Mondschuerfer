@@ -372,8 +372,9 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
         // Nicken: Beim Absturz zeigt die Nase deutlich nach unten (0,5 rad,
         // ca. 29°); beim Beschleunigen neigt sich das Schiff leicht nach vorn
         // (bis ca. 3,4° bei vollem Schub). bank = Rollwinkel in Kurven (bzw.
-        // Trudeln beim Absturz), berechnet in World.cpp.
-        float pitch = s.crashing ? -0.5f : -0.06f * s.thrustVisual;
+        // Trudeln beim Absturz), berechnet in World.cpp. Im All taumelt ein
+        // abgeschossenes Schiff: Es nickt so schnell, wie es rollt.
+        float pitch = s.crashing ? (w.orbit ? s.bank : -0.5f) : -0.06f * s.thrustVisual;
         g_assets.Draw(s.model, TRS(s.pos, s.yaw, pitch, s.bank, 1.0f), tint, em);
     }
 }

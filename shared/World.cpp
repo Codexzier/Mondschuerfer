@@ -470,16 +470,25 @@ void World::Update(float dt) {
     // (kein echtes Mondschwerefeld, sondern so, dass es gut aussieht),
     // trudelt (crashSpin) und wird seitlich gebremst. Von der Flughöhe 3,2 bis
     // zum Aufschlag dauert das knapp 0,9 s.
+    // Weltraumkarte: kein Boden und keine Schwerkraft. Das Schiff fliegt
+    // geradeaus weiter (DamageShip), taumelt um alle Achsen (Render.cpp
+    // leitet das Nicken aus bank ab) und explodiert nach ORBIT_TUMBLE_TIME.
     for (size_t i = 0; i < ships.size(); ++i) {
         Ship& s = ships[i];
         if (!s.crashing || s.dead) continue;
         s.crashT += dt;
-        s.vel.y -= 11.0f * dt;
-        s.vel.x *= (1.0f - 0.6f * dt);
-        s.vel.z *= (1.0f - 0.6f * dt);
-        s.pos = Vector3Add(s.pos, Vector3Scale(s.vel, dt));
-        s.yaw += s.crashSpin * dt;
-        s.bank += s.crashSpin * 0.6f * dt;
+        if (orbit) {
+            s.pos = Vector3Add(s.pos, Vector3Scale(s.vel, dt));
+            s.yaw += s.crashSpin * 0.4f * dt;
+            s.bank += s.crashSpin * dt;
+        } else {
+            s.vel.y -= 11.0f * dt;
+            s.vel.x *= (1.0f - 0.6f * dt);
+            s.vel.z *= (1.0f - 0.6f * dt);
+            s.pos = Vector3Add(s.pos, Vector3Scale(s.vel, dt));
+            s.yaw += s.crashSpin * dt;
+            s.bank += s.crashSpin * 0.6f * dt;
+        }
         // Rauchspur: in etwa jedem dritten Schritt ein Teilchen, jedes vierte
         // davon als leuchtende Flamme. Der Server zieht hier KEINE
         // Zufallszahl (der Client erzeugt den Rauch in UpdateCosmetics selbst).
@@ -493,10 +502,10 @@ void World::Update(float dt) {
             sm.glow = sm.color.r > 200;
             particles.push_back(sm);
         }
-        // Aufschlag (Schiffsmitte 0,45 über dem Boden): große Explosion,
-        // dann Wrack bzw. Spielende.
-        if (s.pos.y <= 0.45f) {
-            Explosion({s.pos.x, 0.8f, s.pos.z}, s.kind == ShipKind::Player ? 2.0f : 1.4f);
+        // Aufschlag (Schiffsmitte 0,45 über dem Boden) bzw. im All Ende des
+        // Taumelns: große Explosion, dann Wrack bzw. Spielende.
+        if (orbit ? s.crashT >= cfg::ORBIT_TUMBLE_TIME : s.pos.y <= 0.45f) {
+            Explosion(orbit ? s.pos : Vector3{s.pos.x, 0.8f, s.pos.z}, s.kind == ShipKind::Player ? 2.0f : 1.4f);
             SoundAt(Sfx::CrashBoom, s.pos, s.kind == ShipKind::Player ? 1.0f : 0.8f);
             s.dead = true;
             PlayerState* sp = s.kind == ShipKind::Player && !isServer ? FindPlayer(s.playerId) : nullptr;
@@ -1998,12 +2007,20 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
     // Schild weg: Absturz beginnen (weiter geht es in Update, "Abstürzende
     // Schiffe"). Kleine Explosion jetzt, große beim Aufschlag. Das Schiff
     // wird leicht angehoben (vel.y = 1,5) und trudelt in zufälliger Richtung.
+    // Im All taumelt es stattdessen in seiner Flugrichtung geradeaus weiter,
+    // mindestens mit ORBIT_TUMBLE_SPEED.
     if (s.hp <= 0.0f) {
         s.hp = 0.0f;
         s.crashing = true;
         s.crashT = 0.0f;
         s.crashSpin = Rand(0, 1) < 0.5f ? Rand(-5.0f, -3.0f) : Rand(3.0f, 5.0f);
-        s.vel.y = 1.5f;
+        if (orbit) {
+            const float speed = sqrtf(s.vel.x * s.vel.x + s.vel.z * s.vel.z);
+            const Vector3 dir = speed > 0.5f ? Vector3{s.vel.x / speed, 0.0f, s.vel.z / speed} : ForwardFromYaw(s.yaw);
+            s.vel = Vector3Scale(dir, std::max(speed, cfg::ORBIT_TUMBLE_SPEED));
+        } else {
+            s.vel.y = 1.5f;
+        }
         s.mining = false;
         Explosion(s.pos, 0.7f);
         SoundAt(Sfx::ShipExplode, s.pos);
@@ -2012,7 +2029,8 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
             if (PlayerState* ps = FindPlayer(s.playerId)) {
                 ps->mining = false;
                 ps->scanOn = false;
-                Notify(*ps, "Schild zerstört! Dein Schiff stürzt ab!", Color{255, 110, 90, 255});
+                Notify(*ps, orbit ? "Schild zerstört! Dein Schiff taumelt und explodiert gleich!" : "Schild zerstört! Dein Schiff stürzt ab!",
+                       Color{255, 110, 90, 255});
                 FailMission(*ps, true);   // Absturz: laufende Mission scheitert
             }
         } else if (attacker == Faction::Player && attackerId >= 0 && attackerPlayer) {

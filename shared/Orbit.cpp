@@ -59,6 +59,7 @@ void World::NewOrbit(unsigned int newSeed, long long delivered) {
     // Insgesamt abgeliefert (vom Mond): bestimmt, wie stark die Piraten sind
     totalDelivered = delivered;
     ResolveModels();
+    mdl.pirateA = mdl.pirateB = mdl.elite = ModelId(cfg::ORBIT_PIRATE_MODEL);
 
     // Trägerschiff längs der x-Achse; sein Rumpf ist ein Bauteil der Werft.
     // Auf dem Deck zwei Andockplätze: Werft im Westen, Raumschiffsverkäufer

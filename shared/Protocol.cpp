@@ -1785,6 +1785,7 @@ ModelIds DefaultModelIds() {
         const int id = ModelId(name);
         if (std::find(m.ships.begin(), m.ships.end(), id) == m.ships.end()) m.ships.push_back(id);
     }
+    m.ships.push_back(ModelId(cfg::ORBIT_PIRATE_MODEL));   // Piraten im All (World::NewOrbit)
     return m;
 }
 
