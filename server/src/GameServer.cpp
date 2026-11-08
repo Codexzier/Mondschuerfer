@@ -1556,8 +1556,9 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             c.noInteractUntilTick = tick_ + UNDOCK_INTERACT_GUARD;
             break;
         case net::DockActionType::Repair:
-            // wie im Einzelspieler: reparieren an der Handelsstation
-            if (st.type == StationType::Trade) w.Repair(*ps);
+            // wie im Einzelspieler: reparieren an der Handelsstation, im All
+            // beim Raumschiffsverkäufer (dort gibt es keine Handelsstation)
+            if (st.type == StationType::Trade || (w.orbit && st.type == StationType::Dealer)) w.Repair(*ps);
             break;
         case net::DockActionType::BuyUpgrade:
             // aufrüsten an der Werft; param wird in BuyUpgrade/UpgradeCost geprüft
@@ -1569,8 +1570,8 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             if (st.type == StationType::Dealer) w.BuyShip(*ps, m.param & 0x7F, (m.param & 0x80) != 0);
             break;
         case net::DockActionType::SwitchShip:
-            // Schiff wechseln an der Handelsstation (Tab "Schiff")
-            if (st.type == StationType::Trade) w.SwitchShip(*ps, m.param);
+            // Schiff wechseln an der Handelsstation (Tab "Schiff"), im All beim Raumschiffsverkäufer
+            if (st.type == StationType::Trade || (w.orbit && st.type == StationType::Dealer)) w.SwitchShip(*ps, m.param);
             break;
         case net::DockActionType::AcceptMission:
             // Mini-Mission annehmen an der Handelsstation (Tab "Missionen");
@@ -2530,9 +2531,12 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
             home.Notify(ps, "Weltraumkarte: Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
         else
             home.Notify(ps, "Ziel: 100.000 Ressourcenpunkte auf dem Konto.", Color{200, 220, 255, 255});
-        // Funkspruch unten rechts: neues Spiel bzw. Fortsetzen (clip_newstart/clip_return)
-        ps.cue = resumed || returning ? cfg::CUE_RETURN : cfg::CUE_NEWSTART;
-        ps.cueT = cfg::CUE_TIME;
+        // Funkspruch unten rechts: neues Spiel bzw. Fortsetzen (clip_newstart/clip_return).
+        // Auf der Weltraumkarte vorerst keiner (die Clips handeln vom Mond).
+        if (!inOrbit) {
+            ps.cue = resumed || returning ? cfg::CUE_RETURN : cfg::CUE_NEWSTART;
+            ps.cueT = cfg::CUE_TIME;
+        }
     }
 
     SendWelcome(c);

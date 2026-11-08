@@ -450,7 +450,7 @@ constexpr int ORBIT_PIRATES = 8;                 // so viele Piraten gleichzeiti
 constexpr float ORBIT_STATION_HP = 1000.0f;      // Strukturpunkte der Raumstation
 constexpr float ORBIT_STATION_SCALE = 40.0f;     // Maßstab des Modells (40 m breit)
 constexpr float ORBIT_STATION_RESPAWN = 30.0f;   // Sekunden nach der Explosion bis zur neuen Station
-constexpr float ORBIT_CARRIER_Z = 150.0f;        // Trägerschiff: so weit südlich der Station (Mitte)
+constexpr float ORBIT_CARRIER_Z = 150.0f;        // Trägerschiffe: so weit südlich der Station (Mitte)
 constexpr float ORBIT_ASTEROID_FIRST = 45.0f;    // Sekunden bis zum ersten Asteroiden
 constexpr float ORBIT_ASTEROID_INTERVAL = 75.0f; // danach im Mittel so oft (mal 0,8 bis 1,2)
 constexpr float ORBIT_ASTEROID_DIST = 230.0f;    // Abstand zur Station beim Auftauchen
@@ -458,6 +458,7 @@ constexpr float ORBIT_ASTEROID_SPEED = 3.5f;     // Einheiten pro Sekunde (gut e
 constexpr float ORBIT_ASTEROID_HP = 250.0f;      // so viel Schaden hält ein Asteroid aus
 constexpr float ORBIT_ASTEROID_DAMAGE = 250.0f;  // Strukturpunkte je Einschlag (vier Treffer: Station zerstört)
 constexpr float ORBIT_ASTEROID_SIZE = 7.0f;      // Maßstab des Modells (gut 6 m breit)
+constexpr float ORBIT_ASTEROID_CONTACT = 0.1f;   // Schiff berührt einen Asteroiden: ein Zehntel des vollen Schilds je Sekunde
 // Piraten und Elite-Piraten im All fliegen das Alien-Raumschiff des Nutzers
 // (assets/models/ships/, Farbton wie auf dem Mond: Render.cpp).
 constexpr const char* ORBIT_PIRATE_MODEL = "ships/alien-spacecraft";

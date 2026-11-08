@@ -6,14 +6,16 @@
 //   - kein Boden, keine Kristalle, keine Händler und keine Missionen;
 //   - in der Mitte die Raumstation (station-a bzw. station-b) mit
 //     Strukturpunkten (World::stationHp);
-//   - im Süden das Trägerschiff mit Werft und Raumschiffsverkäufer (zwei
-//     Stationen, Andocken wie auf dem Mond, mit Geschütztürmen);
+//   - im Süden zwei Trägerschiffe nebeneinander, eins mit der Werft, eins mit
+//     dem Raumschiffsverkäufer (Andocken wie auf dem Mond, mit
+//     Geschütztürmen; beim Verkäufer auch Reparatur und Schiffswechsel);
 //   - Piraten: Nur ihre Abschüsse bringen Punkte (OrbitBounty);
 //   - alle fünf Minuten ein Alien-Mutterschiff (höchstens vier): zehnfacher
 //     Schild, Waffe Stufe 5, Belohnung nach Schadensanteil (UpdateBosses,
 //     BossBounty);
-//   - ab und an ein Asteroid, der langsam auf die Station zufliegt. Trifft er
-//     sie, verliert sie Strukturpunkte. Bei 0 explodiert sie: Alle Piloten
+//   - ab und an ein Asteroid, der langsam auf die Station zufliegt. Wer ihn
+//     berührt, verliert Schild (ORBIT_ASTEROID_CONTACT). Trifft er die Station,
+//     verliert sie Strukturpunkte. Bei 0 explodiert sie: Alle Piloten
 //     auf der Karte haben Kontostand 0, nach cfg::ORBIT_STATION_RESPAWN kommt
 //     eine neue Station (abwechselnd das andere Modell).
 // Ziel: wieder cfg::GOAL_POINTS auf dem Konto. Die nächste Karte gibt es noch
@@ -37,7 +39,7 @@ namespace {
 // Schiffe fliegen über sie hinweg (wie auf dem Mond gibt es keine Kollision).
 constexpr float DECK_Y = cfg::SHIP_ALTITUDE - 1.2f;
 constexpr float CARRIER_SCALE = 50.0f;   // Trägerschiff: 50 m lang
-constexpr float DOCK_SPACING = 16.0f;    // Andockplätze 16 m links und rechts der Schiffsmitte
+constexpr float CARRIER_X = 35.0f;       // Trägerschiffe 35 m links und rechts der Mitte (20 m Lücke)
 
 // Punkte mit Tausenderpunkten ("2.000") für die Meldungen
 std::string Points(long long v) {
@@ -64,22 +66,23 @@ void World::NewOrbit(unsigned int newSeed, long long delivered) {
     ResolveModels();
     mdl.pirateA = mdl.pirateB = mdl.elite = ModelId(cfg::ORBIT_PIRATE_MODEL);
 
-    // Trägerschiff längs der x-Achse; sein Rumpf ist ein Bauteil der Werft.
-    // Auf dem Deck zwei Andockplätze: Werft im Westen, Raumschiffsverkäufer
-    // im Osten, je mit zwei Geschütztürmen (Schutz am Rückzugspunkt).
+    // Zwei Trägerschiffe längs der x-Achse nebeneinander: im Westen die Werft
+    // (carrier-a), im Osten der Raumschiffsverkäufer (carrier-b). Der Rumpf
+    // ist ein Bauteil der jeweiligen Station; angedockt wird mitten auf dem
+    // Deck, je mit zwei Geschütztürmen (Schutz am Rückzugspunkt).
     // Die Stationen liegen in Deckhöhe (Render.cpp: Andockring auf dem Deck).
-    const int carrier = ModelId("carrier/carrier-a");
-    const float carrierY = -ModelBounds(carrier).max.y * CARRIER_SCALE;
     Station yard;
     yard.type = StationType::Shipyard;
     yard.name = "Werft";
-    yard.pos = {-DOCK_SPACING, DECK_Y, cfg::ORBIT_CARRIER_Z};
-    yard.parts.push_back({carrier, {DOCK_SPACING, carrierY, 0.0f}, PI * 0.5f, CARRIER_SCALE, 0});
+    yard.pos = {-CARRIER_X, DECK_Y, cfg::ORBIT_CARRIER_Z};
     Station dealer;
     dealer.type = StationType::Dealer;
     dealer.name = "Raumschiffsverkäufer";
-    dealer.pos = {DOCK_SPACING, DECK_Y, cfg::ORBIT_CARRIER_Z};
-    for (Station* st : {&yard, &dealer}) {
+    dealer.pos = {CARRIER_X, DECK_Y, cfg::ORBIT_CARRIER_Z};
+    const std::pair<Station*, const char*> carriers[2] = {{&yard, "carrier/carrier-a"}, {&dealer, "carrier/carrier-b"}};
+    for (const auto& [st, hull] : carriers) {
+        const int carrier = ModelId(hull);
+        st->parts.push_back({carrier, {0.0f, -ModelBounds(carrier).max.y * CARRIER_SCALE, 0.0f}, PI * 0.5f, CARRIER_SCALE, 0});
         st->turrets.push_back({{-6.0f, 0.0f, -4.0f}, 0.0f, 0.0f, 0, true});
         st->turrets.push_back({{6.0f, 0.0f, 4.0f}, PI, 0.0f, 0, false});
     }
@@ -182,6 +185,16 @@ void World::UpdateOrbit(float dt) {
     }
     if (destroyed) StationExplodes();
     asteroids.erase(std::remove_if(asteroids.begin(), asteroids.end(), [](const Asteroid& a) { return a.dead; }), asteroids.end());
+    // Berührt ein Spielerschiff einen Asteroiden (Schiff etwa 2 m breit),
+    // verliert es je Sekunde ORBIT_ASTEROID_CONTACT seines vollen Schilds.
+    for (Ship& s : ships) {
+        if (s.kind != ShipKind::Player || s.dead || s.crashing || s.hidden || s.docked) continue;
+        for (const Asteroid& a : asteroids) {
+            if (Dist2D(s.pos, a.pos) > a.r + 1.0f) continue;
+            DamageShip(s, s.maxHp * cfg::ORBIT_ASTEROID_CONTACT * dt, -1, Faction::Neutral, -1);
+            break;
+        }
+    }
 }
 
 // Neuer Asteroid in ORBIT_ASTEROID_DIST um die Station, aus einer zufälligen

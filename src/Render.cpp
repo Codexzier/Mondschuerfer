@@ -1473,8 +1473,9 @@ void World::Draw(const Camera3D& cam) const {
         // von ihnen werden nur Teile der Stufe 0 gezeichnet.
         const bool trade = st.type == StationType::Trade;
         int stage = trade ? StationStage() : 0;
-        // Raumschiffsverkäufer: alle Teile lime-grün eingefärbt
-        const Color tint = st.type == StationType::Dealer ? Color{170, 255, 90, 255} : WHITE;
+        // Raumschiffsverkäufer: alle Teile lime-grün eingefärbt (im All nicht:
+        // dort ist sein einziges Teil der Rumpf des Trägerschiffs)
+        const Color tint = st.type == StationType::Dealer && !orbit ? Color{170, 255, 90, 255} : WHITE;
         for (const auto& p : st.parts) {
             if (p.stage > stage) continue;
             float scale = p.scale;

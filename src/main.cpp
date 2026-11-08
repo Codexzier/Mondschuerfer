@@ -402,8 +402,11 @@ private:
     // gesperrt und ein Fehlerton kommt.
     void Continue() {
         if (LoadGame(world_)) {
-            world_.Me().cue = cfg::CUE_RETURN;
-            world_.Me().cueT = cfg::CUE_TIME;
+            // Auf der Weltraumkarte vorerst kein Funkspruch (die Clips handeln vom Mond)
+            if (!world_.orbit) {
+                world_.Me().cue = cfg::CUE_RETURN;
+                world_.Me().cueT = cfg::CUE_TIME;
+            }
             controls_.Reset();
             screen_ = Screen::Playing;
             camTarget_ = world_.Player().pos;

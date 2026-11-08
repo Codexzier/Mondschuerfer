@@ -1105,6 +1105,77 @@ static void DrawMapTab(const World& w, const PlayerState& me, float x, float y, 
     else if (interactive && !can && (key || (hover && PointerPressed()))) g_audio.Play(Sfx::Denied);
 }
 
+// Schild und Knopf "Schild reparieren" (World::Repair): Handelsstation
+// (Reiter "Station") und Raumschiffsverkäufer im All (Reiter "Schiff").
+// Liefert die Höhe.
+static float DrawRepair(const World& w, const PlayerState& me, float x, float y, float bw, bool interactive, DockRequest& req) {
+    const float s = Scale();
+    const bool keyboard = controls::ActiveDevice() == controls::Device::KeyboardMouse;
+    const Ship& p = w.Player();
+    Text("Schild", x, y, 24 * s, MUTED);
+    TextRight(TextFormat("%d / %d", static_cast<int>(ceilf(p.hp)), static_cast<int>(p.maxHp)), x + bw, y, 24 * s, TEXT);
+    y += 30 * s;
+    Bar({x, y, bw, 12 * s}, p.hp / p.maxHp, SHIELD);
+    y += 32 * s;
+
+    // Reparatur kostet REPAIR_COST_PER_POINT (2) Punkte je fehlendem
+    // Schildpunkt. Reicht das Geld nicht für alles, repariert
+    // World::Repair so viel, wie bezahlbar ist. Darum genügt als
+    // Bedingung "Geld für mindestens einen Schildpunkt".
+    int cost = w.RepairCost(me);
+    std::string rl = cost > 0 ? TextFormat("Schild reparieren  (%s Pkt.)%s", Num(cost).c_str(), keyboard ? "  [R]" : "") : "Schild ist voll";
+    bool canRepair = cost > 0 && me.balance >= cfg::REPAIR_COST_PER_POINT;
+    Rectangle rb{x, y, bw, 50 * s};
+    // Klick auf einen gesperrten Knopf liefert bei Button() kein true;
+    // repairHover sagt uns trotzdem, ob die Maus darauf war -> "Abgelehnt"-Ton.
+    bool repairHover = false;
+    if (Button(rb, rl, 22 * s, false, canRepair && interactive, &repairHover) || (interactive && canRepair && IsKeyPressed(KEY_R)))
+        req.repair = true;
+    else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && PointerPressed())))
+        g_audio.Play(Sfx::Denied);
+    return 112 * s;
+}
+
+// Geflogenes Schiff und die geparkten (hangar) mit "Wechseln"
+// (World::SwitchShip): Handelsstation (Reiter "Schiff") und
+// Raumschiffsverkäufer im All (Reiter "Schiff", unter der Reparatur).
+// parked = angezeigte geparkte Schiffe, rowPitch = Zeilenabstand (ohne Scale).
+static void DrawShipSwitch(const World& w, const PlayerState& me, float x, float y, float bw, int parked, float rowPitch, bool interactive,
+                           DockRequest& req) {
+    const float s = Scale();
+    const bool keyboard = controls::ActiveDevice() == controls::Device::KeyboardMouse;
+    Text("Aktuelles Schiff", x, y, 20 * s, MUTED);
+    y += 26 * s;
+    Rectangle cur{x, y, bw, 70 * s};
+    DrawRectangleRec(cur, Color{36, 42, 54, 220});
+    DrawRectangleLinesEx(cur, 1.0f, ACCENT_DIM);
+    Text(w.settings.Ship(me.shipType).name, cur.x + 16 * s, cur.y + 8 * s, 26 * s, TEXT);
+    Text(ShipStats(w.settings.Ship(me.shipType), me.upgrades, false), cur.x + 16 * s, cur.y + 42 * s, 18 * s, MUTED);
+    y += 84 * s;
+    Text("Geparkte Schiffe", x, y, 20 * s, MUTED);
+    y += 26 * s;
+    if (me.hangar.empty()) {
+        Text("Keine. Weitere Schiffe gibt es beim Raumschiffsverkäufer.", x, y, 18 * s, TEXT);
+        y += 76 * s;
+    }
+    const bool compact = rowPitch < 80.0f;
+    for (int i = 0; i < parked; ++i) {
+        const OwnedShip& o = me.hangar[i];
+        const int type = std::clamp(o.type, 0, w.settings.ShipCount() - 1);
+        Rectangle row{x, y, bw, (rowPitch - 10.0f) * s};
+        DrawRectangleRec(row, Color{36, 42, 54, 220});
+        Text(w.settings.Ship(type).name, row.x + 16 * s, row.y + (compact ? 6 : 8) * s, (compact ? 24 : 26) * s, TEXT);
+        Text(ShipStats(w.settings.Ship(type), o.upgrades, false), row.x + 16 * s, row.y + (compact ? 36 : 42) * s,
+             (compact ? 17 : 18) * s, MUTED);
+        std::string bl = keyboard ? TextFormat("[%d]  Wechseln", i + 1) : std::string("Wechseln");
+        Rectangle b{row.x + row.width - 190 * s, row.y + (compact ? 8 : 12) * s, 174 * s, (compact ? 40 : 46) * s};
+        if ((Button(b, bl, 22 * s, false, interactive) ||
+             (interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + i)))))
+            req.switchShip = type;
+        y += rowPitch * s;
+    }
+}
+
 // Wird jedes Frame gezeichnet, solange der Spieler angedockt ist. Es liest nur
 // die World und gibt zurück, was der Spieler angeklickt bzw. gedrückt hat
 // (DockRequest). Ob eine Aktion möglich ist (genug Punkte?), prüft es nur für
@@ -1124,7 +1195,6 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
     // Ganzen Bildschirm leicht abdunkeln (Alpha 120 von 255), damit das
     // Fenster sich von der weiterlaufenden Welt abhebt.
     DrawRectangle(0, 0, static_cast<int>(W), static_cast<int>(H), Color{8, 10, 16, 120});
-    const Ship& p = w.Player();
     const PlayerState& me = w.Me();
     DockRequest req;
     const bool keyboard = controls::ActiveDevice() == controls::Device::KeyboardMouse;
@@ -1199,60 +1269,11 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
             }
             y += 40 * s;
 
-            Text("Schild", x, y, 24 * s, MUTED);
-            TextRight(TextFormat("%d / %d", static_cast<int>(ceilf(p.hp)), static_cast<int>(p.maxHp)), x + bw, y, 24 * s, TEXT);
-            y += 30 * s;
-            Bar({x, y, bw, 12 * s}, p.hp / p.maxHp, SHIELD);
-            y += 32 * s;
-
-            // Reparatur kostet REPAIR_COST_PER_POINT (2) Punkte je fehlendem
-            // Schildpunkt. Reicht das Geld nicht für alles, repariert
-            // World::Repair so viel, wie bezahlbar ist. Darum genügt als
-            // Bedingung "Geld für mindestens einen Schildpunkt".
-            int cost = w.RepairCost(me);
-            std::string rl = cost > 0 ? TextFormat("Schild reparieren  (%s Pkt.)%s", Num(cost).c_str(), keyboard ? "  [R]" : "") : "Schild ist voll";
-            bool canRepair = cost > 0 && me.balance >= cfg::REPAIR_COST_PER_POINT;
-            Rectangle rb{x, y, bw, 50 * s};
-            // Klick auf einen gesperrten Knopf liefert bei Button() kein true;
-            // repairHover sagt uns trotzdem, ob die Maus darauf war -> "Abgelehnt"-Ton.
-            bool repairHover = false;
-            if (Button(rb, rl, 22 * s, false, canRepair && interactive, &repairHover) || (interactive && canRepair && IsKeyPressed(KEY_R)))
-                req.repair = true;
-            else if (interactive && !canRepair && (IsKeyPressed(KEY_R) || (repairHover && PointerPressed())))
-                g_audio.Play(Sfx::Denied);
+            DrawRepair(w, me, x, y, bw, interactive, req);
         } else if (dockTab == 1) {
             // --- Tab "Schiff": geflogenes Schiff und die geparkten (hangar),
             //     zu denen man wechseln kann (World::SwitchShip) ----------------
-            Text("Aktuelles Schiff", x, y, 20 * s, MUTED);
-            y += 26 * s;
-            Rectangle cur{x, y, bw, 70 * s};
-            DrawRectangleRec(cur, Color{36, 42, 54, 220});
-            DrawRectangleLinesEx(cur, 1.0f, ACCENT_DIM);
-            Text(w.settings.Ship(me.shipType).name, cur.x + 16 * s, cur.y + 8 * s, 26 * s, TEXT);
-            Text(ShipStats(w.settings.Ship(me.shipType), me.upgrades, false), cur.x + 16 * s, cur.y + 42 * s, 18 * s, MUTED);
-            y += 84 * s;
-            Text("Geparkte Schiffe", x, y, 20 * s, MUTED);
-            y += 26 * s;
-            if (me.hangar.empty()) {
-                Text("Keine. Weitere Schiffe gibt es beim Raumschiffsverkäufer.", x, y, 18 * s, TEXT);
-                y += 76 * s;
-            }
-            const bool compact = rowPitch < 80.0f;
-            for (int i = 0; i < parked; ++i) {
-                const OwnedShip& o = me.hangar[i];
-                const int type = std::clamp(o.type, 0, w.settings.ShipCount() - 1);
-                Rectangle row{x, y, bw, (rowPitch - 10.0f) * s};
-                DrawRectangleRec(row, Color{36, 42, 54, 220});
-                Text(w.settings.Ship(type).name, row.x + 16 * s, row.y + (compact ? 6 : 8) * s, (compact ? 24 : 26) * s, TEXT);
-                Text(ShipStats(w.settings.Ship(type), o.upgrades, false), row.x + 16 * s, row.y + (compact ? 36 : 42) * s,
-                     (compact ? 17 : 18) * s, MUTED);
-                std::string bl = keyboard ? TextFormat("[%d]  Wechseln", i + 1) : std::string("Wechseln");
-                Rectangle b{row.x + row.width - 190 * s, row.y + (compact ? 8 : 12) * s, 174 * s, (compact ? 40 : 46) * s};
-                if ((Button(b, bl, 22 * s, false, interactive) ||
-                     (interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + i)))))
-                    req.switchShip = type;
-                y += rowPitch * s;
-            }
+            DrawShipSwitch(w, me, x, y, bw, parked, rowPitch, interactive, req);
         } else if (dockTab == 3) {
             DrawMapTab(w, me, x, y, bw, interactive, req);
         } else {
@@ -1327,9 +1348,14 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         const int rows = static_cast<int>(listed.size());
         const float rowPitch = rows <= 4 ? 98.0f : 84.0f;
         const float statsY = rows <= 4 ? 50.0f : 40.0f, buttonH = rows <= 4 ? 36.0f : 30.0f;
-        // Auf dem Trägerschiff (Weltraumkarte) zusätzlich die Reiter Schiffe | Karte
+        // Auf dem Trägerschiff (Weltraumkarte) zusätzlich die Reiter Schiffe |
+        // Schiff (Reparatur und Wechsel, dort gibt es keine Handelsstation) |
+        // Karte. Das Fenster ist so hoch, dass jeder Reiter hineinpasst.
         const float tabsH = w.orbit ? 58.0f : 0.0f;
-        const float panelH = std::max(580.0f, 188.0f + rows * rowPitch) + tabsH;
+        const int parked = std::min(static_cast<int>(me.hangar.size()), w.settings.ShipCount() - 1);
+        const float parkedPitch = parked <= 3 ? 80.0f : 72.0f;
+        const float shipTabH = w.orbit ? 494.0f + std::max(76.0f, parked * parkedPitch) : 0.0f;
+        const float panelH = std::max(std::max(580.0f, 188.0f + rows * rowPitch) + tabsH, shipTabH);
         Rectangle r{W * 0.5f - 420 * s, H * 0.5f - panelH * 0.5f * s, 840 * s, panelH * s};
         Panel(r);
         float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
@@ -1339,11 +1365,16 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         TextRight("Kontostand  " + Num(me.balance), x + bw, y + 10 * s, 24 * s, ACCENT);
         y += 46 * s;
         if (w.orbit) {
-            const char* tabNames[2] = {"Schiffe", "Karte"};
-            y += DockTabs(tabNames, 2, dockTab, x, y, bw, interactive);
+            const char* tabNames[3] = {"Schiffe", "Schiff", "Karte"};
+            y += DockTabs(tabNames, 3, dockTab, x, y, bw, interactive);
         }
-        if (w.orbit && dockTab == 1) {
-            DrawMapTab(w, me, x, y, bw, interactive, req);
+        if (w.orbit && dockTab > 0) {
+            if (dockTab == 1) {
+                y += DrawRepair(w, me, x, y, bw, interactive, req) + 24 * s;
+                DrawShipSwitch(w, me, x, y, bw, parked, parkedPitch, interactive, req);
+            } else {
+                DrawMapTab(w, me, x, y, bw, interactive, req);
+            }
             Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
             if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
         } else {

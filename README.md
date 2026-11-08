@@ -315,13 +315,17 @@ glimmen.
   Minikarte steht sein Schild. Wird es zwei Minuten nicht getroffen, erholt sich der Schild. Der
   Abschuss bringt 50.000 Punkte, aufgeteilt nach dem Schaden, den jeder Spieler angerichtet hat.
   In der Mitte steht die Raumstation, im Süden
-  das Trägerschiff mit Werft und Raumschiffsverkäufer (dort schützen Geschütztürme). Etwa jede
+  liegen zwei Trägerschiffe, eins mit der Werft und eins mit dem Raumschiffsverkäufer (dort schützen
+  Geschütztürme). Beim Raumschiffsverkäufer kannst du im All auch dein Schiff reparieren und
+  wechseln (Reiter *Schiff*). Etwa jede
   Minute fliegt ein Asteroid langsam auf die Station zu (Warnung mit Himmelsrichtung, orange auf dem
   Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.
+  Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Die
+  Funksprüche mit Avatar laufen im All noch nicht.
   Explodiert die Station, stehen alle Kontostände auf 0, und nach 30 Sekunden kommt eine neue.
   Die nächste Karte folgt später; bis dahin beginnt nach dem Ziel eine neue Runde im All.
   Ab dem ersten Ziel im All ist der **Kartenwechsel** frei: Reiter *Karte* an der Handelsstation
-  (Mond) bzw. an Werft und Raumschiffsverkäufer (Trägerschiff). Der Kontostand gilt für beide Karten
+  (Mond) bzw. an Werft und Raumschiffsverkäufer (Trägerschiffe). Der Kontostand gilt für beide Karten
   und bleibt beim Wechsel; das Ziel auf dem Mond bringt dann ebenfalls eine neue Runde statt des
   Sprungs ins All. *Fortsetzen* führt auf die Karte, auf der du zuletzt warst.
 - **Fortsetzen:** Das Spiel speichert automatisch beim Andocken, nach jedem SG-Einsatz und beim Schließen des Fensters,
