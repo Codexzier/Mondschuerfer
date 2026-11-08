@@ -148,6 +148,11 @@ constexpr const char* LOAD_LOG_HEADER =
     "\xEF\xBB\xBF"
     "Zeit;Unix-Zeit;Spieler;Zuschauer;Verbindungen;Schrittzeit Ø ms;Schrittzeit max ms;CPU Ø %;CPU max %;"
     "RAM MB;Empfangen Ø KB/s;Empfangen max KB/s;Gesendet Ø KB/s;Gesendet max KB/s;Lastspitze\n";
+// Kopfzeile von logs/kontostand.csv (Kontostand von Hand geändert), Aufbau wie
+// beim Lastprotokoll. WebServer.cpp liest die Datei (kBalanceLogColumns).
+constexpr const char* BALANCE_LOG_HEADER =
+    "\xEF\xBB\xBF"
+    "Zeit;Unix-Zeit;Spieler;Vorher;Nachher;Karte;Geändert von;Adresse\n";
 
 // Zahl mit Dezimalkomma für das Lastprotokoll: 3.25 -> "3,25"
 std::string DecimalComma(double v, int digits) {
@@ -577,6 +582,7 @@ void GameServer::Step() {
     ApplyBanCommands();
     ApplyEventCommands();
     ApplyRoleCommands();
+    ApplyBalanceCommands();
 
     for (auto& up : clients_)
         if (up->isBot) BotThink(*up);
@@ -3658,6 +3664,68 @@ void GameServer::RoleNotice(const std::string& text, bool error) {
     Log("Rollen: " + text);
 }
 
+// Bereich "Kontostand" der Webseite (für Tests im Mehrspieler). Spielt das
+// Konto gerade (oder fliegt sein Schiff nach dem Abmelden noch), steht der
+// Kontostand in seiner Welt (Mond oder All) und gilt sofort; sonst im Konto
+// und gilt beim nächsten Anmelden. Jede Änderung kommt mit Zeit, altem und
+// neuem Wert und dem Absender ins Protokoll logs/kontostand.csv.
+void GameServer::ApplyBalanceCommands() {
+    std::vector<BalanceCommand> cmds;
+    if (!shared_ || !shared_->TakeBalanceCommands(cmds)) return;
+    for (const BalanceCommand& cmd : cmds) {
+        Account* acc = accounts_.Find(cmd.name);
+        if (!acc) {
+            BalanceNotice("Es gibt kein Konto \"" + cmd.name + "\".", true);
+            continue;
+        }
+        Client* online = nullptr;
+        int playerId = -1;
+        for (auto& up : clients_)
+            if (!up->closing && up->role == Role::Player && up->account == acc) {
+                online = up.get();
+                playerId = up->playerId;
+            }
+        if (!online)
+            for (const Departing& d : departing_)
+                if (d.account == acc) playerId = d.playerId;
+        World& home = HomeOf(playerId);
+        PlayerState* ps = playerId >= 0 ? home.FindPlayer(playerId) : nullptr;
+        const long long before = ps ? ps->balance : acc->progress.balance;
+        const long long after = std::max(0LL, cmd.balance);
+        const std::string where = !ps ? "nicht im Spiel" : &home == &world_ ? "Mond" : "All";
+        if (ps) ps->balance = after;
+        acc->progress.balance = after;
+        if (online) StoreProgress(*online);
+        accounts_.SaveAccounts();
+
+        // Trennzeichen im Benutzernamen würden die Spalten verschieben
+        std::string by = cmd.by;
+        std::replace(by.begin(), by.end(), ';', ',');
+        const std::time_t t = std::time(nullptr);
+        std::tm tm{};
+#if defined(_WIN32)
+        tm = *std::localtime(&t);
+#else
+        localtime_r(&t, &tm);
+#endif
+        char when[24];
+        std::strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", &tm);
+        accounts_.AppendBalanceLog(BALANCE_LOG_HEADER,
+                                   std::string(when) + ";" + std::to_string(static_cast<long long>(t)) + ";" + acc->name +
+                                       ";" + std::to_string(before) + ";" + std::to_string(after) + ";" + where + ";" +
+                                       by + ";" + cmd.address + "\n");
+        BalanceNotice(acc->name + ": Kontostand von " + std::to_string(before) + " auf " + std::to_string(after) +
+                      " gesetzt (" + where + ", von " + by + ").");
+    }
+}
+
+void GameServer::BalanceNotice(const std::string& text, bool error) {
+    balanceNotice_ = text;
+    balanceNoticeError_ = error;
+    ++balanceNoticeSeq_;
+    Log("Kontostand: " + text);
+}
+
 // Bereich "Sperren" der Webseite. Eine neue Sperre wirkt sofort: Wer
 // betroffen und verbunden ist, wird getrennt. Der Web-Thread hat Namen und
 // Adressen schon geprüft; hier wird trotzdem nichts ungeprüft übernommen.
@@ -4094,6 +4162,9 @@ void GameServer::PublishStatus() {
     st.roleNotice = roleNotice_;
     st.roleNoticeSeq = roleNoticeSeq_;
     st.roleNoticeError = roleNoticeError_;
+    st.balanceNotice = balanceNotice_;
+    st.balanceNoticeSeq = balanceNoticeSeq_;
+    st.balanceNoticeError = balanceNoticeError_;
     const int64_t unixNow = UnixNow();
     for (const Ban& b : accounts_.Bans()) {
         if (b.until > 0 && b.until <= unixNow) continue;   // abgelaufen, wird beim nächsten ExpireBans entfernt

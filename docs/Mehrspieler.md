@@ -739,6 +739,7 @@ Container `/data` (Docker-Volume), einstellbar mit `MONDSCHUERFER_DATA` oder `--
 | `events.txt` | Events (Bereich „Events“): je Zeile Nummer, erster und letzter Tag, zusätzlich wählbare und gesperrte Einsatzkarten, wer es eingerichtet hat, Anlage, Name ([shared/MapEvents.hpp](../shared/MapEvents.hpp)) |
 | `karten/` | hochgeladene Karten, eine `.karte`-Datei je Karte (ohne Obergrenze) |
 | `logs/last-JJJJ-MM-TT.csv` | Lastprotokoll, eine Zeile je Minute (Spieler, Zuschauer, Verbindungen, Schrittzeit, CPU, RAM, Netzwerk, Lastspitze; Trennzeichen `;`, Dezimalkomma); Dateien älter als 30 Tage löscht der Server |
+| `logs/kontostand.csv` | jede Änderung eines Kontostands auf der Webseite (Zeit, Spieler, vorher, nachher, Karte, Benutzer, Adresse); wird nie gelöscht |
 | `*.defekt-…` | Kopie einer Datei, in der beim Laden kaputte Zeilen übersprungen wurden |
 
 Gestaltungsentscheidungen, die man im Code sieht:
@@ -781,6 +782,8 @@ Die Webseite besteht aus drei statischen Dateien ([server/web/](../server/web/):
 | `POST /api/bans` | Bereich „Sperren“: Konto oder IP-Adresse/-Bereich sperren, entsperren, Spieler trennen |
 | `POST /api/events` | Bereich „Events“: Event einrichten, ändern oder löschen (Einsatzkarten für einzelne Tage) |
 | `POST /api/roles` | Bereich „Rollen“: einem Konto eine Rolle (Event Manager) zuweisen oder entziehen |
+| `POST /api/balance` | Bereich „Kontostand“: Kontostand eines Kontos setzen (wird protokolliert) |
+| `GET /api/balance-log` | Bereich „Kontostand“: Protokoll der Änderungen, neueste zuerst |
 | `GET /api/history` | Bereich „Verlauf“: Lastprotokoll der letzten 24 Stunden, die größten Lastspitzen, Liste der Tagesdateien |
 | `GET /api/logs/last-JJJJ-MM-TT.csv` | eine Tagesdatei des Lastprotokolls herunterladen |
 

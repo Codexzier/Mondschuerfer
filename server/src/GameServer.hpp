@@ -263,6 +263,8 @@ private:
     void SendEventLists(const Client* skip);     // an alle offenen Event-Editoren (außer skip)
     void ApplyRoleCommands();   // Bereich "Rollen" der Webseite: Rolle zuweisen, entziehen
     void RoleNotice(const std::string& text, bool error = false);  // wie MapNotice
+    void ApplyBalanceCommands();   // Bereich "Kontostand" der Webseite: Kontostand setzen und protokollieren
+    void BalanceNotice(const std::string& text, bool error = false);  // wie MapNotice
     void RemoveSurplusPirates();
     // Aktive Karte auch in der eigenen Welt: Stargates und Hindernisse der
     // Figuren kommen aus der Deko und müssen zu dem passen, was die Clients
@@ -467,6 +469,9 @@ private:
     std::string roleNotice_;            // für den Status (ServerStatus::roleNotice)
     int roleNoticeSeq_ = 0;
     bool roleNoticeError_ = false;
+    std::string balanceNotice_;         // für den Status (ServerStatus::balanceNotice)
+    int balanceNoticeSeq_ = 0;
+    bool balanceNoticeError_ = false;
     uint64_t halfOpenDropped_ = 0;      // verworfene halboffene Verbindungen (Meldung 1x pro Minute)
 
     // Messwerte für den Status (werden jede Sekunde ausgewertet und geleert)

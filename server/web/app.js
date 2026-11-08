@@ -13,6 +13,9 @@
         Hochladen erlauben/entziehen) einzeln per POST an /api/maps; die
         Liste lässt sich nach Spieler und Kartenname filtern. Ebenso die
         Bereiche "Events" (/api/events) und "Rollen" (/api/roles).
+        Der Bereich "Kontostand" setzt den Kontostand eines Kontos (POST
+        /api/balance) und zeigt das Protokoll aller Änderungen (GET
+        /api/balance-log, neu geladen nach jeder Meldung des Spiel-Threads).
      5. Der Bereich "Verlauf" fragt einmal pro Minute GET /api/history ab
         (Lastprotokoll der letzten 24 Stunden) und zeichnet daraus Diagramme.
      6. Reiter Übersicht / Konfiguration / Spieler: zeigt jeweils eine Seite,
@@ -98,6 +101,8 @@
         rolesKey: '',          // Vergleichswert für den Bereich "Rollen"
         rolesBusy: false,      // läuft gerade ein POST /api/roles?
         roleNoticeSeq: null,
+        balanceBusy: false,    // läuft gerade ein POST /api/balance?
+        balanceNoticeSeq: null,
         historyTimer: 0,       // nächste Abfrage von /api/history
         historyAt: 0,          // Zeitpunkt (ms) der letzten Abfrage von /api/history
         charts: [],            // Diagramme im Bereich "Verlauf" (siehe buildChart)
@@ -261,6 +266,7 @@
         renderMaps(d);
         renderEvents(d);
         renderRoles(d);
+        renderBalance(d);
         renderBans(d);
     }
 
@@ -382,6 +388,7 @@
 
         const actions = el('div', 'actions');
         actions.appendChild(banButton('Trennen', 'btn', () => onKick(p.name)));
+        actions.appendChild(banButton('Kontostand', 'btn btn-ghost', () => prefillBalance(p.name, p.balance)));
         actions.appendChild(banButton('Sperren', 'btn btn-ghost', () => prefillAccountBan(p.name)));
         tr.appendChild(cell('Aktion', '', actions));
         return tr;
@@ -1458,6 +1465,107 @@
     }
 
     // =========================================================================
+    // Bereich "Kontostand"
+    // Wie bei den Rollen führt der Spiel-Thread den Auftrag im nächsten
+    // Schritt aus und meldet das Ergebnis (balanceNotice). Jede neue Meldung
+    // heißt: Das Protokoll kann eine neue Zeile haben, also neu laden.
+    // =========================================================================
+    const MAX_MANUAL_BALANCE = 1000000000;   // kMaxManualBalance in WebServer.cpp
+
+    function renderBalance(d) {
+        const seq = Number(d.balanceNoticeSeq) || 0;
+        const changed = state.balanceNoticeSeq !== seq;
+        noticeFromStatus(d, 'balance', 'balanceNoticeSeq', 'balance-msg');
+        if (changed) loadBalanceLog();
+    }
+
+    function balanceRow(e) {
+        const tr = document.createElement('tr');
+        const [date, time] = fmtDate(e.when);
+        const when = twoLineCell('', date, time);
+        when.dataset.label = 'Zeit';
+        tr.appendChild(when);
+        tr.appendChild(cell('Spieler', 'name', e.name));
+        tr.appendChild(cell('Vorher', 'num', nf0.format(e.before || 0)));
+        tr.appendChild(cell('Nachher', 'num', nf0.format(e.after || 0)));
+        const diff = (Number(e.after) || 0) - (Number(e.before) || 0);
+        const diffNode = el('span', diff > 0 ? 'text-good' : diff < 0 ? 'text-bad' : '', `${diff > 0 ? '+' : ''}${nf0.format(diff)}`);
+        tr.appendChild(cell('Änderung', 'num', diffNode));
+        tr.appendChild(cell('Karte', '', e.map || '–'));
+        const by = twoLineCell('', e.by || '–', e.address || '');
+        by.dataset.label = 'Geändert von';
+        tr.appendChild(by);
+        return tr;
+    }
+
+    function renderBalanceLog(data) {
+        const entries = Array.isArray(data.entries) ? data.entries : [];
+        const total = Number(data.total) || 0;
+        const rows = document.createDocumentFragment();
+        entries.forEach((e) => rows.appendChild(balanceRow(e)));
+        $('balance-body').replaceChildren(rows);
+        setText('balance-count', total === 1 ? '1 Änderung' : total > entries.length
+            ? `${nf0.format(total)} Änderungen, die neuesten ${entries.length} hier` : `${total} Änderungen`);
+        const empty = $('balance-empty');
+        empty.textContent = data.enabled ? 'Noch wurde kein Kontostand von Hand geändert.'
+            : 'Der Server läuft ohne Datenordner: Änderungen werden nicht protokolliert.';
+        empty.hidden = entries.length > 0;
+        $('balance-body').closest('table').hidden = entries.length === 0;
+    }
+
+    // Fehler zeigt schon die Statusabfrage an, hier bleibt einfach der alte Stand.
+    async function loadBalanceLog() {
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+        try {
+            const res = await fetch('/api/balance-log', {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { Accept: 'application/json' },
+                signal: ctrl.signal,
+            });
+            if (res.ok) renderBalanceLog(await res.json());
+        } catch (err) {
+            // Netzwerkfehler oder Zeitüberschreitung: beim nächsten Mal erneut
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    // "Kontostand" in der Spielerliste: Formular mit Name und aktuellem Wert ausfüllen
+    function prefillBalance(name, balance) {
+        $('balance-name').value = name;
+        $('balance-value').value = String(Number(balance) || 0);
+        $('balance-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        $('balance-value').focus({ preventScroll: true });
+    }
+
+    async function onBalanceSave(ev) {
+        ev.preventDefault();
+        if (state.balanceBusy) return;
+        const name = $('balance-name').value.trim();
+        const value = $('balance-value').value.trim();
+        if (!/^[A-Za-z0-9_-]{3,16}$/.test(name)) {
+            showNote('balance-msg', 'Bitte einen gültigen Spielernamen eingeben (3–16 Zeichen: Buchstaben, Ziffern, _ und -).', 'error');
+            $('balance-name').focus();
+            return;
+        }
+        if (!/^\d{1,10}$/.test(value) || Number(value) > MAX_MANUAL_BALANCE) {
+            showNote('balance-msg', `Der Kontostand muss eine ganze Zahl von 0 bis ${nf0.format(MAX_MANUAL_BALANCE)} sein.`, 'error');
+            $('balance-value').focus();
+            return;
+        }
+        state.balanceBusy = true;
+        $('btn-balance').disabled = true;
+        try {
+            await postForm('/api/balance', { name, balance: value }, 'balance-msg');
+        } finally {
+            state.balanceBusy = false;
+            $('btn-balance').disabled = false;
+        }
+    }
+
+    // =========================================================================
     // Bereich "Sperren"
     // Wie bei den Karten führt der Spiel-Thread jeden Auftrag im nächsten
     // Schritt aus und meldet das Ergebnis mit dem nächsten Status
@@ -1937,6 +2045,7 @@
         $('event-form').addEventListener('change', onEventCheck);
         $('btn-event-cancel').addEventListener('click', resetEventForm);
         $('role-form').addEventListener('submit', onRoleAdd);
+        $('balance-form').addEventListener('submit', onBalanceSave);
         $('ban-account-form').addEventListener('submit', onBanAccount);
         $('ban-ip-form').addEventListener('submit', onBanIp);
 

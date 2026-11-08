@@ -27,7 +27,9 @@
 //                   Events gab
 //   logs/           Lastprotokoll: je Tag eine Datei last-JJJJ-MM-TT.csv mit
 //                   einer Zeile pro Minute (GameServer::RecordLoad); Dateien
-//                   älter als LOAD_LOG_DAYS werden gelöscht
+//                   älter als LOAD_LOG_DAYS werden gelöscht; außerdem
+//                   kontostand.csv: jede Änderung eines Kontostands auf der
+//                   Verwaltungsseite (wird nie gelöscht)
 //
 // Format: einfacher Text, eine Angabe pro Zeile bzw. pro Konto, "name=wert".
 // So kann man die Dateien zur Not mit einem Texteditor ansehen (bei
@@ -278,6 +280,9 @@ public:
     // Schreibt über den Schreib-Thread, ohne fsync (eine verlorene Zeile ist egal).
     void AppendLoadLog(const std::string& day, const std::string& pruneBefore, const std::string& header,
                        const std::string& line);
+    // Hängt line an logs/kontostand.csv an (Bereich "Kontostand" der
+    // Verwaltungsseite); eine neue Datei beginnt mit header.
+    void AppendBalanceLog(const std::string& header, const std::string& line);
 
     // Wartet, bis der Schreib-Thread alle Aufträge erledigt hat (beim Start
     // und beim Beenden). false, wenn seit dem letzten Flush etwas nicht

@@ -52,6 +52,7 @@ constexpr const char* SHIPS_FILE = "ships.txt";
 constexpr const char* BANS_FILE = "bans.txt";
 constexpr const char* EVENTS_FILE = "events.txt";
 constexpr const char* LOGS_DIR = "logs";
+constexpr const char* BALANCE_LOG_FILE = "kontostand.csv";   // in LOGS_DIR, WebServer.cpp liest sie (kBalanceLogName)
 constexpr const char* MAPS_DIR = "karten";
 constexpr const char* MAP_EXT = ".karte";
 
@@ -1190,6 +1191,21 @@ void Accounts::AppendLoadLog(const std::string& day, const std::string& pruneBef
         job.append = true;
         job.header = header;
         job.what = "Lastprotokoll";
+    }
+    job.content += line;
+    if (!writer_.joinable()) writer_ = std::thread(&Accounts::WriterLoop, this);
+    writeCv_.notify_one();
+}
+
+void Accounts::AppendBalanceLog(const std::string& header, const std::string& line) {
+    if (dir_.empty()) return;
+    std::lock_guard<std::mutex> lock(writeMutex_);
+    WriteJob& job = pendingWrites_[(fs::path(LoadLogDir()) / BALANCE_LOG_FILE).string()];
+    if (!job.append) {
+        job = WriteJob{};
+        job.append = true;
+        job.header = header;
+        job.what = "Kontostand-Protokoll";
     }
     job.content += line;
     if (!writer_.joinable()) writer_ = std::thread(&Accounts::WriterLoop, this);

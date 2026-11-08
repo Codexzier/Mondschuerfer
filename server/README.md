@@ -159,6 +159,12 @@ auch im Spiel einrichten (nach der Anmeldung in der Rollenwahl → *Event einric
 denselben Regeln wie hier; als „eingerichtet von“ steht dann sein Kontoname. Gespeichert in
 `accounts.txt` (`roles=event`).
 
+Im Bereich **„Kontostand“** (für Tests) lässt sich der Kontostand eines Kontos von Hand setzen
+(Spielername und neuer Wert, oder in der Spielerliste „Kontostand“). Spielt der Spieler gerade, gilt
+der Wert sofort auf seiner Karte (Mond oder All), sonst beim nächsten Anmelden. Jede Änderung steht mit
+Zeit, altem und neuem Wert, Karte, Benutzer und Adresse in der Tabelle „Manuelle Änderungen“ und in
+`/data/logs/kontostand.csv` (wird nie gelöscht).
+
 ### Umgebungsvariablen
 
 | Variable | Standard | Bedeutung |
@@ -205,7 +211,7 @@ Bereich begrenzt.
 
 Die Seite aktualisiert sich alle 2 Sekunden selbst. Sie hat drei Reiter: **Übersicht** (Auslastung,
 Verlauf), **Konfiguration** (Spielparameter, Schiffe, Karten, Events) und **Spieler** (eingeloggte
-Spieler, Bestenliste, Rollen, Sperren). Der gewählte Reiter steht in der Adresse (`#uebersicht`,
+Spieler, Kontostand, Bestenliste, Rollen, Sperren). Der gewählte Reiter steht in der Adresse (`#uebersicht`,
 `#konfiguration`, `#spieler`) und bleibt beim Neuladen erhalten. Die Seite zeigt:
 
 - **Auslastung:** Rechenzeit pro Simulationsschritt (Durchschnitt/Maximum; das Budget sind

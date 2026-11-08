@@ -48,9 +48,9 @@
 //      b) Basic-Auth korrekt?    -> weiter zu 3. (POST ohne Content-Length -> 411)
 //      c) sonst                  -> 401 (Browser zeigt Anmeldedialog),
 //                                   falsche Daten zählen als Fehlversuch.
-//   3. Routing auf genau dreizehn feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten,
-//      Events, Rollen, Sperren, Verlauf) und die Tagesdateien des Lastprotokolls
-//      (/api/logs/last-JJJJ-MM-TT.csv).
+//   3. Routing auf genau fünfzehn feste Pfade (drei Dateien, Status, Einstellungen, Schiffe, Karten,
+//      Events, Rollen, Kontostand, Protokoll der Kontostände, Sperren, Verlauf) und die
+//      Tagesdateien des Lastprotokolls (/api/logs/last-JJJJ-MM-TT.csv).
 //      Alles andere ergibt 404. Es gibt KEIN allgemeines Ausliefern eines
 //      Ordners, daher kann niemand mit "/../" andere Dateien lesen.
 //   4. Jede Antwort bekommt Sicherheits-Header (set_default_headers).
@@ -502,6 +502,9 @@ std::string BuildStatusJson(const ServerStatus& s) {
     w.Key("roleNotice").String(s.roleNotice);
     w.Key("roleNoticeSeq").Int(s.roleNoticeSeq);
     w.Key("roleNoticeError").Bool(s.roleNoticeError);
+    w.Key("balanceNotice").String(s.balanceNotice);
+    w.Key("balanceNoticeSeq").Int(s.balanceNoticeSeq);
+    w.Key("balanceNoticeError").Bool(s.balanceNoticeError);
 
     w.Key("bans").BeginArray();
     for (const BanStatus& b : s.bans) {
@@ -1331,6 +1334,56 @@ void ReadLoadLog(const std::string& path, int64_t from, std::vector<LoadRow>& ro
 // Wie stark eine Spitze war: Vielfaches der Schwelle (Schrittzeit oder CPU)
 double PeakSeverity(const LoadRow& r) { return std::max(r.v[4] / kPeakTickMs, r.v[6] / kPeakCpuPercent); }
 
+// ---------------------------------------------------------------------------
+// Bereich "Kontostand" (POST /api/balance, GET /api/balance-log)
+//
+// Der Spiel-Thread setzt den Kontostand und hängt je Änderung eine Zeile an
+// logs/kontostand.csv (GameServer::ApplyBalanceCommands). Hier wird die Datei
+// nur gelesen, wie beim Lastprotokoll.
+// ---------------------------------------------------------------------------
+constexpr const char* kBalanceLogName = "kontostand.csv";   // wie BALANCE_LOG_FILE in Accounts.cpp
+constexpr size_t kBalanceLogColumns = 8;                    // wie BALANCE_LOG_HEADER in GameServer.cpp
+constexpr size_t kBalanceLogMax = 500;                      // so viele Einträge zeigt die Seite (neueste)
+constexpr long long kMaxManualBalance = 1000000000;         // höchster Wert, der sich setzen lässt
+
+// Eine Zeile: Unix-Zeit, Spieler, vorher, nachher, Karte, geändert von, Adresse
+struct BalanceRow {
+    int64_t unix = 0;
+    std::string name;
+    long long before = 0, after = 0;
+    std::string map, by, address;
+};
+
+// Alle vollständigen Zeilen (älteste zuerst); Kopfzeile und kaputte Zeilen fallen heraus.
+void ReadBalanceLog(const std::string& path, std::vector<BalanceRow>& rows) {
+    std::string text;
+    if (!ReadWholeFile(path, text)) return;
+    std::vector<std::string> f;
+    auto number = [](const std::string& t, auto& out) {
+        const auto r = std::from_chars(t.data(), t.data() + t.size(), out);
+        return !t.empty() && r.ec == std::errc() && r.ptr == t.data() + t.size();
+    };
+    for (size_t start = 0, nl; (nl = text.find('\n', start)) != std::string::npos; start = nl + 1) {
+        std::string line = text.substr(start, nl - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        f.clear();
+        for (size_t s = 0;;) {
+            const size_t sep = line.find(';', s);
+            f.push_back(line.substr(s, sep == std::string::npos ? std::string::npos : sep - s));
+            if (sep == std::string::npos) break;
+            s = sep + 1;
+        }
+        if (f.size() != kBalanceLogColumns) continue;
+        BalanceRow row;
+        if (!number(f[1], row.unix) || !number(f[3], row.before) || !number(f[4], row.after)) continue;
+        row.name = f[2];
+        row.map = f[5];
+        row.by = f[6];
+        row.address = f[7];
+        rows.push_back(std::move(row));
+    }
+}
+
 
 // ===========================================================================
 // WebContext – alles, was die Handler (in den Arbeits-Threads) brauchen.
@@ -1842,6 +1895,77 @@ public:
         res.set_content(w.Result(), kJsonType);
     }
 
+    // --- POST /api/balance -------------------------------------------------------------
+    // Bereich "Kontostand": name = Spieler, balance = neuer Kontostand. Wer die
+    // Änderung geschickt hat (Benutzer und Adresse), kommt mit ins Protokoll.
+    // Ob es das Konto gibt, meldet der Spiel-Thread als balanceNotice im Status.
+    void HandleBalance(const httplib::Request& req, httplib::Response& res) {
+        if (!CheckSameOriginPost(req, res)) return;
+        if (LowerAscii(req.get_header_value("Content-Type")).rfind("application/x-www-form-urlencoded", 0) != 0) {
+            SendJsonError(res, 400, "Formulardaten (application/x-www-form-urlencoded) erwartet.");
+            return;
+        }
+        std::map<std::string, std::string> fields;
+        std::string error;
+        if (!ParseFormBody(req.body, fields, error)) {
+            SendJsonError(res, 400, error);
+            return;
+        }
+        auto text = [&](const char* key) { return TrimSpaces(fields.count(key) ? fields[key] : std::string()); };
+        BalanceCommand cmd;
+        cmd.name = text("name");
+        const std::string value = text("balance");
+        if (!IsPlayerName(cmd.name)) {
+            SendJsonError(res, 400, "Ungültiger Spielername (3–16 Zeichen: Buchstaben, Ziffern, _ und -).");
+            return;
+        }
+        const auto r = std::from_chars(value.data(), value.data() + value.size(), cmd.balance);
+        if (value.empty() || r.ec != std::errc() || r.ptr != value.data() + value.size() || cmd.balance < 0 ||
+            cmd.balance > kMaxManualBalance) {
+            SendJsonError(res, 400, "Der Kontostand muss eine ganze Zahl von 0 bis 1.000.000.000 sein.");
+            return;
+        }
+        cmd.by = config_.user;
+        cmd.address = ClientAddress(req);
+        bool queued = false;
+        if (!WithShared(res, [&](SharedState& s) { queued = s.RequestBalanceCommand(cmd); })) return;
+        if (!queued) {
+            SendJsonError(res, 503, "Der Server ist gerade beschäftigt. Bitte gleich noch einmal versuchen.");
+            return;
+        }
+        JsonWriter w;
+        w.BeginObject().Key("ok").Bool(true).Key("message").String("Wird übernommen …").EndObject();
+        res.status = 200;
+        res.set_content(w.Result(), kJsonType);
+    }
+
+    // --- GET /api/balance-log -----------------------------------------------------------
+    // Protokoll der Kontostandsänderungen, neueste zuerst (höchstens kBalanceLogMax).
+    void HandleBalanceLog(httplib::Response& res) const {
+        std::vector<BalanceRow> rows;
+        if (!config_.logDir.empty()) ReadBalanceLog(JoinPath(config_.logDir, kBalanceLogName), rows);
+        JsonWriter w;
+        w.BeginObject();
+        w.Key("enabled").Bool(!config_.logDir.empty());
+        w.Key("total").Int(static_cast<long long>(rows.size()));
+        w.Key("entries").BeginArray();
+        size_t n = 0;
+        for (auto it = rows.rbegin(); it != rows.rend() && n < kBalanceLogMax; ++it, ++n) {
+            w.BeginObject();
+            w.Key("when").Int(it->unix);
+            w.Key("name").String(it->name);
+            w.Key("before").Int(it->before);
+            w.Key("after").Int(it->after);
+            w.Key("map").String(it->map);
+            w.Key("by").String(it->by);
+            w.Key("address").String(it->address);
+            w.EndObject();
+        }
+        w.EndArray();
+        w.EndObject();
+        res.set_content(w.Result(), kJsonType);
+    }
+
     // --- POST /api/settings/reset -----------------------------------------------
     // Zurück auf die Werte aus docker-compose.yml (Umgebungsvariablen). Welche
     // das sind, weiß nur der Spiel-Thread; er veröffentlicht sie in status.defaults.
@@ -2134,6 +2258,8 @@ void ConfigureServer(httplib::Server& svr, const std::shared_ptr<WebContext>& ct
     svr.Post(R"(/api/bans)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleBans(req, res); });
     svr.Post(R"(/api/events)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleEvents(req, res); });
     svr.Post(R"(/api/roles)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleRoles(req, res); });
+    svr.Post(R"(/api/balance)", [ctx](const httplib::Request& req, httplib::Response& res) { ctx->HandleBalance(req, res); });
+    svr.Get(R"(/api/balance-log)", [ctx](const httplib::Request&, httplib::Response& res) { ctx->HandleBalanceLog(res); });
     svr.Get(R"(/api/history)", [ctx](const httplib::Request&, httplib::Response& res) { ctx->HandleHistory(res); });
     // Tagesdateien des Lastprotokolls: Der Name steht fest im Muster (nur Ziffern).
     svr.Get(R"(/api/logs/(last-\d{4}-\d{2}-\d{2}\.csv))", [ctx](const httplib::Request& req, httplib::Response& res) {
