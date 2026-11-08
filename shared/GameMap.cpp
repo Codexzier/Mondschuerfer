@@ -31,6 +31,9 @@ const char* SegmentGroupName(SegmentGroup g) {
         case SegmentGroup::Markers: return "Markierungen";
         case SegmentGroup::Farm: return "Hof & Mühle";
         case SegmentGroup::Crypts: return "Gruft & Licht";
+        case SegmentGroup::Decks: return "Decks";
+        case SegmentGroup::Space: return "Weltraum";
+        case SegmentGroup::Equipment: return "Ausstattung";
         default: return "";
     }
 }
@@ -44,6 +47,7 @@ const char* MapThemeName(MapTheme t) {
         case MapTheme::Village: return "Dorf";
         case MapTheme::Forest: return "Wald";
         case MapTheme::Graveyard: return "Friedhof";
+        case MapTheme::Space: return "Weltraum";
         default: return "";
     }
 }
@@ -262,6 +266,47 @@ const std::vector<MapSegment>& MapSegments() {
         {"marker_item_pumpkin", "Fundstück: Kürbis", G::Markers, 1.0f},
         {"marker_item_shovel", "Fundstück: Schaufel", G::Markers, 1.0f},
         {"marker_item_bones", "Fundstück: Knochen", G::Markers, 1.0f},
+        // Weltraumkarte (Freitagsplan (3) und (4)): Decks aus dem Space
+        // Station Kit (1 x 1 m, Oberkante auf der Ebene), die Raumstationen
+        // und Trägerschiffe (Modelle des Nutzers, schweben mit ihrer Mitte
+        // auf der Ebene) und Ausstattung für die Decks
+        {"space-station/floor", "Deck", G::Decks, 1.0f},
+        {"space-station/floor-detail", "Deck mit Luke", G::Decks, 1.0f},
+        {"space-station/floor-panel", "Deckplatte", G::Decks, 1.0f},
+        {"space-station/floor-panel-straight", "Deckplatte gerade", G::Decks, 1.0f},
+        {"space-station/floor-panel-corner", "Deckplatte Ecke", G::Decks, 1.0f},
+        {"space-station/floor-panel-end", "Deckplatte Ende", G::Decks, 1.0f},
+        {"space-station/floor-corner", "Deck Ecke", G::Decks, 1.0f},
+        {"space-station/balcony-floor", "Steg", G::Decks, 1.0f},
+        {"space-station/balcony-floor-corner", "Steg Ecke", G::Decks, 1.0f},
+        {"station/station-a", "Raumstation A", G::Space, 20.0f},
+        {"station/station-b", "Raumstation B", G::Space, 20.0f},
+        {"carrier/carrier-a", "Trägerschiff A", G::Space, 20.0f},
+        {"carrier/carrier-b", "Trägerschiff B", G::Space, 20.0f},
+        {"space-station/rail", "Geländer", G::Equipment, 1.0f},
+        {"space-station/rail-narrow", "Geländer kurz", G::Equipment, 1.0f},
+        {"space-station/balcony-rail", "Steggeländer", G::Equipment, 1.0f},
+        {"space-station/balcony-rail-corner", "Steggeländer Ecke", G::Equipment, 1.0f},
+        {"space-station/wall", "Wand", G::Equipment, 1.0f},
+        {"space-station/wall-window", "Wand mit Fenster", G::Equipment, 1.0f},
+        {"space-station/wall-door", "Wand mit Tür", G::Equipment, 1.0f},
+        {"space-station/wall-corner", "Wandecke", G::Equipment, 1.0f},
+        {"space-station/wall-pillar", "Pfeiler", G::Equipment, 1.0f},
+        {"space-station/structure", "Gerüst", G::Equipment, 1.0f},
+        {"space-station/structure-barrier", "Absperrung", G::Equipment, 1.0f},
+        {"space-station/container", "Container", G::Equipment, 1.0f},
+        {"space-station/container-tall", "Hoher Container", G::Equipment, 1.0f},
+        {"space-station/container-wide", "Breiter Container", G::Equipment, 1.0f},
+        {"space-station/container-flat", "Flacher Container", G::Equipment, 1.0f},
+        {"space-station/computer", "Konsole", G::Equipment, 1.0f},
+        {"space-station/computer-system", "Rechner", G::Equipment, 1.0f},
+        {"space-station/computer-screen", "Bildschirm", G::Equipment, 1.0f},
+        {"space-station/computer-wide", "Breite Konsole", G::Equipment, 1.0f},
+        {"space-station/display-wall", "Wandanzeige", G::Equipment, 1.0f},
+        {"space-station/table", "Tisch", G::Equipment, 1.0f},
+        {"space-station/skip", "Mulde", G::Equipment, 1.0f},
+        {"space-station/pipe", "Rohr", G::Equipment, 1.0f},
+        {"space-station/pipe-ring", "Rohr mit Ring", G::Equipment, 1.0f},
     };
     return list;
 }
@@ -310,6 +355,19 @@ bool MapHasItems(const GameMap& m) {
     return false;
 }
 
+bool IsDeck(const std::string& model) {
+    const MapSegment* s = FindSegment(model);
+    return s && s->group == SegmentGroup::Decks;
+}
+
+bool IsSpaceStation(const std::string& model) { return model == "station/station-a" || model == "station/station-b"; }
+
+bool MapHasSpaceStation(const GameMap& m) {
+    for (const MapPiece& q : m.pieces)
+        if (IsSpaceStation(q.model)) return true;
+    return false;
+}
+
 const MapSegment* FindSegment(const std::string& model) {
     for (const auto& s : MapSegments())
         if (model == s.model) return &s;
@@ -346,7 +404,7 @@ namespace {
 const char* kMagic = "MONDSCHUERFER_KARTE";
 const int kVersion = 1;
 // Wörter der Kopfzeilen, in der Reihenfolge der enums
-const char* const kThemeKeys[] = {"dorf", "wald", "friedhof"};
+const char* const kThemeKeys[] = {"dorf", "wald", "friedhof", "weltraum"};
 const char* const kGroundKeys[] = {"gras", "erde", "stein", "sand"};
 const char* const kSkyKeys[] = {"tag", "abend", "nacht"};
 
@@ -472,6 +530,12 @@ std::string MapFileStem(const std::string& name) {
 
 float MapPieceY(const MapPiece& p) {
     BoundingBox b = SegmentBounds(p.model);
+    // Weltraumkarte: Decks mit der Oberkante auf der Ebene (dort stehen die
+    // Figuren), Raumstationen und Trägerschiffe mit ihrer Mitte
+    if (const MapSegment* seg = FindSegment(p.model); seg && seg->group == SegmentGroup::Decks)
+        return p.lift - b.max.y * p.scale;
+    else if (seg && seg->group == SegmentGroup::Space)
+        return p.lift - (b.min.y + b.max.y) * 0.5f * p.scale;
     float y = p.lift + std::max(0.0f, -b.min.y * p.scale);
     if (b.max.y - b.min.y < 0.01f) y += 0.03f;
     return y;

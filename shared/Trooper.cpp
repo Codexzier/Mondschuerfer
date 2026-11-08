@@ -5,7 +5,9 @@
 // den Toren, Schießen, Nachladen, Proben an gelben Kristallen, Treffer und
 // Fallen. Dazu werden hier die KI-Figuren erzeugt: NPC-Kameraden bei der
 // Ankunft und Gruppen von Bodenpiraten bei gelben Kristallen (ihr Verhalten
-// steht in Ai.cpp).
+// steht in Ai.cpp). Weltraumkarte: Decks statt Boden, Wellen von
+// Bodenpiraten gegen die Raumstation (UpdateWaves), Rückzugspunkt am
+// Stargate auf dem Trägerschiff.
 // Datentypen in World.hpp (Trooper, TrooperInput, TrooperBlock, Stargate,
 // SgRecord, Sample).
 //
@@ -304,6 +306,14 @@ bool World::StartSgMission(PlayerState& ps, int mates, int gate) {
         SoundAt(Sfx::Discover, exit, 0.8f, 0.0f, ps.id);
         return true;
     }
+    // Weltraumkarte: Die erste Welle kommt nach SPACE_WAVE_FIRST (UpdateWaves)
+    if (space) {
+        wave = wavesCleared = waveLeft = 0;
+        waveT = cfg::SPACE_WAVE_FIRST;
+        SoundAt(Sfx::Discover, exit, 0.8f, 0.0f, ps.id);
+        Notify(ps, Fmt("Verteidigt die Raumstation: %d Angriffswellen", cfg::SPACE_WAVES), Color{150, 210, 255, 255});
+        return true;
+    }
     // Bodenpiraten (KI, Ai.cpp), weit genug vom Tor; Anzahl je Team: Einstellung des Servers
     // (Zombies: ZOMBIE_GROUP_FACTOR mal so viele Gruppen)
     for (int i = 0; i < settings.groundPirates * (zombies ? cfg::ZOMBIE_GROUP_FACTOR : 1); ++i) SpawnPirateGroup(t.pos);
@@ -312,7 +322,9 @@ bool World::StartSgMission(PlayerState& ps, int mates, int gate) {
     return true;
 }
 
-// Punkte: Proben nur bei der Rückkehr, Bodenpiraten immer. Das Scoreboard
+// Punkte: Proben nur bei der Rückkehr, Bodenpiraten immer, auf der
+// Weltraumkarte jede abgewehrte Welle (auch bei einem gescheiterten
+// Einsatz, wie die Bodenpiraten). Das Scoreboard
 // behält höchstens SG_LOG_MAX Einsätze; ist es voll, fällt der schwächste
 // heraus (nie der gerade beendete).
 void World::EndSgMission(PlayerState& ps, bool success, bool record) {
@@ -325,6 +337,7 @@ void World::EndSgMission(PlayerState& ps, bool success, bool record) {
         r.samples = success ? t->samples : 0;
         r.pirates = ps.sgPirates;
         r.points = r.samples * cfg::SG_POINTS_SAMPLE + r.pirates * cfg::SG_POINTS_PIRATE + (success ? cfg::SG_POINTS_RETURN : 0);
+        if (space) r.points += wavesCleared * cfg::SG_POINTS_WAVE;
         r.seconds = ps.sgTime;
         ps.sgTotal.points += r.points;
         ps.sgTotal.samples += r.samples;
@@ -395,6 +408,41 @@ bool World::HasItems() const {
     return false;
 }
 
+bool World::SgGoalReached(const PlayerState& ps) const {
+    return space ? wavesCleared >= cfg::SPACE_WAVES : TeamSamples(ps) >= SampleGoal();
+}
+
+// Decks: Rechteck um c mit den Seiten u (hu) und senkrecht dazu (hv). Wer
+// höher steht als TROOPER_STEP über dem Deck, fällt darauf; ein Deck weiter
+// oben ist für ihn eine Decke (dort stößt man nicht an, es ist nur kein Boden).
+float World::DeckTop(Vector3 p) const {
+    float top = -1e9f;
+    for (const DeckRect& r : decks) {
+        if (r.top > p.y + cfg::TROOPER_STEP || r.top <= top) continue;
+        const float dx = p.x - r.c.x, dz = p.z - r.c.y;
+        if (fabsf(dx * r.u.x + dz * r.u.y) <= r.hu && fabsf(dz * r.u.x - dx * r.u.y) <= r.hv) top = r.top;
+    }
+    return top;
+}
+
+// Ein Deck ist 0,3 m dick (so dick sind die Platten des Space Station Kits)
+bool World::InDeck(Vector3 p) const {
+    constexpr float kThick = 0.3f;
+    for (const DeckRect& r : decks) {
+        if (p.y > r.top || p.y < r.top - kThick) continue;
+        const float dx = p.x - r.c.x, dz = p.z - r.c.y;
+        if (fabsf(dx * r.u.x + dz * r.u.y) <= r.hu && fabsf(dz * r.u.x - dx * r.u.y) <= r.hv) return true;
+    }
+    return false;
+}
+
+bool World::AtRestPoint(Vector3 p) const {
+    if (!space) return false;
+    for (const Stargate& g : stargates)
+        if (Dist2D(g.pos, p) < cfg::SPACE_REST_RANGE) return true;
+    return false;
+}
+
 PlayerState* World::PlayerOfTrooper(const Trooper* t) {
     if (!t) return nullptr;
     if (t->playerId >= 0) return FindPlayer(t->playerId);
@@ -403,7 +451,8 @@ PlayerState* World::PlayerOfTrooper(const Trooper* t) {
 }
 
 // Je Spieler im Einsatz: Dauer, nachkommende Kameraden und Mitspieler und
-// die Rückkehr. Hat das Team genug Proben (TeamSamples) und ist jemand von
+// die Rückkehr. Hat das Team genug Proben (TeamSamples; Weltraumkarte: alle
+// Wellen abgewehrt, SgGoalReached) und ist jemand von
 // ihm nah an einem ruhenden Tor, wird es angewählt; ist es offen, führt die
 // oberste Stufe hinein. Danach die Zustände aller Tore.
 // Team: im Einzelspieler der Spieler mit seinen Kameraden, im Mehrspieler
@@ -449,7 +498,7 @@ void World::UpdateStargates(float dt) {
             ps.sgArriveT = cfg::GATE_MATE_INTERVAL;
             t = FindTrooper(ps.trooperId);
         }
-        if (t->down || TeamSamples(ps) < SampleGoal()) continue;
+        if (t->down || !SgGoalReached(ps)) continue;
         bool busy = false;
         for (const Stargate& g : stargates)
             if (g.toCommand && g.state != GateState::Idle && memberOf(g, ps)) busy = true;
@@ -655,6 +704,7 @@ bool World::FindCover(const Trooper& t, Vector3 threat, int mode, Vector3& out) 
             if (l < 1e-3f) continue;
             const Vector2 c = Vector2Add(pts[i], Vector2Scale(away, (o.r + cfg::TROOPER_RADIUS + 0.12f) / l));
             if (fabsf(c.x) > lim || fabsf(c.y) > lim) continue;
+            if (space && !OverDeck({c.x, t.pos.y, c.y})) continue;   // Weltraumkarte: dort ist kein Deck
             const float hop = Vector2Distance(p, c), dThreat = Vector2Distance(c, th);
             if (hop > reach) continue;
             float score = hop;
@@ -725,7 +775,10 @@ int World::SampleTarget(Vector3 p, float range) const {
 // TROOPER_STEP über den Füßen) werden bestiegen: Steht die Mitte der Figur
 // darüber, ist ihre Oberkante der Boden. Läuft die Figur von so einer Kante
 // herunter, setzt sie gleich unten auf (statt langsam zu fallen).
+// Weltraumkarte: Boden ist nur ein Deck (DeckTop), daneben fällt die Figur
+// ins All. KI-Figuren treten nicht über die Kante (sie bleiben stehen).
 void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
+    const Vector3 before = t.pos;
     t.yaw = in.yaw;
     t.pitch = std::clamp(in.pitch, -cfg::TROOPER_PITCH_MAX, cfg::TROOPER_PITCH_MAX);
     const Vector3 fwd = ForwardFromYaw(t.yaw);
@@ -752,7 +805,7 @@ void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
     t.pos.x = std::clamp(t.pos.x, -lim, lim);
     t.pos.z = std::clamp(t.pos.z, -lim, lim);
 
-    float ground = 0.0f;
+    float ground = space ? DeckTop(t.pos) : 0.0f;
     for (const TrooperBlock& o : trooperBlocks) {
         const Vector2 p{t.pos.x, t.pos.z};
         const Vector2 c = ClosestOnSeg(p, o.a, o.b);
@@ -778,6 +831,13 @@ void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
             t.vel.z -= vn * n.y;
         }
     }
+    if (space && t.playerId < 0 && ground < -1e8f && OverDeck(before)) {
+        t.pos.x = before.x;
+        t.pos.z = before.z;
+        t.vel.x = t.vel.z = 0.0f;
+        ground = DeckTop(t.pos);
+    }
+    if (space && t.pos.y < -200.0f) t.pos.y = -200.0f;   // weit unten im All: nicht endlos weiter
     if (t.pos.y <= ground || (wasOnGround && t.vel.y <= 0.0f && t.pos.y - ground <= cfg::TROOPER_STEP)) {
         t.pos.y = ground;
         t.vel.y = 0.0f;
@@ -804,9 +864,13 @@ void World::UpdateTrooperPhysics(Trooper& t, float dt, const TrooperInput& in) {
 // MATE_RESPAWN neben ihrem Spieler; Bodenpiraten verschwinden nach 8 s.
 // Steht beim Spieler dann kein Kamerad mehr (das ganze Team ist gefallen),
 // ist der Einsatz gescheitert: zurück ins Command Center ohne Punkte für Proben.
+// Weltraumkarte: Wer SPACE_FALL unter das Deck stürzt, ist gefallen; am
+// Stargate auf dem Trägerschiff (AtRestPoint) lädt der Schild sofort und
+// schnell, die Ersatzmunition wird wieder voll.
 void World::UpdateTroopers(float dt) {
     UpdateStargates(dt);
-    UpdatePirateGroups(dt);
+    if (space) UpdateWaves(dt);
+    else UpdatePirateGroups(dt);
     for (auto& t : troopers) {
         if (t.playerId < 0 && !t.down) UpdateTrooperAi(t, dt);
         const PlayerState* ps = t.playerId >= 0 ? FindPlayer(t.playerId) : nullptr;
@@ -834,9 +898,21 @@ void World::UpdateTroopers(float dt) {
             t.downT += dt;
             continue;
         }
+        if (space && t.pos.y < -cfg::SPACE_FALL) {
+            Bullet fall;   // wie ein Treffer, der den ganzen Schild nimmt (ohne Schützen)
+            fall.damage = t.hp + 1.0f;
+            fall.faction = Faction::Neutral;
+            fall.ground = true;
+            DamageTrooper(t, fall);
+            continue;
+        }
         t.calmT += dt;
         if (t.calmT >= cfg::TROOPER_REGEN_DELAY) t.hp = std::min(t.maxHp, t.hp + cfg::TROOPER_REGEN * dt);
         if (t.playerId < 0) t.ammo = cfg::TROOPER_AMMO;
+        if (AtRestPoint(t.pos)) {
+            t.hp = std::min(t.maxHp, t.hp + cfg::SPACE_REST_REGEN * dt);
+            t.ammo = cfg::TROOPER_AMMO;
+        }
         const int target = in.sample ? SampleTarget(t.pos, cfg::SAMPLE_RANGE) : -1;
         if (target != t.sampleId) {
             SoundAt(target >= 0 ? Sfx::MineStart : Sfx::MineAbort, t.pos, 1.0f, 0.0f, t.playerId);
@@ -925,7 +1001,10 @@ void World::UpdateTroopers(float dt) {
             if (ps) Notify(*ps, "Zurück am Ankunftstor", Color{150, 210, 255, 255});
         } else if (t.playerId < 0 && t.kind == TrooperKind::Mate && t.downT >= cfg::MATE_RESPAWN) {
             const Trooper* leader = FindTrooper(t.leaderId);
-            if (leader && !leader->down) revive(t, MateSlot(*leader, t.slot));
+            if (leader && !leader->down) {
+                const Vector3 slot = MateSlot(*leader, t.slot);
+                revive(t, space && !OverDeck(slot) ? leader->pos : slot);   // Weltraumkarte: nicht neben das Deck
+            }
         }
     }
     troopers.erase(std::remove_if(troopers.begin(), troopers.end(),
@@ -1039,7 +1118,10 @@ void World::SpawnMate(const Trooper& leader, int slot, Vector3 pos, float yaw) {
 // Einsatzkarte: an einem freien Gegner-Startplatz (enemySpots), sonst wie
 // oben, nur mit kürzeren Abständen. Mit dem Thema Friedhof (World::zombies)
 // ist die Gruppe aus ZOMBIE_MIN bis _MAX Zombies, die zuerst schlafen.
-bool World::SpawnPirateGroup(Vector3 team) {
+// Welle (Weltraumkarte, wave): an einem zufälligen Gegner-Startplatz, egal
+// wie nah das Team ist; die Figuren stehen auf dem Deck und greifen ohne
+// Ziel die Raumstation an (Trooper::raider).
+bool World::SpawnPirateGroup(Vector3 team, bool wave) {
     const float spacing = instance ? 6.0f : 20.0f;   // Abstand zur nächsten Gruppe
     auto taken = [&](Vector3 p) {
         for (const Trooper& o : troopers)
@@ -1051,7 +1133,8 @@ bool World::SpawnPirateGroup(Vector3 team) {
     const float minDist = instance ? std::min(cfg::GROUND_PIRATE_SPAWN_DIST, fieldHalf * 0.5f) : cfg::GROUND_PIRATE_SPAWN_DIST;
     std::vector<Vector3> spots;
     for (const Vector3& e : enemySpots)
-        if (Dist2D(e, team) >= minDist && !taken(e)) spots.push_back(e);
+        if (wave || (Dist2D(e, team) >= minDist && !taken(e))) spots.push_back(e);
+    if (spots.empty() && wave) return false;
     if (spots.empty())
         for (const Deposit& d : deposits)
             if (d.sample == Sample::Yellow && d.amount > 0 && Dist2D(d.pos, team) >= minDist && !taken(d.pos))
@@ -1091,6 +1174,12 @@ bool World::SpawnPirateGroup(Vector3 team) {
         }
         p.home = c;
         p.pos = {c.x + cosf(a) * 2.5f, 0.0f, c.z + sinf(a) * 2.5f};
+        if (space) {
+            // auf dem Deck: näher an den Platz heran, notfalls genau darauf
+            if (!OverDeck(p.pos)) p.pos = {c.x + cosf(a) * 1.0f, 0.0f, c.z + sinf(a) * 1.0f};
+            if (!OverDeck(p.pos)) p.pos = c;
+            p.raider = wave;
+        }
         p.goal = p.pos;
         p.waitT = Rand(0.0f, 3.0f);
         p.yaw = Rand(-PI, PI);
@@ -1130,4 +1219,68 @@ void World::UpdatePirateGroups(float dt) {
         SpawnPirateGroup(mine[k]->pos);
         pirateGroupT = cfg::GROUND_PIRATE_RESPAWN;
     }
+}
+
+// ===========================================================================
+// Weltraumkarte: Gegnerwellen und Raumstation
+// ===========================================================================
+// Statt fester Gruppen kommen SPACE_WAVES Wellen, die erste SPACE_WAVE_FIRST
+// nach der Ankunft (StartSgMission). Welle k bringt groundPirates + k - 1
+// Gruppen (Einstellung des Servers, mindestens eine) an zufälligen
+// Gegner-Startplätzen. Die nächste kommt SPACE_WAVE_PAUSE Sekunden, nachdem
+// alle Angreifer der vorigen gefallen sind. Sind alle abgewehrt, kann das
+// Team zurück (SgGoalReached). Fällt der Zustand der Station auf 0, ist der
+// Einsatz für das ganze Team gescheitert.
+void World::UpdateWaves(float dt) {
+    stationAlarmT -= dt;
+    const Trooper* first = nullptr;   // eine Spielerfigur (Bezugspunkt für SpawnPirateGroup)
+    for (const Trooper& t : troopers)
+        if (t.playerId >= 0) {
+            first = &t;
+            break;
+        }
+    if (!first) return;
+    const Vector3 team = first->pos;
+    auto tell = [&](const std::string& text, Color c) {
+        for (PlayerState& o : players)
+            if (o.trooperId >= 0) Notify(o, text, c);
+    };
+    if (stationMaxHp > 0.0f && stationHp <= 0.0f) {
+        tell("Die Raumstation ist verloren. Einsatz gescheitert.", Color{255, 110, 90, 255});
+        for (PlayerState& o : players)
+            if (o.trooperId >= 0) EndSgMission(o, false);
+        return;
+    }
+    int left = 0;
+    for (const Trooper& t : troopers)
+        if (t.playerId < 0 && t.kind == TrooperKind::Pirate && !t.down) ++left;
+    waveLeft = left;
+    if (left > 0) return;
+    if (wave > wavesCleared) {
+        wavesCleared = wave;
+        waveT = cfg::SPACE_WAVE_PAUSE;
+        if (wavesCleared >= cfg::SPACE_WAVES)
+            tell("Alle Wellen abgewehrt! Zurück zum Stargate auf dem Trägerschiff", Color{150, 255, 170, 255});
+        else
+            tell(Fmt("Welle %d abgewehrt. Die nächste kommt in %.0f s", wave, cfg::SPACE_WAVE_PAUSE), Color{150, 255, 170, 255});
+    }
+    if (wave >= cfg::SPACE_WAVES) return;
+    waveT -= dt;
+    if (waveT > 0.0f) return;
+    ++wave;
+    const int groups = std::max(1, settings.groundPirates) + wave - 1;
+    for (int i = 0; i < groups; ++i) SpawnPirateGroup(team, true);
+    waveT = cfg::SPACE_WAVE_PAUSE;
+    tell(Fmt("Welle %d von %d greift an!", wave, cfg::SPACE_WAVES), Color{255, 160, 90, 255});
+}
+
+void World::DamageSpaceStation(float damage) {
+    if (stationMaxHp <= 0.0f || stationHp <= 0.0f) return;
+    stationHp = std::max(0.0f, stationHp - damage);
+    if (stationAlarmT > 0.0f) return;
+    stationAlarmT = 10.0f;
+    for (PlayerState& o : players)
+        if (o.trooperId >= 0)
+            Notify(o, Fmt("Die Raumstation wird angegriffen! Zustand %.0f %%", 100.0f * stationHp / stationMaxHp),
+                   Color{255, 160, 90, 255});
 }

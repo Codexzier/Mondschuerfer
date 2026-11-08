@@ -365,6 +365,7 @@ struct Trooper {
     float burstT = 0.0f;          // > 0: Pause bis zur nächsten Salve
     float underFireT = 99.0f;     // Sekunden seit dem letzten Treffer oder knappen Fehlschuss
     bool awake = true;            // Zombie: false = schläft (reagiert erst bei Nähe, Schüssen, Sprinten)
+    bool raider = false;          // Pirat einer Welle (Weltraumkarte): greift ohne Ziel die Raumstation an
 };
 
 // Hindernis für Figuren: Kapsel a-b mit Radius r auf dem Boden, oben flach
@@ -374,6 +375,44 @@ struct TrooperBlock {
     Vector2 a{}, b{};
     float r = 1.0f;
     float h = 1.0f;
+};
+
+// Weltraumkarte (Einsatzkarte mit dem Thema Weltraum): ein Deck als Rechteck,
+// gedreht wie sein Kartenteil, Oberkante top. Nur hier stehen die Figuren
+// (World::DeckTop), daneben ist das All.
+struct DeckRect {
+    Vector2 c{};                  // Mitte
+    Vector2 u{1.0f, 0.0f};        // Richtung der ersten Seite (Länge 1), die zweite steht senkrecht dazu
+    float hu = 0.5f, hv = 0.5f;   // halbe Seitenlängen
+    float top = 0.0f;
+};
+
+// Weltraumkarte: eine Raumstation, die das Team gegen die Wellen verteidigt
+// (Kreis mit Radius r um pos; alle Stationen der Karte teilen sich einen
+// Zustand, World::stationHp).
+struct SpaceStation {
+    Vector3 pos{};
+    float r = 1.0f;
+    // Weltraumkarte der Piloten: Modell und Maßstab (Render.cpp zeichnet sie,
+    // solange sie steht). Auf der Einsatzkarte ist sie ein Kartenteil: -1.
+    int model = -1;
+    float scale = 1.0f;
+};
+
+// Weltraumkarte der Piloten (Orbit.cpp): ein Asteroid, der langsam auf die
+// Raumstation zufliegt. Er fliegt in Schiffshöhe (Treffer wie bei Schiffen
+// nur in x/z, Radius r) und dreht sich dabei (nur Optik).
+struct Asteroid {
+    int id = 0;
+    int model = -1;
+    Vector3 pos{};
+    Vector3 vel{};
+    float r = 3.0f;              // Trefferradius (x/z)
+    float scale = 1.0f;          // Maßstab des Modells
+    float hp = 1.0f, maxHp = 1.0f;
+    float yaw = 0.0f, spin = 0.0f;   // Drehung und Drehgeschwindigkeit (rad/s)
+    float hitFlash = 0.0f;       // 1 beim Treffer, klingt ab
+    bool dead = false;
 };
 
 // Stargates (Trooper.cpp): Zustand der Tore aus der Deko (gate_simple,
@@ -673,6 +712,16 @@ public:
     // das Stargate, gelbe Kristalle und die Gegner-Startplätze aus den
     // Markierungen. Danach StartSgMission wie auf der Mondkarte.
     void NewInstance(const GameMap& m, unsigned int seed);
+    // Weltraumkarte der Piloten (Orbit.cpp, Einzelspieler): ersetzt die
+    // komplette Welt wie NewGame. Kein Boden, keine Kristalle; in der Mitte
+    // die Raumstation, im Süden das Trägerschiff mit Werft und
+    // Raumschiffsverkäufer, dazu Piraten. Ein Spieler mit neuem Schiff vor
+    // dem Trägerschiff; CarryPilot übernimmt danach seinen Fortschritt.
+    // delivered = insgesamt abgeliefert (vom Mond, bestimmt die Stärke der Piraten).
+    void NewOrbit(unsigned int seed, long long delivered);
+    // Pilot kommt vom Mond (Ziel erreicht): Aufrüstungen, Schiffe, Leben und
+    // Statistik aus from übernehmen, Kontostand beginnt bei 0.
+    void CarryPilot(PlayerState& ps, const PlayerState& from);
     // Ein Zeitschritt der Spielregeln (Einzelspieler: einmal pro Bild mit dem
     // dt des Bildes; Server: fest 1/30 s). Danach liegen in sounds, fx, goals
     // und PlayerState::outbox neue Ereignisse, die der Aufrufer abarbeitet
@@ -711,6 +760,10 @@ public:
     void RemovePlayer(int playerId);
     void SpawnPlayerShip(PlayerState& ps);
     void ResetProgress(PlayerState& ps);    // nach Absturz: Fortschritt von vorne
+    // Startplatz eines neuen Spielerschiffs im Einzelspieler: vor der
+    // Handelsstation in der Mitte, auf der Weltraumkarte vor dem Trägerschiff
+    Vector3 StartPos() const;
+    float StartYaw() const;
 
     // Suchen über die ID (nullptr, wenn es das Objekt nicht mehr gibt)
     Ship* FindShip(int id);
@@ -775,6 +828,17 @@ public:
     int SampleGoal() const;
     // Einsatzkarte mit Fundstücken (Deposit::item): Texte "Funde" statt "Proben"
     bool HasItems() const;
+    // Ziel des Einsatzes erreicht (Rückkehr möglich): genug Proben, auf der
+    // Weltraumkarte alle Wellen abgewehrt
+    bool SgGoalReached(const PlayerState& ps) const;
+    // Weltraumkarte: Oberkante des höchsten Decks unter p, auf das eine Figur
+    // dort tritt (höchstens TROOPER_STEP über den Füßen); -1e9 = keins (All)
+    float DeckTop(Vector3 p) const;
+    bool OverDeck(Vector3 p) const { return DeckTop(p) > -1e8f; }
+    // Steckt der Punkt in einem Deck (Bodengeschoss)?
+    bool InDeck(Vector3 p) const;
+    // Rückzugspunkt: nah am Stargate auf dem Trägerschiff (Schild und Munition)
+    bool AtRestPoint(Vector3 p) const;
     // Spieler einer Figur: ihr eigener oder der ihres Anführers (Kamerad), sonst nullptr
     PlayerState* PlayerOfTrooper(const Trooper* t);
     // Einsatz beenden: Die Figuren des Teams verschwinden, der Spieler ist
@@ -853,6 +917,24 @@ public:
     MapSky mapSky = MapSky::Day;
     std::vector<Vector3> enemySpots;       // Gegner-Startplätze der Einsatzkarte (SpawnPirateGroup)
     bool zombies = false;                  // Einsatzkarte mit Thema Friedhof: Zombies statt Bodenpiraten
+    // Weltraumkarte (Thema Weltraum): kein Boden, nur Decks; Raumstation(en)
+    // mit gemeinsamem Zustand; Gegnerwellen (UpdateWaves)
+    bool space = false;
+    std::vector<DeckRect> decks;
+    std::vector<SpaceStation> spaceStations;
+    float stationHp = 0.0f, stationMaxHp = 0.0f;   // 0 = keine Station auf der Karte
+    int wave = 0;                  // laufende Welle (0 = noch keine)
+    int wavesCleared = 0;          // abgewehrte Wellen (cfg::SPACE_WAVES = alle: Rückkehr)
+    int waveLeft = 0;              // Gegner der laufenden Welle, die noch stehen
+    float waveT = 0.0f;            // Sekunden bis zur nächsten Welle
+    float stationAlarmT = 0.0f;    // Meldung "Station wird angegriffen" höchstens alle 10 s
+    // Weltraumkarte der Piloten (NewOrbit, Orbit.cpp): die Raumstation in
+    // spaceStations mit stationHp; Asteroiden fliegen auf sie zu
+    bool orbit = false;
+    std::vector<Asteroid> asteroids;
+    float asteroidT = 0.0f;        // Sekunden bis zum nächsten Asteroiden
+    float stationDownT = 0.0f;     // > 0: Station explodiert, so lange bis zur neuen
+    int stationVariant = 0;        // Modell der Station: 0 = station-a, 1 = station-b (wechselt nach jeder Explosion)
     GameSettings settings;     // Einzelspieler: Standardwerte; Server/Client: vom Server
     // Zufallsgenerator (Mersenne-Twister). Gleicher Seed -> gleiche Zahlenfolge.
     // Darauf beruht, dass Client und Server dieselbe Mondoberfläche erzeugen,
@@ -985,8 +1067,19 @@ public:
     void FireTrooperBullet(Trooper& t);
     void DamageTrooper(Trooper& t, const Bullet& b);   // Treffer eines Bodengeschosses (UpdateBullets)
     void SpawnMate(const Trooper& leader, int slot, Vector3 pos, float yaw);   // NPC-Kamerad kommt durchs Tor
-    bool SpawnPirateGroup(Vector3 team);               // Gruppe weit genug vom Team, bei einem gelben Kristall
+    // Gruppe weit genug vom Team, bei einem gelben Kristall; wave = Angreifer
+    // einer Welle (Weltraumkarte) an einem beliebigen Gegner-Startplatz
+    bool SpawnPirateGroup(Vector3 team, bool wave = false);
     void UpdatePirateGroups(float dt);                 // fehlende Gruppen nach GROUND_PIRATE_RESPAWN ersetzen
+    void UpdateWaves(float dt);                        // Weltraumkarte: Wellen und Zustand der Station (statt UpdatePirateGroups)
+    void DamageSpaceStation(float damage);             // Treffer eines Bodenpiraten an der Raumstation (UpdateBullets)
+    // Weltraumkarte der Piloten (Orbit.cpp)
+    void PlaceOrbitStation();                          // Station in der Mitte (neu), Strukturpunkte voll
+    void UpdateOrbit(float dt);                        // Asteroiden, Einschläge, neue Station (Update)
+    void SpawnAsteroid();
+    void DamageAsteroid(Asteroid& a, float dmg, int attackerPlayerId);   // Treffer eines Spielergeschosses (UpdateBullets)
+    void StationExplodes();                            // Strukturpunkte 0: alle Konten auf 0
+    void OrbitBounty(PlayerState& ps, const Ship& s);  // Abschuss eines Piraten: Punkte, Ziel prüfen (DamageShip)
     void UpdateTrooperAi(Trooper& t, float dt);        // Eingabe einer KI-Figur (Ai.cpp)
     // Bodengegner (Ai.cpp): beschossen oder getroffen, Schuss gehört, Gruppe alarmieren
     void NoticeShooter(Trooper& t, int shooterId);

@@ -532,14 +532,22 @@ void MapEditorScreen::Back() {
 
 // Genau ein Stargate (Ankunft und Rückkehr) und genug Fundstücke (bzw. bei
 // älteren Karten Kristallplätze) für die Proben eines Einsatzes (cfg::SAMPLE_GOAL).
+// Weltraumkarte: statt der Fundstücke eine Raumstation und mindestens ein
+// Gegner-Startplatz (dort kommen die Wellen an).
 bool MapEditorScreen::CheckMission(std::string& error) const {
-    int gates = 0, crystals = 0;
+    int gates = 0, crystals = 0, stations = 0, enemies = 0;
     for (const MapPiece& q : map_.pieces) {
         if (q.model == MARKER_GATE) ++gates;
         else if (IsSampleSpot(q.model)) ++crystals;
+        else if (IsSpaceStation(q.model)) ++stations;
+        else if (q.model == MARKER_ENEMY) ++enemies;
     }
     if (gates != 1) error = "Eine Einsatzkarte braucht genau ein Stargate (Reiter \"Markierungen\").";
-    else if (crystals < cfg::SAMPLE_GOAL) error = Fmt("Eine Einsatzkarte braucht mindestens %d Fundstücke (jetzt %d).", cfg::SAMPLE_GOAL, crystals);
+    else if (map_.theme == MapTheme::Space && stations == 0) error = "Eine Weltraumkarte braucht eine Raumstation (Reiter \"Weltraum\").";
+    else if (map_.theme == MapTheme::Space && enemies == 0)
+        error = "Eine Weltraumkarte braucht mindestens einen Gegner-Startplatz (dort kommen die Wellen an).";
+    else if (map_.theme != MapTheme::Space && crystals < cfg::SAMPLE_GOAL)
+        error = Fmt("Eine Einsatzkarte braucht mindestens %d Fundstücke (jetzt %d).", cfg::SAMPLE_GOAL, crystals);
     return error.empty();
 }
 
@@ -746,13 +754,16 @@ void MapEditorScreen::DrawToolPanel(Rectangle r, float s) {
     } else {
         // Einsatzkarte: Thema, Größe, Boden und Himmel, ein Klick wählt den
         // nächsten Wert. Wird das Feld kleiner, fallen Teile außerhalb weg.
+        // Weltraum: kein Boden (nur Decks) und immer der Weltraumhimmel.
         const float g = 6 * s, bw = (w - g) * 0.5f, bh = 34 * s;
+        const bool space = map_.theme == MapTheme::Space;
         const std::string labels[4] = {std::string("Thema: ") + MapThemeName(map_.theme), Fmt("Größe: %d m", map_.size),
-                                       std::string("Boden: ") + MapGroundName(map_.ground),
-                                       std::string("Himmel: ") + MapSkyName(map_.sky)};
+                                       space ? std::string("Boden: keiner") : std::string("Boden: ") + MapGroundName(map_.ground),
+                                       space ? std::string("Himmel: Weltraum") : std::string("Himmel: ") + MapSkyName(map_.sky)};
         for (int i = 0; i < 4; ++i) {
             if (!Button({x + (i % 2) * (bw + g), y + (i / 2) * (bh + g), bw, bh}, labels[i], 16 * s, false)) continue;
             if (i == 0) map_.theme = NextValue(map_.theme);
+            else if (space && (i == 2 || i == 3)) continue;
             else if (i == 2) map_.ground = NextValue(map_.ground);
             else if (i == 3) map_.sky = NextValue(map_.sky);
             else {
@@ -899,16 +910,20 @@ void MapEditorScreen::DrawEdit() {
     }
     const float ty = H - m - 24 * s;
     if (Mission()) {
-        // Einsatzkarte: die Markierungen (zum Speichern: 1 Stargate, genug Fundstücke)
-        int gates = 0, crystals = 0, enemies = 0;
+        // Einsatzkarte: die Markierungen (zum Speichern: 1 Stargate, genug
+        // Fundstücke; Weltraumkarte: Raumstation und Gegner-Startplatz)
+        int gates = 0, crystals = 0, enemies = 0, stations = 0;
         for (const MapPiece& q : map_.pieces) {
             if (q.model == MARKER_GATE) ++gates;
             else if (IsSampleSpot(q.model)) ++crystals;
             else if (q.model == MARKER_ENEMY) ++enemies;
+            else if (IsSpaceStation(q.model)) ++stations;
         }
         std::string error;
-        Text(Fmt("Teile: %d  ·  Stargate: %d  ·  Fundstücke: %d (mind. %d)  ·  Gegner-Startplätze: %d",
-                 static_cast<int>(map_.pieces.size()), gates, crystals, cfg::SAMPLE_GOAL, enemies),
+        const std::string what = map_.theme == MapTheme::Space ? Fmt("Raumstation: %d", stations)
+                                                               : Fmt("Fundstücke: %d (mind. %d)", crystals, cfg::SAMPLE_GOAL);
+        Text(Fmt("Teile: %d  ·  Stargate: %d  ·  %s  ·  Gegner-Startplätze: %d", static_cast<int>(map_.pieces.size()), gates,
+                 what.c_str(), enemies),
              bx, ty - 28 * s, 20 * s, CheckMission(error) ? GOOD : TEXT);
         Text("Linksklick setzen (halten: malen)  ·  Rechtsklick löschen  ·  R drehen  ·  Q/E Ebene  ·  "
              "WASD/Pfeile/Mitteltaste verschieben  ·  Mausrad zoomen  ·  Strg+S speichern",

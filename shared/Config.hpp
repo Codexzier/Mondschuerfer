@@ -425,5 +425,38 @@ constexpr int SG_POINTS_SAMPLE = 100;         // Punkte je zurückgebrachte Prob
 constexpr int SG_POINTS_PIRATE = 25;          // ... je ausgeschalteten Bodenpiraten (auch bei einem gescheiterten Einsatz)
 constexpr int SG_POINTS_RETURN = 200;         // ... für die Rückkehr durch das Stargate
 constexpr int SG_LOG_MAX = 100;               // so viele Einsätze merkt sich der Spielstand (Scoreboard)
+// Weltraumkarte (Einsatzkarte mit dem Thema Weltraum, Trooper.cpp): kein
+// Boden, nur Decks; Wellen von Bodenpiraten greifen die Raumstation an.
+constexpr int SPACE_WAVES = 5;                // so viele Wellen, danach öffnet sich das Stargate zur Rückkehr
+constexpr float SPACE_WAVE_FIRST = 20.0f;     // Sekunden nach der Ankunft bis zur ersten Welle
+constexpr float SPACE_WAVE_PAUSE = 20.0f;     // Pause nach einer abgewehrten Welle
+constexpr float SPACE_STATION_HP = 3000.0f;   // Zustand der Raumstation (Treffer der Bodenpiraten ziehen ab)
+constexpr float SPACE_FALL = 3.0f;            // so tief unter das Deck gestürzt: gefallen (ins All)
+constexpr float SPACE_REST_RANGE = 5.0f;      // Rückzugspunkt: so nah am Stargate auf dem Trägerschiff ...
+constexpr float SPACE_REST_REGEN = 40.0f;     // ... lädt der Schild so schnell (ohne Wartezeit), Munition wird voll
+constexpr float RAIDER_RANGE = 4.0f;          // Angreifer schießen aus so viel Abstand (zur Hülle) auf die Station
+constexpr int SG_POINTS_WAVE = 100;           // Punkte je abgewehrte Welle
+
+// Weltraumkarte der Piloten (shared/Orbit.cpp): Wer auf dem Mond das Ziel
+// erreicht, fliegt dort weiter, bis wieder GOAL_POINTS auf dem Konto sind.
+// Keine Kristalle: Punkte gibt es nur für abgeschossene Piraten. Ab und an
+// fliegt ein Asteroid langsam auf die Raumstation in der Mitte zu; trifft er
+// sie, verliert sie Strukturpunkte. Bei 0 explodiert sie, alle Piloten auf
+// der Karte haben dann Kontostand 0, und nach ORBIT_STATION_RESPAWN kommt
+// eine neue Station. Am Trägerschiff im Süden: Werft und Raumschiffsverkäufer.
+constexpr int ORBIT_BOUNTY_PIRATE = 2000;        // Abschuss eines Piraten
+constexpr int ORBIT_BOUNTY_ELITE = 5000;         // ... eines Elite-Piraten
+constexpr int ORBIT_PIRATES = 8;                 // so viele Piraten gleichzeitig (Einzelspieler)
+constexpr float ORBIT_STATION_HP = 1000.0f;      // Strukturpunkte der Raumstation
+constexpr float ORBIT_STATION_SCALE = 40.0f;     // Maßstab des Modells (40 m breit)
+constexpr float ORBIT_STATION_RESPAWN = 30.0f;   // Sekunden nach der Explosion bis zur neuen Station
+constexpr float ORBIT_CARRIER_Z = 150.0f;        // Trägerschiff: so weit südlich der Station (Mitte)
+constexpr float ORBIT_ASTEROID_FIRST = 45.0f;    // Sekunden bis zum ersten Asteroiden
+constexpr float ORBIT_ASTEROID_INTERVAL = 75.0f; // danach im Mittel so oft (mal 0,8 bis 1,2)
+constexpr float ORBIT_ASTEROID_DIST = 230.0f;    // Abstand zur Station beim Auftauchen
+constexpr float ORBIT_ASTEROID_SPEED = 3.5f;     // Einheiten pro Sekunde (gut eine Minute bis zur Station)
+constexpr float ORBIT_ASTEROID_HP = 250.0f;      // so viel Schaden hält ein Asteroid aus
+constexpr float ORBIT_ASTEROID_DAMAGE = 250.0f;  // Strukturpunkte je Einschlag (vier Treffer: Station zerstört)
+constexpr float ORBIT_ASTEROID_SIZE = 7.0f;      // Maßstab des Modells (gut 6 m breit)
 
 } // namespace cfg
