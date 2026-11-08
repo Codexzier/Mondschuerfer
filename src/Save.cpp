@@ -11,7 +11,9 @@
 //   MONDSCHUERFER_SAVE 1                  Kennung und Formatversion
 //   seed <Zahl>                           Startwert des Zufallsgenerators
 //   map <Dateistamm>                      eigene Karte (src/MapFiles.hpp); fehlt bei der Zufallskarte
+//                                         (im All: die Karte für den Wechsel zurück auf den Mond)
 //   orbit <Strukturpunkte> <Modell 0|1>   Weltraumkarte der Piloten (fehlt auf dem Mond); 0 Punkte = neue Station
+//   orbitgoal 1                           im All schon einmal 100.000: Kartenwechsel frei (fehlt sonst)
 //   balance <Kontostand>
 //   delivered <insgesamt abgeliefert>     bestimmt die Ausbaustufe der Stationen
 //   upgrades <Tempo> <Panzerung> <Waffe> <Laderaum> <Kanonen>   Stufen 0..5 (Kanonen 0..2; fehlt in alten Spielständen)
@@ -134,6 +136,7 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     f << "delivered " << w.totalDelivered << '\n';
     f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << ' ' << me.upgrades[4] << '\n';
     f << "lives " << me.lives << '\n';
+    if (me.orbitGoal) f << "orbitgoal 1\n";
     // Schiffstyp (vor "player", denn dort werden die Schiffswerte berechnet)
     // und geparkte Schiffe: hangar Typ Stufe Stufe Stufe Stufe Stufe Schild
     f << "shiptype " << me.shipType << '\n';
@@ -270,6 +273,7 @@ bool LoadGame(World& w) {
         w.ApplyMap(map);
         w.mapFile = mapFile;
     }
+    if (orbit) w.mapFile = mapFile;   // nur gemerkt: für den Wechsel zurück auf den Mond (main.cpp)
     w.deposits.clear();
     w.ships.resize(1);
     w.Me().notices.clear();
@@ -288,6 +292,7 @@ bool LoadGame(World& w) {
         std::string key;
         ls >> key;
         if (key == "balance") ls >> me.balance;
+        else if (key == "orbitgoal") { int v = 0; ls >> v; me.orbitGoal = v != 0; }
         else if (key == "orbit") {
             // Station mit dem gespeicherten Modell; war sie gerade zerstört
             // (0 Punkte), kommt gleich die neue.

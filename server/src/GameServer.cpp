@@ -792,7 +792,8 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
     for (PlayerState& ps : world_.players) ps.outbox.clear();
 
     // --- Ziel erreicht: Bestenliste + Nachricht an ALLE; Piloten fliegen
-    // danach auf der Weltraumkarte weiter (EnterOrbit, unten) ---
+    // danach auf der Weltraumkarte weiter (EnterOrbit, unten), solange der
+    // Kartenwechsel noch nicht frei ist ---
     bool anyGoal = false;
     std::vector<Client*> toOrbit;
     for (const GoalEvent& g : world_.goals) {
@@ -801,7 +802,8 @@ void GameServer::DistributeWorldEvents(int stageBefore) {
         AnnounceGoal(world_, g);
         anyGoal = true;
         for (View& v : players)
-            if (v.ps->id == g.playerId && ps->role == PlayerRole::Pilot && !v.c->isBot && !v.away) toOrbit.push_back(v.c);
+            if (v.ps->id == g.playerId && ps->role == PlayerRole::Pilot && !ps->orbitGoal && !v.c->isBot && !v.away)
+                toOrbit.push_back(v.c);   // Kartenwechsel schon frei: neue Runde auf dem Mond
     }
 
     // --- Handelsstationen sind gewachsen (alle sehen es) ---
@@ -1569,6 +1571,13 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             // Art und freies Angebot prüft AcceptMission.
             if (st.type == StationType::Trade) w.AcceptMission(*ps, m.param);
             break;
+        case net::DockActionType::SwitchMap:
+            // Reiter "Karte": Mond <-> Weltraumkarte mit demselben Kontostand.
+            // Danach sind ps und st ungültig (der Spieler zieht um).
+            if (!w.CanSwitchMap(*ps)) break;
+            if (&w == &world_) EnterOrbit(c);
+            else LeaveOrbit(c, false);
+            break;
     }
 }
 
@@ -2255,7 +2264,11 @@ const World& GameServer::WorldOf(int playerId) const {
 // Explosion (alle Kontostände 0) gelten für alle Piloten im All. Das Ziel im
 // All ist wieder ein Eintrag in die Bestenliste, danach geht es dort weiter.
 // Sind alle Leben verbraucht (Fortschritt von vorn), geht es zurück auf den
-// Mond. Die Clients bauen ihre Spiegelwelt mit OrbitStart bzw. InstanceEnd um.
+// Mond. Wer im All schon einmal das Ziel erreicht hat (PlayerState::orbitGoal),
+// wechselt angedockt an der Handelsstation bzw. am Trägerschiff frei zwischen
+// beiden Karten (DockAction SwitchMap), mit demselben Kontostand; das Ziel auf
+// dem Mond führt dann nicht mehr ins All. Die Clients bauen ihre Spiegelwelt
+// mit OrbitStart bzw. InstanceEnd um.
 // ===========================================================================
 World* GameServer::OrbitOf(int playerId) {
     return orbit_ && playerId >= 0 && orbit_->FindPlayer(playerId) ? orbit_.get() : nullptr;
@@ -2321,8 +2334,9 @@ void GameServer::EnterOrbit(Client& c) {
     Log(Fmt("%s fliegt jetzt auf der Weltraumkarte (%d Pilot(en) im All)", c.name.c_str(), static_cast<int>(o.players.size())));
 }
 
-// Aus UpdateOrbitWorld (vor ++tick_): Snapshots bis tick_ gehören noch zum All.
-void GameServer::LeaveOrbit(Client& c) {
+// Aus UpdateOrbitWorld (vor ++tick_, lost: alle Leben verbraucht) bzw. dem
+// Kartenwechsel (zwischen zwei Schritten): Snapshots bis tick_ gehören noch zum All.
+void GameServer::LeaveOrbit(Client& c, bool lost) {
     PlayerState* ps = orbit_ ? orbit_->FindPlayer(c.playerId) : nullptr;
     if (!ps) return;
     PlayerProgress p = CaptureProgress(*ps);
@@ -2333,29 +2347,31 @@ void GameServer::LeaveOrbit(Client& c) {
     c.lastShipId = mp.shipId;
     c.lastDeaths = mp.deaths;
     if (const Ship* s = world_.PlayerShip(mp)) c.lastPos = s->pos;
-    world_.Notify(mp, "Zurück auf dem Mond: Sammle wieder 100.000 für den Sprung ins All.", Color{200, 220, 255, 255});
+    world_.Notify(mp, lost ? "Zurück auf dem Mond: Sammle wieder 100.000 für den Sprung ins All."
+                           : "Zurück auf dem Mond. Dein Kontostand ist derselbe wie im All.",
+                  Color{200, 220, 255, 255});
     net::InstanceEndMsg m;
     m.tick = static_cast<uint32_t>(tick_);
     Send(c, net::Encode(m), true);
     SendDepositsNow(c);   // wieder die Lagerstätten der Mondkarte
     StoreProgress(c);
-    Log(c.name + ": alle Leben im All verbraucht, zurück auf dem Mond");
+    Log(c.name + (lost ? ": alle Leben im All verbraucht, zurück auf dem Mond" : ": Kartenwechsel zurück auf den Mond"));
 }
 
 void GameServer::UpdateOrbitWorld() {
     if (!orbit_) return;
     World& w = *orbit_;
-    // Alle Leben verbraucht: World::ResetProgress setzt die Runde auf 1 (im
-    // All ist sie immer mindestens 2). Kurz bevor das neue Schiff käme
-    // (cfg::MP_RESPAWN_TIME, die Explosion ist dann vorbei), zurück auf den Mond.
+    // Alle Leben verbraucht (World::ResetProgress, PlayerState::progressLost):
+    // kurz bevor das neue Schiff käme (cfg::MP_RESPAWN_TIME, die Explosion
+    // ist dann vorbei), zurück auf den Mond.
     std::vector<Client*> back;
     for (auto& up : clients_) {
         Client& c = *up;
         if (c.role != Role::Player || c.closing) continue;
         const PlayerState* ps = w.FindPlayer(c.playerId);
-        if (ps && ps->shipId < 0 && ps->round == 1 && ps->respawnT <= net::TICK_DT) back.push_back(&c);
+        if (ps && ps->shipId < 0 && ps->progressLost && ps->respawnT <= net::TICK_DT) back.push_back(&c);
     }
-    for (Client* c : back) LeaveOrbit(*c);
+    for (Client* c : back) LeaveOrbit(*c, true);
     if (!back.empty()) accounts_.SaveAccounts();
     w.Update(net::TICK_DT);
     if (w.time > 20000.0f) w.time -= 6000.0f * PI;   // wie bei world_ (Step)
@@ -2777,6 +2793,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         e.scanOn = ps->scanOn;
         e.scanPhase = std::fmod(ps->scanPulse, cfg::SCANNER_PULSE_TIME);
         e.mining = ps->mining;
+        e.orbitGoal = ps->orbitGoal;
         e.mineKind = static_cast<uint8_t>(std::clamp(ps->mineKind, 0, 255));
         e.mineId = ps->mineId;
         e.mineT = ps->mineT;
@@ -3263,6 +3280,7 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     ps.kills = std::max(0, p.kills);
     ps.deaths = std::max(0, p.deaths);
     ps.goals = std::max(0, p.goals);
+    ps.orbitGoal = p.orbitGoal;
     ps.lastRole = p.role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;   // Vorauswahl der Rollenwahl
     ps.sgTotal.points = std::max(0, p.sgPoints);
     ps.sgTotal.samples = std::max(0, p.sgSamples);
@@ -3300,8 +3318,8 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     }
     p.lives = ps.lives;
     const World& w = HomeOf(ps.id);
-    // Im All mit Runde 1 heißt: alle Leben verbraucht, es geht auf dem Mond weiter (UpdateOrbitWorld)
-    p.orbit = &w != &world_ && ps.round > 1;
+    // Im All alle Leben verbraucht: es geht auf dem Mond weiter (UpdateOrbitWorld)
+    p.orbit = &w != &world_ && !ps.progressLost;
     const Ship* s = w.PlayerShip(ps);
     if (s && !s->crashing) {
         p.cargo = s->cargo;
@@ -3321,6 +3339,7 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     p.kills = ps.kills;
     p.deaths = ps.deaths;
     p.goals = ps.goals;
+    p.orbitGoal = ps.orbitGoal;
     p.role = static_cast<int>(ps.role);
     p.sgPoints = ps.sgTotal.points;
     p.sgSamples = ps.sgTotal.samples;

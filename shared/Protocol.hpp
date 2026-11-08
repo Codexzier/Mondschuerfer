@@ -88,7 +88,8 @@ namespace net {
 // Version 16: Fundstücke auf Einsatzkarten (Kartenteile marker_item_*, NetDeposit::variant ab 3).
 // Version 17: Weltraumkarte (MapTheme::Space, Kartenteile für Decks, Raumstationen und
 //             Trägerschiffe; SnapMeTrooper: Wellen und Zustand der Raumstation).
-// Version 18: Weltraumkarte der Piloten (OrbitStart; Snapshot: Raumstation und Asteroiden).
+// Version 18: Weltraumkarte der Piloten (OrbitStart; Snapshot: Raumstation und Asteroiden;
+//             DockAction SwitchMap und SnapMe::orbitGoal für den Kartenwechsel).
 constexpr uint16_t PROTOCOL_VERSION = 18;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
@@ -296,7 +297,8 @@ struct InputMsg {
     std::vector<InputRecord> records;   // älteste zuerst, höchstens MAX_INPUTS_PER_MSG
 };
 
-enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4, AcceptMission = 5 };
+// SwitchMap: Reiter "Karte", Wechsel Mond <-> Weltraumkarte (World::CanSwitchMap)
+enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4, AcceptMission = 5, SwitchMap = 6 };
 
 struct DockActionMsg {
     DockActionType action = DockActionType::Undock;
@@ -468,6 +470,7 @@ struct SnapMe {
     bool scanOn = false;
     float scanPhase = 0;          // Fortschritt des aktuellen Scannerrings in Sekunden (0..PULSE_TIME)
     bool mining = false;
+    bool orbitGoal = false;       // im All schon einmal 100.000: Kartenwechsel frei (PlayerState::orbitGoal)
     uint8_t mineKind = 0;
     int32_t mineId = -1;
     float mineT = 0;

@@ -321,8 +321,8 @@ private:
     World& HomeOf(int playerId);
     const World& HomeOf(int playerId) const;
     World& OrbitWorld();                                 // orbit_, bei Bedarf neu angelegt (World::NewOrbit)
-    void EnterOrbit(Client& c);                          // Ziel auf dem Mond erreicht: Spieler wechselt ins All
-    void LeaveOrbit(Client& c);                          // alle Leben verbraucht: zurück auf den Mond
+    void EnterOrbit(Client& c);                          // Ziel auf dem Mond erreicht oder Kartenwechsel: Spieler wechselt ins All
+    void LeaveOrbit(Client& c, bool lost);               // alle Leben verbraucht (lost) oder Kartenwechsel: zurück auf den Mond
     void SendOrbitStart(Client& c);
     // Weltraumkarte rechnen, Ereignisse verteilen, Rückkehrer auf den Mond
     // holen, leere Weltraumkarte auflösen

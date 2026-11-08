@@ -599,7 +599,7 @@ std::vector<uint8_t> Encode(const DockActionMsg& m) {
 
 bool Decode(Reader& r, DockActionMsg& m) {
     const uint8_t a = r.U8();
-    if (a > static_cast<uint8_t>(DockActionType::AcceptMission)) return false;
+    if (a > static_cast<uint8_t>(DockActionType::SwitchMap)) return false;
     m.action = static_cast<DockActionType>(a);
     m.param = r.U8();
     return r.ok();
@@ -785,12 +785,13 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U8(QUnit(e.hitFlash));
         w.U8(QUnit(e.thrustVisual));
         // Mehrere Ja/Nein-Werte in EINEM Byte ("Bitfeld"): Bit 0 (Wert 1) =
-        // stürzt ab, Bit 1 (2) = Scanner an, Bit 2 (4) = baut ab. Decode
-        // prüft jedes Bit mit "flags & Wert".
+        // stürzt ab, Bit 1 (2) = Scanner an, Bit 2 (4) = baut ab, Bit 3 (8)
+        // = Kartenwechsel frei. Decode prüft jedes Bit mit "flags & Wert".
         uint8_t flags = 0;
         if (e.crashing) flags |= 1;
         if (e.scanOn) flags |= 2;
         if (e.mining) flags |= 4;
+        if (e.orbitGoal) flags |= 8;
         w.U8(flags);
         w.I32(e.cargo);
         w.I32(e.cargoMax);
@@ -1013,6 +1014,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         e.crashing = (flags & 1) != 0;
         e.scanOn = (flags & 2) != 0;
         e.mining = (flags & 4) != 0;
+        e.orbitGoal = (flags & 8) != 0;
         e.cargo = r.I32();
         e.cargoMax = r.I32();
         e.balance = r.I64();

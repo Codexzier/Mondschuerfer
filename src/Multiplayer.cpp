@@ -1384,6 +1384,7 @@ void MultiplayerScreen::DrawPlaying() {
         if (req.buyShip >= 0)
             net_.SendDockAction(net::DockActionType::BuyShip, static_cast<uint8_t>(req.buyShip | (req.tradeIn ? 0x80 : 0)));
         if (req.switchShip >= 0) net_.SendDockAction(net::DockActionType::SwitchShip, static_cast<uint8_t>(req.switchShip));
+        if (req.switchMap) net_.SendDockAction(net::DockActionType::SwitchMap);
         if (req.acceptMission >= 0)
             net_.SendDockAction(net::DockActionType::AcceptMission, static_cast<uint8_t>(req.acceptMission));
         if (req.undock) {

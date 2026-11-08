@@ -1008,6 +1008,66 @@ static std::string ShipStats(const ShipType& t, const int* up, bool withGuns) {
     return text;
 }
 
+// Karteireiter der Stationsfenster (wie im Optionsfenster): gewählter
+// orange, sonst dunkel. Tab-Taste oder RB am Controller: nächster, LB:
+// voriger. Zeichnet ab y und liefert die Höhe der Leiste samt Abstand.
+static float DockTabs(const char* const* names, int count, int& tab, float x, float y, float bw, bool interactive) {
+    const float s = Scale();
+    if (tab >= count) tab = 0;
+    if (interactive && (IsKeyPressed(KEY_TAB) || PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1))) tab = (tab + 1) % count;
+    if (interactive && PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)) tab = (tab + count - 1) % count;
+    const float tw = std::min(180 * s, (bw - (count - 1) * 10 * s) / count);
+    for (int t = 0; t < count; ++t) {
+        const Rectangle tr{x + t * (tw + 10 * s), y, tw, 40 * s};
+        const bool hover = CheckCollisionPointRec(PointerPos(), tr);
+        if (interactive && hover && PointerPressed()) tab = t;
+        const bool current = t == tab;
+        DrawRectangleRec(tr, current ? ACCENT : (hover ? PANEL_LIGHT : Color{15, 18, 24, 200}));
+        if (!current) DrawRectangleLinesEx(tr, 1.0f, ACCENT_DIM);
+        TextCentered(names[t], tr.x + tr.width * 0.5f, tr.y + 9 * s, 22 * s, current ? Color{26, 31, 41, 255} : TEXT, !current);
+    }
+    DrawRectangleRec({x, y + 40 * s, bw, std::max(2.0f, 3.0f * s)}, ACCENT);
+    return 58 * s;
+}
+
+// Reiter "Karte": Wechsel Mond <-> Weltraumkarte (World::CanSwitchMap). Frei,
+// sobald man auf beiden Karten je einmal 100.000 erreicht hat; vorher steht
+// hier, was noch fehlt. Kontostand, Aufrüstungen, Schiffe und Leben kommen mit.
+static void DrawMapTab(const World& w, const PlayerState& me, float x, float y, float bw, bool interactive, DockRequest& req) {
+    const float s = Scale();
+    const bool keyboard = controls::ActiveDevice() == controls::Device::KeyboardMouse;
+    Text(w.orbit ? "Du bist auf der Weltraumkarte." : "Du bist auf der Mondkarte.", x, y, 24 * s, TEXT);
+    y += 38 * s;
+    const char* info = "Wer auf dem Mond und auf der Weltraumkarte je einmal 100.000 Punkte erreicht hat, kann hier "
+                       "zwischen den Karten wechseln. Kontostand, Aufrüstungen, Schiffe und Leben kommen mit.";
+    for (const std::string& line : WrapLines(info, bw, 18 * s)) {
+        Text(line, x, y, 18 * s, MUTED);
+        y += 24 * s;
+    }
+    y += 16 * s;
+    // Mond geschafft: wer im All ist oder dort schon das Ziel hatte, sonst ein Ziel im Mehrspieler
+    const bool moonDone = w.orbit || me.orbitGoal || me.goals > 0;
+    const struct {
+        const char* name;
+        bool done;
+    } maps[2] = {{"Mondkarte", moonDone}, {"Weltraumkarte", me.orbitGoal}};
+    for (const auto& m : maps) {
+        Rectangle row{x, y, bw, 44 * s};
+        DrawRectangleRec(row, Color{36, 42, 54, 220});
+        Text(m.name, row.x + 16 * s, row.y + 10 * s, 22 * s, TEXT);
+        TextRight(m.done ? "100.000 erreicht" : "noch offen", row.x + row.width - 16 * s, row.y + 10 * s, 22 * s, m.done ? GOOD : MUTED);
+        y += 52 * s;
+    }
+    y += 12 * s;
+    const bool can = w.CanSwitchMap(me);
+    const std::string label = std::string(keyboard ? "[1]  " : "") + (w.orbit ? "Zur Mondkarte wechseln" : "Zur Weltraumkarte wechseln");
+    bool hover = false;
+    const bool click = Button({x, y, bw, 50 * s}, label, 22 * s, false, can && interactive, &hover);
+    const bool key = interactive && IsKeyPressed(KEY_ONE);
+    if (interactive && can && (click || key)) req.switchMap = true;
+    else if (interactive && !can && (key || (hover && PointerPressed()))) g_audio.Play(Sfx::Denied);
+}
+
 // Wird jedes Frame gezeichnet, solange der Spieler angedockt ist. Es liest nur
 // die World und gibt zurück, was der Spieler angeklickt bzw. gedrückt hat
 // (DockRequest). Ob eine Aktion möglich ist (genug Punkte?), prüft es nur für
@@ -1063,23 +1123,9 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         Text(title, x, y, 40 * s, ACCENT);
         y += 50 * s;
 
-        // Karteireiter (wie im Optionsfenster): gewählter orange, sonst dunkel.
-        // Tab-Taste oder RB am Controller: nächster, LB: voriger.
-        constexpr int TABS = 3;
-        if (interactive && (IsKeyPressed(KEY_TAB) || PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1))) dockTab = (dockTab + 1) % TABS;
-        if (interactive && PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)) dockTab = (dockTab + TABS - 1) % TABS;
-        const char* tabNames[TABS] = {"Station", "Schiff", "Missionen"};
-        for (int t = 0; t < TABS; ++t) {
-            const Rectangle tr{x + t * 190 * s, y, 180 * s, 40 * s};
-            const bool hover = CheckCollisionPointRec(PointerPos(), tr);
-            if (interactive && hover && PointerPressed()) dockTab = t;
-            const bool current = t == dockTab;
-            DrawRectangleRec(tr, current ? ACCENT : (hover ? PANEL_LIGHT : Color{15, 18, 24, 200}));
-            if (!current) DrawRectangleLinesEx(tr, 1.0f, ACCENT_DIM);
-            TextCentered(tabNames[t], tr.x + tr.width * 0.5f, tr.y + 9 * s, 22 * s, current ? Color{26, 31, 41, 255} : TEXT, !current);
-        }
-        DrawRectangleRec({x, y + 40 * s, bw, std::max(2.0f, 3.0f * s)}, ACCENT);
-        y += 58 * s;
+        // Karteireiter: Station, Schiff, Missionen, Karte (Wechsel Mond <-> All)
+        const char* tabNames[4] = {"Station", "Schiff", "Missionen", "Karte"};
+        y += DockTabs(tabNames, 4, dockTab, x, y, bw, interactive);
 
         if (dockTab == 0) {
             // Stufen 0..7, also "von 7" (STATION_STAGES = 8)
@@ -1170,6 +1216,8 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
                     req.switchShip = type;
                 y += rowPitch * s;
             }
+        } else if (dockTab == 3) {
+            DrawMapTab(w, me, x, y, bw, interactive, req);
         } else {
             // --- Tab "Missionen": laufende Mission und offene Angebote
             //     (World::AcceptMission). Angebote derselben Art stehen in
@@ -1242,7 +1290,9 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         const int rows = static_cast<int>(listed.size());
         const float rowPitch = rows <= 4 ? 98.0f : 84.0f;
         const float statsY = rows <= 4 ? 50.0f : 40.0f, buttonH = rows <= 4 ? 36.0f : 30.0f;
-        const float panelH = std::max(580.0f, 188.0f + rows * rowPitch);
+        // Auf dem Trägerschiff (Weltraumkarte) zusätzlich die Reiter Schiffe | Karte
+        const float tabsH = w.orbit ? 58.0f : 0.0f;
+        const float panelH = std::max(580.0f, 188.0f + rows * rowPitch) + tabsH;
         Rectangle r{W * 0.5f - 420 * s, H * 0.5f - panelH * 0.5f * s, 840 * s, panelH * s};
         Panel(r);
         float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
@@ -1251,55 +1301,67 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         Text(title, x, y, 40 * s, DEALER_COLOR);
         TextRight("Kontostand  " + Num(me.balance), x + bw, y + 10 * s, 24 * s, ACCENT);
         y += 46 * s;
-        Text(TextFormat("Kaufen: altes Schiff wird geparkt.  In Zahlung: +%s Pkt. für das alte Schiff.",
-                        Num(w.TradeInValue(me)).c_str()),
-             x, y, 18 * s, MUTED);
-        y += 34 * s;
-        const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
-        for (int k = 0; k < rows; ++k) {
-            const int t = listed[k];
-            Rectangle row{x, y, bw, (rowPitch - 10.0f) * s};
-            DrawRectangleRec(row, Color{36, 42, 54, 220});
-            const int zero[cfg::UP_COUNT] = {0, 0, 0, 0};
-            Text(w.settings.Ship(t).name, row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
-            Text(ShipStats(w.settings.Ship(t), zero, true), row.x + 16 * s, row.y + statsY * s, 18 * s, MUTED);
-            const bool owned = w.OwnsShipType(me, t);
-            if (owned) {
-                TextRight(t == me.shipType ? "Wird geflogen" : "Im Besitz", row.x + row.width - 20 * s, row.y + 12 * s, 22 * s, GOOD);
-            } else {
-                // Zwei Knöpfe: Kaufen und In Zahlung geben. Der Preis mit
-                // Inzahlunggabe kann negativ sein (Gutschrift).
-                const int price = w.ShipPrice(me, t, false);
-                const int tradePrice = w.ShipPrice(me, t, true);
-                const bool canBuy = me.balance >= price;
-                const bool canTrade = me.balance >= tradePrice;
-                const bool keyHit = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + k));
-                std::string bl = (keyboard ? TextFormat("[%d] ", k + 1) : std::string()) + "Kaufen " + Num(price);
-                std::string tl = (keyboard ? TextFormat("[Umschalt+%d] ", k + 1) : std::string()) + "In Zahlung " +
-                                 Num(std::max(0, tradePrice));
-                // Knöpfe rechts in der oberen Zeile, die Werte stehen darunter
-                Rectangle b1{row.x + row.width - 486 * s, row.y + 8 * s, 200 * s, buttonH * s};
-                Rectangle b2{row.x + row.width - 276 * s, row.y + 8 * s, 260 * s, buttonH * s};
-                bool hover1 = false, hover2 = false;
-                bool click1 = Button(b1, bl, 18 * s, false, canBuy && interactive, &hover1);
-                bool click2 = Button(b2, tl, 18 * s, false, canTrade && interactive, &hover2);
-                if (interactive && canBuy && (click1 || (keyHit && !shift))) {
-                    req.buyShip = t;
-                } else if (interactive && canTrade && (click2 || (keyHit && shift))) {
-                    req.buyShip = t;
-                    req.tradeIn = true;
-                } else if (interactive && (keyHit || ((hover1 || hover2) && PointerPressed()))) {
-                    g_audio.Play(Sfx::Denied);
-                }
-            }
-            y += rowPitch * s;
+        if (w.orbit) {
+            const char* tabNames[2] = {"Schiffe", "Karte"};
+            y += DockTabs(tabNames, 2, dockTab, x, y, bw, interactive);
         }
-        Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
-        if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+        if (w.orbit && dockTab == 1) {
+            DrawMapTab(w, me, x, y, bw, interactive, req);
+            Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
+            if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+        } else {
+            Text(TextFormat("Kaufen: altes Schiff wird geparkt.  In Zahlung: +%s Pkt. für das alte Schiff.",
+                            Num(w.TradeInValue(me)).c_str()),
+                 x, y, 18 * s, MUTED);
+            y += 34 * s;
+            const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+            for (int k = 0; k < rows; ++k) {
+                const int t = listed[k];
+                Rectangle row{x, y, bw, (rowPitch - 10.0f) * s};
+                DrawRectangleRec(row, Color{36, 42, 54, 220});
+                const int zero[cfg::UP_COUNT] = {0, 0, 0, 0};
+                Text(w.settings.Ship(t).name, row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
+                Text(ShipStats(w.settings.Ship(t), zero, true), row.x + 16 * s, row.y + statsY * s, 18 * s, MUTED);
+                const bool owned = w.OwnsShipType(me, t);
+                if (owned) {
+                    TextRight(t == me.shipType ? "Wird geflogen" : "Im Besitz", row.x + row.width - 20 * s, row.y + 12 * s, 22 * s, GOOD);
+                } else {
+                    // Zwei Knöpfe: Kaufen und In Zahlung geben. Der Preis mit
+                    // Inzahlunggabe kann negativ sein (Gutschrift).
+                    const int price = w.ShipPrice(me, t, false);
+                    const int tradePrice = w.ShipPrice(me, t, true);
+                    const bool canBuy = me.balance >= price;
+                    const bool canTrade = me.balance >= tradePrice;
+                    const bool keyHit = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + k));
+                    std::string bl = (keyboard ? TextFormat("[%d] ", k + 1) : std::string()) + "Kaufen " + Num(price);
+                    std::string tl = (keyboard ? TextFormat("[Umschalt+%d] ", k + 1) : std::string()) + "In Zahlung " +
+                                     Num(std::max(0, tradePrice));
+                    // Knöpfe rechts in der oberen Zeile, die Werte stehen darunter
+                    Rectangle b1{row.x + row.width - 486 * s, row.y + 8 * s, 200 * s, buttonH * s};
+                    Rectangle b2{row.x + row.width - 276 * s, row.y + 8 * s, 260 * s, buttonH * s};
+                    bool hover1 = false, hover2 = false;
+                    bool click1 = Button(b1, bl, 18 * s, false, canBuy && interactive, &hover1);
+                    bool click2 = Button(b2, tl, 18 * s, false, canTrade && interactive, &hover2);
+                    if (interactive && canBuy && (click1 || (keyHit && !shift))) {
+                        req.buyShip = t;
+                    } else if (interactive && canTrade && (click2 || (keyHit && shift))) {
+                        req.buyShip = t;
+                        req.tradeIn = true;
+                    } else if (interactive && (keyHit || ((hover1 || hover2) && PointerPressed()))) {
+                        g_audio.Play(Sfx::Denied);
+                    }
+                }
+                y += rowPitch * s;
+            }
+            Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
+            if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+        }
     } else {
         // --- Werft: fünf Aufrüstungen, je eine Zeile mit Stufenkästchen,
         //     Wirkung (aktuell -> nächste Stufe) und Kaufknopf --------------------
-        Rectangle r{W * 0.5f - 400 * s, H * 0.5f - 300 * s, 800 * s, 600 * s};
+        // Auf dem Trägerschiff (Weltraumkarte) zusätzlich die Reiter Werft | Karte
+        const float panelH = w.orbit ? 658.0f : 600.0f;
+        Rectangle r{W * 0.5f - 400 * s, H * 0.5f - panelH * 0.5f * s, 800 * s, panelH * s};
         Panel(r);
         float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
         std::string title = station.name;
@@ -1307,77 +1369,87 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         Text(title, x, y, 40 * s, Color{120, 210, 255, 255});
         TextRight("Kontostand  " + Num(me.balance), x + bw, y + 10 * s, 24 * s, ACCENT);
         y += 46 * s;
-        Text("Rüste dein Schiff auf. Upgrades werden mit Ressourcenpunkten bezahlt.", x, y, 18 * s, MUTED);
-        y += 34 * s;
-
-        // t läuft in der Reihenfolge von cfg::Upgrade (Antrieb, Panzerung,
-        // Bewaffnung, Lager, Kanonen). Die Werte-Tabellen in Config.hpp haben je
-        // UPGRADE_LEVELS + 1 Einträge (Index 0 = Startwert), daher ist
-        // [lvl + 1] gültig, solange die Stufe nicht maximal ist.
-        // Die Werte hängen vom Schiffstyp ab (ShipSpeed ... in GameSettings.hpp),
-        // die höchste Kanonen-Stufe auch (ShipUpgradeMax).
-        const char* names[cfg::UP_COUNT] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager", "Kanonen"};
-        const ShipType& st = w.settings.Ship(me.shipType);
-        for (int t = 0; t < cfg::UP_COUNT; ++t) {
-            int lvl = me.upgrades[t];
-            const int maxLvl = ShipUpgradeMax(st, t);
-            bool maxed = lvl >= maxLvl;
-            std::string desc;
-            switch (t) {
-                case cfg::UP_SPEED:
-                    desc = maxed ? TextFormat("Tempo %.0f", ShipSpeed(st, lvl))
-                                 : TextFormat("Tempo %.0f  ->  %.0f", ShipSpeed(st, lvl), ShipSpeed(st, lvl + 1));
-                    break;
-                case cfg::UP_ARMOR:
-                    desc = maxed ? TextFormat("Schild %.0f", ShipArmor(st, lvl))
-                                 : TextFormat("Schild %.0f  ->  %.0f", ShipArmor(st, lvl), ShipArmor(st, lvl + 1));
-                    break;
-                case cfg::UP_WEAPON:
-                    // WEAPON_RATE ist die Pause zwischen zwei Schüssen in
-                    // Sekunden; 1 / Pause = Schüsse pro Sekunde.
-                    desc = maxed ? TextFormat("Schaden %.0f, %.1f Schuss/s", ShipDamage(st, lvl), 1.0f / cfg::WEAPON_RATE[lvl])
-                                 : TextFormat("Schaden %.0f -> %.0f,  %.1f -> %.1f Schuss/s", ShipDamage(st, lvl),
-                                              ShipDamage(st, lvl + 1), 1.0f / cfg::WEAPON_RATE[lvl], 1.0f / cfg::WEAPON_RATE[lvl + 1]);
-                    break;
-                case cfg::UP_GUNS:
-                    desc = maxed ? TextFormat("%d Schüsse gleichzeitig", ShipGuns(st, lvl))
-                                 : TextFormat("%d  ->  %d Schüsse gleichzeitig", ShipGuns(st, lvl), ShipGuns(st, lvl + 1));
-                    break;
-                default:
-                    desc = maxed ? TextFormat("Kapazität %d", ShipCargo(st, lvl))
-                                 : TextFormat("Kapazität %d  ->  %d", ShipCargo(st, lvl), ShipCargo(st, lvl + 1));
-                    break;
-            }
-            Rectangle row{x, y, bw, 74 * s};
-            DrawRectangleRec(row, Color{36, 42, 54, 220});
-            Text(names[t], row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
-            for (int k = 0; k < maxLvl; ++k) {
-                Color c = k < lvl ? ACCENT : Color{70, 76, 90, 255};
-                DrawRectangle(static_cast<int>(row.x + 16 * s + k * 22 * s), static_cast<int>(row.y + 46 * s),
-                              static_cast<int>(18 * s), static_cast<int>(10 * s), c);
-            }
-            Text(desc, row.x + 150 * s, row.y + 44 * s, 18 * s, MUTED);
-            // UpgradeCost liefert -1 bei maximaler Stufe -> afford = false.
-            int cost = w.UpgradeCost(me, t);
-            bool afford = cost >= 0 && me.balance >= cost;
-            std::string bl = maxed ? std::string("MAXIMUM")
-                                   : keyboard ? TextFormat("[%d]  %s Pkt.", t + 1, Num(cost).c_str()) : Num(cost) + " Pkt.";
-            Rectangle b{row.x + row.width - 230 * s, row.y + 14 * s, 214 * s, 50 * s};
-            bool buyHover = false;
-            bool click = Button(b, bl, 22 * s, false, afford && interactive, &buyHover);
-            // Zifferntasten 1-5: In raylibs KeyboardKey liegen KEY_ONE..KEY_FIVE
-            // direkt hintereinander (ASCII '1'..'5'), daher KEY_ONE + t.
-            bool keyBuy = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t));
-            if (interactive && afford && (click || keyBuy)) {
-                req.buy = t;
-            } else if (interactive && !afford && (keyBuy || (buyHover && PointerPressed()))) {
-                g_audio.Play(Sfx::Denied);
-            }
-            y += 82 * s;
+        if (w.orbit) {
+            const char* tabNames[2] = {"Werft", "Karte"};
+            y += DockTabs(tabNames, 2, dockTab, x, y, bw, interactive);
         }
-        y += 6 * s;
-        Rectangle ub{x, y, bw, 50 * s};
-        if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+        if (w.orbit && dockTab == 1) {
+            DrawMapTab(w, me, x, y, bw, interactive, req);
+            Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
+            if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+        } else {
+            Text("Rüste dein Schiff auf. Upgrades werden mit Ressourcenpunkten bezahlt.", x, y, 18 * s, MUTED);
+            y += 34 * s;
+
+            // t läuft in der Reihenfolge von cfg::Upgrade (Antrieb, Panzerung,
+            // Bewaffnung, Lager, Kanonen). Die Werte-Tabellen in Config.hpp haben je
+            // UPGRADE_LEVELS + 1 Einträge (Index 0 = Startwert), daher ist
+            // [lvl + 1] gültig, solange die Stufe nicht maximal ist.
+            // Die Werte hängen vom Schiffstyp ab (ShipSpeed ... in GameSettings.hpp),
+            // die höchste Kanonen-Stufe auch (ShipUpgradeMax).
+            const char* names[cfg::UP_COUNT] = {"Antrieb", "Panzerung", "Bewaffnung", "Lager", "Kanonen"};
+            const ShipType& st = w.settings.Ship(me.shipType);
+            for (int t = 0; t < cfg::UP_COUNT; ++t) {
+                int lvl = me.upgrades[t];
+                const int maxLvl = ShipUpgradeMax(st, t);
+                bool maxed = lvl >= maxLvl;
+                std::string desc;
+                switch (t) {
+                    case cfg::UP_SPEED:
+                        desc = maxed ? TextFormat("Tempo %.0f", ShipSpeed(st, lvl))
+                                     : TextFormat("Tempo %.0f  ->  %.0f", ShipSpeed(st, lvl), ShipSpeed(st, lvl + 1));
+                        break;
+                    case cfg::UP_ARMOR:
+                        desc = maxed ? TextFormat("Schild %.0f", ShipArmor(st, lvl))
+                                     : TextFormat("Schild %.0f  ->  %.0f", ShipArmor(st, lvl), ShipArmor(st, lvl + 1));
+                        break;
+                    case cfg::UP_WEAPON:
+                        // WEAPON_RATE ist die Pause zwischen zwei Schüssen in
+                        // Sekunden; 1 / Pause = Schüsse pro Sekunde.
+                        desc = maxed ? TextFormat("Schaden %.0f, %.1f Schuss/s", ShipDamage(st, lvl), 1.0f / cfg::WEAPON_RATE[lvl])
+                                     : TextFormat("Schaden %.0f -> %.0f,  %.1f -> %.1f Schuss/s", ShipDamage(st, lvl),
+                                                  ShipDamage(st, lvl + 1), 1.0f / cfg::WEAPON_RATE[lvl], 1.0f / cfg::WEAPON_RATE[lvl + 1]);
+                        break;
+                    case cfg::UP_GUNS:
+                        desc = maxed ? TextFormat("%d Schüsse gleichzeitig", ShipGuns(st, lvl))
+                                     : TextFormat("%d  ->  %d Schüsse gleichzeitig", ShipGuns(st, lvl), ShipGuns(st, lvl + 1));
+                        break;
+                    default:
+                        desc = maxed ? TextFormat("Kapazität %d", ShipCargo(st, lvl))
+                                     : TextFormat("Kapazität %d  ->  %d", ShipCargo(st, lvl), ShipCargo(st, lvl + 1));
+                        break;
+                }
+                Rectangle row{x, y, bw, 74 * s};
+                DrawRectangleRec(row, Color{36, 42, 54, 220});
+                Text(names[t], row.x + 16 * s, row.y + 10 * s, 26 * s, TEXT);
+                for (int k = 0; k < maxLvl; ++k) {
+                    Color c = k < lvl ? ACCENT : Color{70, 76, 90, 255};
+                    DrawRectangle(static_cast<int>(row.x + 16 * s + k * 22 * s), static_cast<int>(row.y + 46 * s),
+                                  static_cast<int>(18 * s), static_cast<int>(10 * s), c);
+                }
+                Text(desc, row.x + 150 * s, row.y + 44 * s, 18 * s, MUTED);
+                // UpgradeCost liefert -1 bei maximaler Stufe -> afford = false.
+                int cost = w.UpgradeCost(me, t);
+                bool afford = cost >= 0 && me.balance >= cost;
+                std::string bl = maxed ? std::string("MAXIMUM")
+                                       : keyboard ? TextFormat("[%d]  %s Pkt.", t + 1, Num(cost).c_str()) : Num(cost) + " Pkt.";
+                Rectangle b{row.x + row.width - 230 * s, row.y + 14 * s, 214 * s, 50 * s};
+                bool buyHover = false;
+                bool click = Button(b, bl, 22 * s, false, afford && interactive, &buyHover);
+                // Zifferntasten 1-5: In raylibs KeyboardKey liegen KEY_ONE..KEY_FIVE
+                // direkt hintereinander (ASCII '1'..'5'), daher KEY_ONE + t.
+                bool keyBuy = IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + t));
+                if (interactive && afford && (click || keyBuy)) {
+                    req.buy = t;
+                } else if (interactive && !afford && (keyBuy || (buyHover && PointerPressed()))) {
+                    g_audio.Play(Sfx::Denied);
+                }
+                y += 82 * s;
+            }
+            y += 6 * s;
+            Rectangle ub{x, y, bw, 50 * s};
+            if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
+        }
     }
 
     // F (dieselbe Taste wie zum Andocken) oder ESC verlassen die Station;

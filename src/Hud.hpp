@@ -64,6 +64,7 @@ struct DockRequest {
     int switchShip = -1;   // Handelsstation, Tab "Schiff": zu diesem Schiffstyp wechseln, -1 = nein
     int acceptMission = -1;   // Handelsstation, Tab "Missionen": Missionsart (MissionType) annehmen, -1 = nein
     bool toTeam = false;      // Handelsstation: "Als SG-Team spielen" (ins Command Center)
+    bool switchMap = false;   // Reiter "Karte": zur anderen Karte wechseln (World::CanSwitchMap)
 };
 
 // Stationsfenster des eigenen Spielers (w.Me()). Handelsstation: Tab
@@ -72,7 +73,8 @@ struct DockRequest {
 // "Missionen" zum Annehmen einer Mini-Mission [1]-[3] (Tab-Taste bzw. LB/RB
 // wechselt den Tab). Werft: vier Aufrüstungen [1]-[4].
 // Raumschiffsverkäufer: Schiffe kaufen [1]-[4] oder mit Inzahlunggabe
-// [Umschalt+1]-[4]. Alle: Abdocken [F]/[ESC], am Controller Y oder B
+// [Umschalt+1]-[4]. Reiter "Karte" (Handelsstation; auf dem Trägerschiff
+// auch Werft und Raumschiffsverkäufer): Wechsel Mond <-> Weltraumkarte [1]. Alle: Abdocken [F]/[ESC], am Controller Y oder B
 // (Knöpfe mit dem Controller-Zeiger und A).
 // interactive = false: nur Anzeige, Tasten und Klicks werden ignoriert. Das
 // gilt im Simulationsmodus (der Autopilot entscheidet) und in den ersten

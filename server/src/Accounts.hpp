@@ -112,6 +112,7 @@ struct PlayerProgress {
     // Pilot auf der Weltraumkarte (100.000 auf dem Mond geschafft): beim
     // nächsten Anmelden geht es dort weiter
     bool orbit = false;
+    bool orbitGoal = false;   // im All schon einmal 100.000: Kartenwechsel frei (PlayerState::orbitGoal)
 };
 
 struct Account {

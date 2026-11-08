@@ -556,6 +556,7 @@ bool Accounts::Load(std::string& error) {
             else if (k == "sgDowns") ParseInt(v, p.sgDowns, 0, 1000000000);
             else if (k == "lives") ParseInt(v, p.lives, 1, limits::MAX_LIVES);
             else if (k == "orbit") p.orbit = v == "1";
+            else if (k == "orbitGoal") p.orbitGoal = v == "1";
             else if (k == "upgrades") {
                 // "1,2,0,3" -> vier Stufen, jeweils auf 0..UPGRADE_LEVELS begrenzt
                 std::istringstream is(v);
@@ -814,6 +815,7 @@ void Accounts::SaveAccounts() {
         if (p.hasPos)
             out += " pos=" + NumText(p.posX) + "," + NumText(p.posZ) + "," + NumText(p.yaw) + "," + std::to_string(p.posSeed);
         if (p.orbit) out += " orbit=1";
+        if (p.orbitGoal) out += " orbitGoal=1";
         out += "\n";
     }
     QueueWrite(PathOf(ACCOUNTS_FILE), std::move(out), false, "Konten");

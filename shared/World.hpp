@@ -652,6 +652,13 @@ struct PlayerState {
     int kills = 0;
     int deaths = 0;
     int goals = 0;               // so oft das Ziel erreicht
+    // Auf der Weltraumkarte schon einmal das Ziel erreicht (der Mond davor
+    // sowieso): Kartenwechsel Mond <-> All an Handelsstation bzw.
+    // Trägerschiff frei (Reiter "Karte"). Bleibt auch nach einem Absturz.
+    bool orbitGoal = false;
+    // Mehrspieler: alle Leben verbraucht, Fortschritt zurückgesetzt
+    // (ResetProgress). Ein Pilot im All kommt dann zurück auf den Mond.
+    bool progressLost = false;
     float respawnT = 0.0f;       // Mehrspieler: Sekunden bis zum neuen Schiff
     int revealRevision = 0;      // zählt hoch, wenn dieser Spieler eine Lagerstätte entdeckt
 
@@ -719,9 +726,13 @@ public:
     // dem Trägerschiff; CarryPilot übernimmt danach seinen Fortschritt.
     // delivered = insgesamt abgeliefert (vom Mond, bestimmt die Stärke der Piraten).
     void NewOrbit(unsigned int seed, long long delivered);
-    // Pilot kommt vom Mond (Ziel erreicht): Aufrüstungen, Schiffe, Leben und
-    // Statistik aus from übernehmen, Kontostand beginnt bei 0.
-    void CarryPilot(PlayerState& ps, const PlayerState& from);
+    // Pilot kommt vom Mond (Ziel erreicht) bzw. wechselt die Karte:
+    // Aufrüstungen, Schiffe, Leben und Statistik aus from übernehmen. Der
+    // Kontostand beginnt bei 0, beim Kartenwechsel (keepBalance) bleibt er.
+    void CarryPilot(PlayerState& ps, const PlayerState& from, bool keepBalance = false);
+    // Kartenwechsel Mond <-> Weltraumkarte frei (PlayerState::orbitGoal)?
+    // Angedockt an der Handelsstation (Mond) bzw. am Trägerschiff (All).
+    bool CanSwitchMap(const PlayerState& ps) const;
     // Ein Zeitschritt der Spielregeln (Einzelspieler: einmal pro Bild mit dem
     // dt des Bildes; Server: fest 1/30 s). Danach liegen in sounds, fx, goals
     // und PlayerState::outbox neue Ereignisse, die der Aufrufer abarbeitet
@@ -1080,6 +1091,7 @@ public:
     void DamageAsteroid(Asteroid& a, float dmg, int attackerPlayerId);   // Treffer eines Spielergeschosses (UpdateBullets)
     void StationExplodes();                            // Strukturpunkte 0: alle Konten auf 0
     void OrbitBounty(PlayerState& ps, const Ship& s);  // Abschuss eines Piraten: Punkte, Ziel prüfen (DamageShip)
+    void NextRound(PlayerState& ps);                   // Einzelspieler, Ziel bei freiem Kartenwechsel: neue Runde auf dieser Karte
     void UpdateTrooperAi(Trooper& t, float dt);        // Eingabe einer KI-Figur (Ai.cpp)
     // Bodengegner (Ai.cpp): beschossen oder getroffen, Schuss gehört, Gruppe alarmieren
     void NoticeShooter(Trooper& t, int shooterId);

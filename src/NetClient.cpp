@@ -1295,6 +1295,7 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     }
     ps.scanOn = me.scanOn;
     ps.mining = me.mining;
+    ps.orbitGoal = me.orbitGoal;
     ps.mineKind = me.mineKind;
     ps.mineId = me.mineId;
     ps.mineT = me.mineT;
