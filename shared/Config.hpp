@@ -450,7 +450,7 @@ constexpr int ORBIT_PIRATES = 8;                 // so viele Piraten gleichzeiti
 constexpr float ORBIT_STATION_HP = 1000.0f;      // Strukturpunkte der Raumstation
 constexpr float ORBIT_STATION_SCALE = 40.0f;     // Maßstab des Modells (40 m breit)
 constexpr float ORBIT_STATION_RESPAWN = 30.0f;   // Sekunden nach der Explosion bis zur neuen Station
-constexpr float ORBIT_CARRIER_Z = 150.0f;        // Trägerschiff: so weit südlich der Station (Mitte)
+constexpr float ORBIT_CARRIER_Z = 150.0f;        // Trägerschiffe: so weit südlich der Station (Mitte)
 constexpr float ORBIT_ASTEROID_FIRST = 45.0f;    // Sekunden bis zum ersten Asteroiden
 constexpr float ORBIT_ASTEROID_INTERVAL = 75.0f; // danach im Mittel so oft (mal 0,8 bis 1,2)
 constexpr float ORBIT_ASTEROID_DIST = 230.0f;    // Abstand zur Station beim Auftauchen
@@ -458,5 +458,29 @@ constexpr float ORBIT_ASTEROID_SPEED = 3.5f;     // Einheiten pro Sekunde (gut e
 constexpr float ORBIT_ASTEROID_HP = 250.0f;      // so viel Schaden hält ein Asteroid aus
 constexpr float ORBIT_ASTEROID_DAMAGE = 250.0f;  // Strukturpunkte je Einschlag (vier Treffer: Station zerstört)
 constexpr float ORBIT_ASTEROID_SIZE = 7.0f;      // Maßstab des Modells (gut 6 m breit)
+constexpr float ORBIT_ASTEROID_CONTACT = 0.1f;   // Schiff berührt einen Asteroiden: ein Zehntel des vollen Schilds je Sekunde
+// Piraten und Elite-Piraten im All fliegen das Alien-Raumschiff des Nutzers
+// (assets/models/ships/, Farbton wie auf dem Mond: Render.cpp).
+constexpr const char* ORBIT_PIRATE_MODEL = "ships/alien-spacecraft";
+// Abgeschossene Schiffe im All stürzen nicht ab: Sie taumeln in ihrer
+// Flugrichtung weiter (mindestens so schnell) und explodieren dann.
+constexpr float ORBIT_TUMBLE_TIME = 2.5f;        // Sekunden bis zur Explosion
+constexpr float ORBIT_TUMBLE_SPEED = 6.0f;       // Mindestgeschwindigkeit beim Taumeln
+// Alien-Mutterschiff (ShipKind::Boss, Orbit.cpp): alle ORBIT_BOSS_INTERVAL
+// Sekunden kommt eins, solange weniger als ORBIT_BOSS_MAX da sind. Schild und
+// Belohnung sind zehnmal so hoch wie beim Elite-Piraten, die Waffe schießt wie
+// die Spielerwaffe auf Stufe 5. Nach ORBIT_BOSS_REGEN_DELAY Sekunden ohne
+// Treffer erholt sich der Schild (von 0 auf voll in ORBIT_BOSS_REGEN_TIME).
+// Die Belohnung teilen sich die Spieler nach ihrem Anteil am Schaden.
+// Entdeckt ist es, sobald es im Radarkreis eines Spielers war (wie die
+// Minikarte, Hud.cpp); dann bleibt es für ihn bis zur Zerstörung auf der Karte.
+constexpr const char* ORBIT_BOSS_MODEL = "ships/alien-mothership";
+constexpr float ORBIT_BOSS_INTERVAL = 300.0f;    // fünf Minuten (auch bis zum ersten)
+constexpr int ORBIT_BOSS_MAX = 4;
+constexpr float ORBIT_BOSS_FACTOR = 10.0f;       // Schild: Elite-Pirat mal 10
+constexpr int ORBIT_BOSS_BOUNTY = 10 * ORBIT_BOUNTY_ELITE;   // 50.000, geteilt nach Schaden
+constexpr float ORBIT_BOSS_REGEN_DELAY = 120.0f;
+constexpr float ORBIT_BOSS_REGEN_TIME = 30.0f;
+constexpr float ORBIT_BOSS_SIGHT = 90.0f;        // Radarkreis der Minikarte
 
 } // namespace cfg

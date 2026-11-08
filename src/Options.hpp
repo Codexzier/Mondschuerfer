@@ -96,15 +96,16 @@ private:
     enum Tab { TAB_SOUND, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
     // Wählbare Zeilen (Tastatursteuerung); welche davon zu sehen sind, hängt
     // von der Seite ab (RowsOf). ROW_TABS = die Karteireiter selbst.
-    // ROW_PIXEL .. ROW_STONES sind die Grafikeffekte (EffectLevel usw.).
+    // ROW_PIXEL .. ROW_NEBULA sind die Grafikeffekte (EffectLevel usw.).
     enum Row {
         ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA,
-        ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_STONES, ROW_TRACKS, ROW_TANK, ROW_BARS, ROW_BACK
+        ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_STONES, ROW_DUST, ROW_NEBULA, ROW_TRACKS, ROW_TANK, ROW_BARS,
+        ROW_BACK
     };
-    static constexpr int kEffectRows = ROW_STONES - ROW_PIXEL + 1;
+    static constexpr int kEffectRows = ROW_NEBULA - ROW_PIXEL + 1;
 
     // Wählbare Zeilen der Seite tab von oben nach unten; liefert die Anzahl
-    // (rows braucht Platz für 12).
+    // (rows braucht Platz für 16).
     static int RowsOf(int tab, int* rows);
     // Seite wechseln (siehe Options.cpp).
     void SetTab(int tab, bool keepTabsRow);
@@ -135,7 +136,7 @@ private:
     static int TrackLevel(int seconds);
     void SetTrackLevel(int level, bool save);
 
-    // Grafikeffekte (Zeilen ROW_PIXEL .. ROW_STONES), alle als Regler mit
+    // Grafikeffekte (Zeilen ROW_PIXEL .. ROW_NEBULA), alle als Regler mit
     // Stufen: EffectLevels = Anzahl der Stufen, EffectLevel = aktuelle Stufe
     // aus g_clientConfig, EffectText = Anzeige neben dem Regler,
     // SetEffectLevel setzt die Stufe (save wie bei SetVolume).
@@ -145,6 +146,8 @@ private:
     //   Triebwerksschweif:  Aus, Kurz, Mittel, Lang
     //   Treffer-Aufblitzen: Aus, 10 % .. 100 %
     //   Bodensteine:        Aus, Nur zu Fuß, Immer (auch aus dem Schiff)
+    //   Sternenstaub (All): Aus, Staub, Staub und Streifen (Weltraumkarte der Piloten)
+    //   Weltraumnebel (All): Aus, 10 % .. 100 %
     static int EffectLevels(int row);
     static int EffectLevel(int row);
     static std::string EffectText(int row);

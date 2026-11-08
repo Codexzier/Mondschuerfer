@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // Options.cpp – Bildschirm "Optionen" mit drei Karteireitern: "Ton" (Musik
 // an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA, Stil-Look,
-// Schatten, Sandsturm, Triebwerksschweif, Treffer-Aufblitzen, Bodensteine, Fahrspuren) und "Steuerung"
+// Schatten, Sandsturm, Triebwerksschweif, Treffer-Aufblitzen, Bodensteine, Sternenstaub, Weltraumnebel,
+// Fahrspuren) und "Steuerung"
 // (Tank-Steuerung an/aus, Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
@@ -29,9 +30,11 @@
 //      "Grafik":    Schieberegler für Tilt-Shift, Kantenglättung (MSAA),
 //                   FXAA und Stil-Look (alle umgesetzt in TiltShift.cpp),
 //                   für die Grafikeffekte Schatten, Sandsturm,
-//                   Triebwerksschweif, Treffer-Aufblitzen und Bodensteine
-//                   (Effects.cpp, Render.cpp) sowie für die Dauer der Fahrspuren der Rover
-//                   (Render.cpp)
+//                   Triebwerksschweif, Treffer-Aufblitzen, Bodensteine,
+//                   Sternenstaub und Weltraumnebel (Effects.cpp, Render.cpp)
+//                   sowie für die Dauer der Fahrspuren der Rover (Render.cpp).
+//                   Zwölf Zeilen: etwas niedriger als auf den anderen Seiten
+//                   (kGfxRowH), damit das Fenster noch auf 900 Pixel passt.
 //      "Steuerung": Umschalter Tank-Steuerung, feste Tabelle (kControls unten)
 //   5. Knopf "Zurück".
 // Das Fenster ist immer so hoch wie die längste Seite, damit es beim
@@ -110,6 +113,8 @@ constexpr float kPanelW = 1080.0f;   // Fensterbreite
 constexpr float kPad = 40.0f;        // Innenabstand links/rechts
 constexpr float kRowH = 52.0f;       // Höhe der wählbaren Zeilen (Ton, Grafik)
 constexpr float kRowGap = 8.0f;      // Abstand unter jeder wählbaren Zeile
+constexpr float kGfxRowH = 44.0f;    // ... auf der Seite "Grafik" (zwölf Zeilen)
+constexpr float kGfxRowGap = 6.0f;
 constexpr float kTabW = 220.0f;      // Breite eines Karteireiters
 constexpr float kTabH = 46.0f;       // Höhe der Karteireiter
 constexpr float kCtrlX = 300.0f;     // Abstand der Bedienelemente vom linken Zeilenrand
@@ -119,10 +124,10 @@ constexpr float kButtonH = 50.0f;    // Höhe des Knopfs "Zurück"
 
 // Höhe des Inhalts der einzelnen Seiten (in derselben Reihenfolge wie in Draw):
 //   Ton:       vier Zeilen, Hinweiszeile 42
-//   Grafik:    zehn Zeilen, Hinweiszeile 42
+//   Grafik:    zwölf (niedrigere) Zeilen, Hinweiszeile 42
 //   Steuerung: eine Zeile (Tank-Steuerung), Hinweiszeile 30, Tabellenkopf 30, Tabellenzeilen
 float SoundHeight() { return 4.0f * (kRowH + kRowGap) + 42.0f; }
-float GraphicsHeight() { return 10.0f * (kRowH + kRowGap) + 42.0f; }
+float GraphicsHeight() { return 12.0f * (kGfxRowH + kGfxRowGap) + 42.0f; }
 
 // Stufen des Reglers "Fahrspuren": so viele Sekunden bleiben die Reifenspuren
 // der Rover sichtbar (0 = keine Spuren). Die letzte Stufe ist
@@ -138,6 +143,7 @@ const char* const kPixelNames[] = {"Aus", "Retro-Pixel fein", "Retro-Pixel mitte
 const char* const kShadowNames[] = {"Aus", "Niedrig", "Mittel", "Hoch"};
 const char* const kTrailNames[] = {"Aus", "Kurz", "Mittel", "Lang"};
 const char* const kStoneNames[] = {"Aus", "Nur zu Fuß", "Immer"};
+const char* const kDustNames[] = {"Aus", "Staub", "Staub und Streifen"};
 float ControlsHeight() { return 2.0f * (kRowH + kRowGap) + 30.0f + 30.0f + kControlCount * kTableRowH; }
 
 // Gesamthöhe des Fensters: Rand 24, Überschrift 64, Karteireiter, Abstand 20,
@@ -289,7 +295,7 @@ void OptionsScreen::SetTrackLevel(int level, bool save) {
 // Treffer-Aufblitzen stehen in der Datei als Wert 0..1, Stufe = Zehntel.
 // Alle anderen Dateien lesen die Werte jedes Frame aus g_clientConfig.
 int OptionsScreen::EffectLevels(int row) {
-    return row == ROW_SAND || row == ROW_FLASH ? 11 : row == ROW_STONES ? 3 : 4;
+    return row == ROW_SAND || row == ROW_FLASH || row == ROW_NEBULA ? 11 : row == ROW_STONES || row == ROW_DUST ? 3 : 4;
 }
 
 int OptionsScreen::EffectLevel(int row) {
@@ -304,6 +310,8 @@ int OptionsScreen::EffectLevel(int row) {
         case ROW_TRAIL: return std::clamp(g_clientConfig.trail, 0, 3);
         case ROW_FLASH: return static_cast<int>(std::lround(g_clientConfig.hitFlash * 10.0f));
         case ROW_STONES: return std::clamp(g_clientConfig.groundStones, 0, 2);
+        case ROW_DUST: return std::clamp(g_clientConfig.spaceDust, 0, 2);
+        case ROW_NEBULA: return static_cast<int>(std::lround(g_clientConfig.nebula * 10.0f));
         default: return 0;
     }
 }
@@ -315,6 +323,7 @@ std::string OptionsScreen::EffectText(int row) {
         case ROW_SHADOWS: return kShadowNames[level];
         case ROW_TRAIL: return kTrailNames[level];
         case ROW_STONES: return kStoneNames[level];
+        case ROW_DUST: return kDustNames[level];
         default: return level > 0 ? std::to_string(level * 10) + " %" : std::string("Aus");
     }
 }
@@ -328,6 +337,8 @@ void OptionsScreen::SetEffectLevel(int row, int level, bool save) {
         case ROW_TRAIL: g_clientConfig.trail = level; break;
         case ROW_FLASH: g_clientConfig.hitFlash = level / 10.0f; break;
         case ROW_STONES: g_clientConfig.groundStones = level; break;
+        case ROW_DUST: g_clientConfig.spaceDust = level; break;
+        case ROW_NEBULA: g_clientConfig.nebula = level / 10.0f; break;
         default: return;
     }
     if (save) g_clientConfig.Save();
@@ -356,7 +367,7 @@ void OptionsScreen::SetEnemyBarsOn(bool on) {
 // Zeichnen und Bedienen (Ablauf siehe Dateikopf)
 // ===========================================================================
 // Wählbare Zeilen der Seite tab von oben nach unten (Pfeil hoch/runter).
-// Liefert die Anzahl; rows muss Platz für 12 Einträge haben.
+// Liefert die Anzahl; rows muss Platz für 16 Einträge haben.
 int OptionsScreen::RowsOf(int tab, int* rows) {
     int n = 0;
     rows[n++] = ROW_TABS;
@@ -369,7 +380,7 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_TILT;
         rows[n++] = ROW_MSAA;
         rows[n++] = ROW_FXAA;
-        for (int r = ROW_PIXEL; r <= ROW_STONES; ++r) rows[n++] = r;
+        for (int r = ROW_PIXEL; r <= ROW_NEBULA; ++r) rows[n++] = r;
         rows[n++] = ROW_TRACKS;
     } else if (tab == TAB_CONTROLS) {
         rows[n++] = ROW_TANK;
@@ -387,7 +398,7 @@ void OptionsScreen::SetTab(int tab, bool keepTabsRow) {
     dragging_ = draggingClip_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = draggingTracks_ = false;
     for (bool& d : draggingEffect_) d = false;
     g_clientConfig.SaveIfChanged();
-    int rows[12];
+    int rows[16];
     RowsOf(tab_, rows);
     sel_ = keepTabsRow ? ROW_TABS : rows[1];
 }
@@ -435,7 +446,7 @@ bool OptionsScreen::Draw() {
         if (PadPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) SetTab(tab_ + 1, sel_ == ROW_TABS);
         if (PadPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1)) SetTab(tab_ - 1, sel_ == ROW_TABS);
         // Pfeil hoch/runter: nur durch die Zeilen der aktuellen Seite
-        int rows[12];
+        int rows[16];
         const int n = RowsOf(tab_, rows);
         int at = 0;
         while (at < n - 1 && rows[at] != sel_) ++at;
@@ -458,7 +469,7 @@ bool OptionsScreen::Draw() {
         if (sel_ == ROW_MSAA) msaaStep = dir;
         if (sel_ == ROW_FXAA) fxaaStep = 0.1f * dir;
         if (sel_ == ROW_TRACKS) trackStep = dir;
-        if (sel_ >= ROW_PIXEL && sel_ <= ROW_STONES) effectStep = dir;
+        if (sel_ >= ROW_PIXEL && sel_ <= ROW_NEBULA) effectStep = dir;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
             if (sel_ == ROW_MUSIC) toggle = true;
             else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
@@ -587,13 +598,14 @@ bool OptionsScreen::Draw() {
             Text("Taste M schaltet jederzeit den ganzen Ton stumm (Effekte, Musik und Clips).", x, y + 4 * s, 17 * s, MUTED);
         overRow = overMusic || overVol || overClip || overSubs;
     } else if (tab_ == TAB_GRAPHICS) {
+        const float gfxLabelY = (kGfxRowH * s - label) * 0.5f;   // wie labelY, für die niedrigeren Zeilen
         // Zeile "Tilt-Shift": Schieberegler plus Prozentanzeige (0 = "Aus").
-        const Rectangle rowTilt{x, y, iw, kRowH * s};
+        const Rectangle rowTilt{x, y, iw, kGfxRowH * s};
         const bool overTilt = CheckCollisionPointRec(mouse, rowTilt);
         if (overTilt && MouseMoved()) sel_ = ROW_TILT;
         DrawRow(rowTilt, sel_ == ROW_TILT || draggingTilt_);
-        Text("Tilt-Shift", x + 22 * s, y + labelY, label, TEXT);
-        const Rectangle tiltSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+        Text("Tilt-Shift", x + 22 * s, y + gfxLabelY, label, TEXT);
+        const Rectangle tiltSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kGfxRowH * s - 12 * s};
         float tilt = g_clientConfig.tiltShift;
         const bool wasDraggingTilt = draggingTilt_;
         if (Slider(tiltSlider, tilt, draggingTilt_, sel_ == ROW_TILT, 0.1f)) {
@@ -604,18 +616,18 @@ bool OptionsScreen::Draw() {
         if (wasDraggingTilt && !draggingTilt_) g_clientConfig.SaveIfChanged();
         const std::string tiltText =
             g_clientConfig.tiltShift > 0.0f ? std::to_string(std::lround(g_clientConfig.tiltShift * 100.0f)) + " %" : std::string("Aus");
-        Text(tiltText, tiltSlider.x + tiltSlider.width + 30 * s, y + labelY, label, g_clientConfig.tiltShift > 0.0f ? TEXT : MUTED);
-        y += (kRowH + kRowGap) * s;
+        Text(tiltText, tiltSlider.x + tiltSlider.width + 30 * s, y + gfxLabelY, label, g_clientConfig.tiltShift > 0.0f ? TEXT : MUTED);
+        y += (kGfxRowH + kGfxRowGap) * s;
 
         // Zeile "Kantenglättung": Regler mit fünf Stufen Aus, 2x, 4x, 8x, 16x
         // (Wert 0, 0.25, 0.5, 0.75, 1). Kann die Grafikkarte die Stufe nicht,
         // steht daneben, wie viel sie kann (TiltShift begrenzt dann darauf).
-        const Rectangle rowMsaa{x, y, iw, kRowH * s};
+        const Rectangle rowMsaa{x, y, iw, kGfxRowH * s};
         const bool overMsaa = CheckCollisionPointRec(mouse, rowMsaa);
         if (overMsaa && MouseMoved()) sel_ = ROW_MSAA;
         DrawRow(rowMsaa, sel_ == ROW_MSAA || draggingMsaa_);
-        Text("Kantenglättung", x + 22 * s, y + labelY, label, TEXT);
-        const Rectangle msaaSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+        Text("Kantenglättung", x + 22 * s, y + gfxLabelY, label, TEXT);
+        const Rectangle msaaSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kGfxRowH * s - 12 * s};
         float msaaValue = MsaaLevel(g_clientConfig.msaa) * 0.25f;
         const bool wasDraggingMsaa = draggingMsaa_;
         if (Slider(msaaSlider, msaaValue, draggingMsaa_, sel_ == ROW_MSAA, 0.25f)) {
@@ -625,21 +637,21 @@ bool OptionsScreen::Draw() {
         if (draggingMsaa_) sel_ = ROW_MSAA;
         if (wasDraggingMsaa && !draggingMsaa_) g_clientConfig.SaveIfChanged();
         const std::string msaaText = g_clientConfig.msaa > 0 ? std::to_string(g_clientConfig.msaa) + "x" : std::string("Aus");
-        Text(msaaText, msaaSlider.x + msaaSlider.width + 30 * s, y + labelY, label, g_clientConfig.msaa > 0 ? TEXT : MUTED);
+        Text(msaaText, msaaSlider.x + msaaSlider.width + 30 * s, y + gfxLabelY, label, g_clientConfig.msaa > 0 ? TEXT : MUTED);
         const int maxSamples = tiltshift::MaxSamples();
         if (g_clientConfig.msaa > maxSamples) {
             const std::string note = maxSamples > 0 ? "(GPU max. " + std::to_string(maxSamples) + "x)" : std::string("(nicht möglich)");
-            Text(note, msaaSlider.x + msaaSlider.width + 100 * s, y + (kRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
+            Text(note, msaaSlider.x + msaaSlider.width + 100 * s, y + (kGfxRowH * s - 17 * s) * 0.5f, 17 * s, MUTED);
         }
-        y += (kRowH + kRowGap) * s;
+        y += (kGfxRowH + kGfxRowGap) * s;
 
         // Zeile "FXAA": Glätten per Shader, Stärke in 10-%-Schritten (0 = "Aus").
-        const Rectangle rowFxaa{x, y, iw, kRowH * s};
+        const Rectangle rowFxaa{x, y, iw, kGfxRowH * s};
         const bool overFxaa = CheckCollisionPointRec(mouse, rowFxaa);
         if (overFxaa && MouseMoved()) sel_ = ROW_FXAA;
         DrawRow(rowFxaa, sel_ == ROW_FXAA || draggingFxaa_);
-        Text("FXAA", x + 22 * s, y + labelY, label, TEXT);
-        const Rectangle fxaaSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+        Text("FXAA", x + 22 * s, y + gfxLabelY, label, TEXT);
+        const Rectangle fxaaSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kGfxRowH * s - 12 * s};
         float fxaa = g_clientConfig.fxaa;
         const bool wasDraggingFxaa = draggingFxaa_;
         if (Slider(fxaaSlider, fxaa, draggingFxaa_, sel_ == ROW_FXAA, 0.1f)) {
@@ -650,25 +662,27 @@ bool OptionsScreen::Draw() {
         if (wasDraggingFxaa && !draggingFxaa_) g_clientConfig.SaveIfChanged();
         const std::string fxaaText =
             g_clientConfig.fxaa > 0.0f ? std::to_string(std::lround(g_clientConfig.fxaa * 100.0f)) + " %" : std::string("Aus");
-        Text(fxaaText, fxaaSlider.x + fxaaSlider.width + 30 * s, y + labelY, label, g_clientConfig.fxaa > 0.0f ? TEXT : MUTED);
-        y += (kRowH + kRowGap) * s;
+        Text(fxaaText, fxaaSlider.x + fxaaSlider.width + 30 * s, y + gfxLabelY, label, g_clientConfig.fxaa > 0.0f ? TEXT : MUTED);
+        y += (kGfxRowH + kGfxRowGap) * s;
 
         // Zeilen der Grafikeffekte (Stil-Look, Schatten, Sandsturm,
-        // Triebwerksschweif, Treffer-Aufblitzen, Bodensteine): alle gleich gebaut, ein
+        // Triebwerksschweif, Treffer-Aufblitzen, Bodensteine, Sternenstaub,
+        // Weltraumnebel): alle gleich gebaut, ein
         // Regler mit EffectLevels Stufen (Wert 0 .. 1 wie bei der
         // Kantenglättung) und der Anzeige EffectText daneben.
         static const char* const kEffectNames[kEffectRows] = {"Stil-Look", "Schatten", "Sandsturm", "Triebwerksschweif",
-                                                              "Treffer-Aufblitzen", "Bodensteine"};
+                                                              "Treffer-Aufblitzen", "Bodensteine", "Sternenstaub (All)",
+                                                              "Weltraumnebel (All)"};
         bool overEffect = false;
-        for (int row = ROW_PIXEL; row <= ROW_STONES; ++row) {
+        for (int row = ROW_PIXEL; row <= ROW_NEBULA; ++row) {
             bool& dragging = draggingEffect_[row - ROW_PIXEL];
-            const Rectangle rowR{x, y, iw, kRowH * s};
+            const Rectangle rowR{x, y, iw, kGfxRowH * s};
             const bool over = CheckCollisionPointRec(mouse, rowR);
             if (over && MouseMoved()) sel_ = row;
             overEffect = overEffect || over;
             DrawRow(rowR, sel_ == row || dragging);
-            Text(kEffectNames[row - ROW_PIXEL], x + 22 * s, y + labelY, label, TEXT);
-            const Rectangle slider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+            Text(kEffectNames[row - ROW_PIXEL], x + 22 * s, y + gfxLabelY, label, TEXT);
+            const Rectangle slider{x + kCtrlX * s, y + 6 * s, 440 * s, kGfxRowH * s - 12 * s};
             const int levels = EffectLevels(row);
             const float stepSize = 1.0f / (levels - 1);
             float value = EffectLevel(row) * stepSize;
@@ -679,18 +693,18 @@ bool OptionsScreen::Draw() {
             }
             if (dragging) sel_ = row;
             if (wasDragging && !dragging) g_clientConfig.SaveIfChanged();
-            Text(EffectText(row), slider.x + slider.width + 30 * s, y + labelY, label, EffectLevel(row) > 0 ? TEXT : MUTED);
-            y += (kRowH + kRowGap) * s;
+            Text(EffectText(row), slider.x + slider.width + 30 * s, y + gfxLabelY, label, EffectLevel(row) > 0 ? TEXT : MUTED);
+            y += (kGfxRowH + kGfxRowGap) * s;
         }
 
         // Zeile "Fahrspuren": Regler mit sechs Stufen (kTrackTimes), Wert
         // 0, 0.2, ... 1 wie bei der Kantenglättung.
-        const Rectangle rowTracks{x, y, iw, kRowH * s};
+        const Rectangle rowTracks{x, y, iw, kGfxRowH * s};
         const bool overTracks = CheckCollisionPointRec(mouse, rowTracks);
         if (overTracks && MouseMoved()) sel_ = ROW_TRACKS;
         DrawRow(rowTracks, sel_ == ROW_TRACKS || draggingTracks_);
-        Text("Fahrspuren (Rover)", x + 22 * s, y + labelY, label, TEXT);
-        const Rectangle trackSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kRowH * s - 12 * s};
+        Text("Fahrspuren (Rover)", x + 22 * s, y + gfxLabelY, label, TEXT);
+        const Rectangle trackSlider{x + kCtrlX * s, y + 6 * s, 440 * s, kGfxRowH * s - 12 * s};
         const float trackStepSize = 1.0f / (kTrackLevels - 1);
         float trackValue = TrackLevel(g_clientConfig.trackTime) * trackStepSize;
         const bool wasDraggingTracks = draggingTracks_;
@@ -702,8 +716,8 @@ bool OptionsScreen::Draw() {
         if (wasDraggingTracks && !draggingTracks_) g_clientConfig.SaveIfChanged();
         const int tt = g_clientConfig.trackTime;
         const std::string trackText = tt <= 0 ? std::string("Aus") : tt < 60 ? std::to_string(tt) + " s" : std::to_string(tt / 60) + " min";
-        Text(trackText, trackSlider.x + trackSlider.width + 30 * s, y + labelY, label, tt > 0 ? TEXT : MUTED);
-        y += (kRowH + kRowGap) * s;
+        Text(trackText, trackSlider.x + trackSlider.width + 30 * s, y + gfxLabelY, label, tt > 0 ? TEXT : MUTED);
+        y += (kGfxRowH + kGfxRowGap) * s;
 
         Text("Wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf. Der Sandsturm schränkt die Sicht um das Schiff ein.", x,
              y + 4 * s, 17 * s, MUTED);

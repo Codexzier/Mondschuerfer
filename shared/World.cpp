@@ -236,6 +236,18 @@ Ship World::MakeShip(ShipKind kind, Vector3 pos) {
             s.turnRate = 1.8f;
             s.cargo = s.cargoMax = 400;   // die Ware: landet bei einem Abschuss im Wrack
             break;
+        case ShipKind::Boss:
+            // Alien-Mutterschiff (nur Weltraumkarte, Orbit.cpp): Schild zehnmal
+            // so hoch wie beim Elite-Piraten, gleich schnell, die Waffe wie die
+            // Spielerwaffe auf Stufe 5. Punkte gibt es statt Beute (BossBounty).
+            s.faction = Faction::Pirate;
+            s.model = ModelId(cfg::ORBIT_BOSS_MODEL);
+            s.maxHp = s.hp = (100.0f + tier * 18.0f) * cfg::ORBIT_BOSS_FACTOR;
+            s.maxSpeed = 18.5f + tier * 0.6f;
+            s.turnRate = 2.6f;
+            s.damage = cfg::WEAPON_DAMAGE[cfg::UPGRADE_LEVELS];
+            s.fireInterval = cfg::WEAPON_RATE[cfg::UPGRADE_LEVELS];
+            break;
     }
     return s;
 }
@@ -470,16 +482,25 @@ void World::Update(float dt) {
     // (kein echtes Mondschwerefeld, sondern so, dass es gut aussieht),
     // trudelt (crashSpin) und wird seitlich gebremst. Von der Flughöhe 3,2 bis
     // zum Aufschlag dauert das knapp 0,9 s.
+    // Weltraumkarte: kein Boden und keine Schwerkraft. Das Schiff fliegt
+    // geradeaus weiter (DamageShip), taumelt um alle Achsen (Render.cpp
+    // leitet das Nicken aus bank ab) und explodiert nach ORBIT_TUMBLE_TIME.
     for (size_t i = 0; i < ships.size(); ++i) {
         Ship& s = ships[i];
         if (!s.crashing || s.dead) continue;
         s.crashT += dt;
-        s.vel.y -= 11.0f * dt;
-        s.vel.x *= (1.0f - 0.6f * dt);
-        s.vel.z *= (1.0f - 0.6f * dt);
-        s.pos = Vector3Add(s.pos, Vector3Scale(s.vel, dt));
-        s.yaw += s.crashSpin * dt;
-        s.bank += s.crashSpin * 0.6f * dt;
+        if (orbit) {
+            s.pos = Vector3Add(s.pos, Vector3Scale(s.vel, dt));
+            s.yaw += s.crashSpin * 0.4f * dt;
+            s.bank += s.crashSpin * dt;
+        } else {
+            s.vel.y -= 11.0f * dt;
+            s.vel.x *= (1.0f - 0.6f * dt);
+            s.vel.z *= (1.0f - 0.6f * dt);
+            s.pos = Vector3Add(s.pos, Vector3Scale(s.vel, dt));
+            s.yaw += s.crashSpin * dt;
+            s.bank += s.crashSpin * 0.6f * dt;
+        }
         // Rauchspur: in etwa jedem dritten Schritt ein Teilchen, jedes vierte
         // davon als leuchtende Flamme. Der Server zieht hier KEINE
         // Zufallszahl (der Client erzeugt den Rauch in UpdateCosmetics selbst).
@@ -493,10 +514,10 @@ void World::Update(float dt) {
             sm.glow = sm.color.r > 200;
             particles.push_back(sm);
         }
-        // Aufschlag (Schiffsmitte 0,45 über dem Boden): große Explosion,
-        // dann Wrack bzw. Spielende.
-        if (s.pos.y <= 0.45f) {
-            Explosion({s.pos.x, 0.8f, s.pos.z}, s.kind == ShipKind::Player ? 2.0f : 1.4f);
+        // Aufschlag (Schiffsmitte 0,45 über dem Boden) bzw. im All Ende des
+        // Taumelns: große Explosion, dann Wrack bzw. Spielende.
+        if (orbit ? s.crashT >= cfg::ORBIT_TUMBLE_TIME : s.pos.y <= 0.45f) {
+            Explosion(orbit ? s.pos : Vector3{s.pos.x, 0.8f, s.pos.z}, s.kind == ShipKind::Player ? 2.0f : 1.4f);
             SoundAt(Sfx::CrashBoom, s.pos, s.kind == ShipKind::Player ? 1.0f : 0.8f);
             s.dead = true;
             PlayerState* sp = s.kind == ShipKind::Player && !isServer ? FindPlayer(s.playerId) : nullptr;
@@ -620,13 +641,14 @@ void World::Update(float dt) {
     // Piraten nachschieben. Einzelspieler: mehr, je weiter das Spiel fortgeschritten ist
     // (4 + 1 je 12.000 abgelieferte Punkte, höchstens 11; Config.hpp).
     // Mehrspieler: feste Anzahl aus den Server-Einstellungen (Schwierigkeitsgrad).
-    // Elite-Piraten zählen mit (gleiche Fraktion), Missionspiraten nicht.
+    // Elite-Piraten zählen mit (gleiche Fraktion), Missionspiraten und
+    // Alien-Mutterschiffe (eigener Takt, UpdateBosses) nicht.
     // Händler werden einzeln nachgeliefert, alle 25–40 s, bis wieder
     // cfg::MINERS_COUNT unterwegs sind.
     int pirates = 0, miners = 0;
     for (const auto& s : ships) {
         if (s.dead) continue;
-        if (s.faction == Faction::Pirate && s.mission < 0) ++pirates;
+        if (s.faction == Faction::Pirate && s.mission < 0 && s.kind != ShipKind::Boss) ++pirates;
         if (s.kind == ShipKind::Miner) ++miners;
     }
     // Weltraumkarte (Einzelspieler): feste Anzahl cfg::ORBIT_PIRATES.
@@ -1968,6 +1990,17 @@ void World::UpdateBullets(float dt) {
 // Verfolgung aus.
 void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int attackerPlayerId) {
     if (s.crashing || s.dead) return;
+    // Alien-Mutterschiff: Jeder Treffer hält die Erholung auf; der Schaden
+    // der Spieler zählt für die Belohnung (höchstens der restliche Schild)
+    if (s.kind == ShipKind::Boss) {
+        s.calmT = 0.0f;
+        if (attackerPlayerId >= 0) {
+            const float done = std::min(dmg, s.hp);
+            auto it = std::find_if(s.bossDamage.begin(), s.bossDamage.end(), [&](const auto& e) { return e.first == attackerPlayerId; });
+            if (it != s.bossDamage.end()) it->second += done;
+            else s.bossDamage.push_back({attackerPlayerId, done});
+        }
+    }
     s.hp -= dmg;
     s.hitFlash = 1.0f;
 
@@ -1998,28 +2031,40 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
     // Schild weg: Absturz beginnen (weiter geht es in Update, "Abstürzende
     // Schiffe"). Kleine Explosion jetzt, große beim Aufschlag. Das Schiff
     // wird leicht angehoben (vel.y = 1,5) und trudelt in zufälliger Richtung.
+    // Im All taumelt es stattdessen in seiner Flugrichtung geradeaus weiter,
+    // mindestens mit ORBIT_TUMBLE_SPEED.
     if (s.hp <= 0.0f) {
         s.hp = 0.0f;
         s.crashing = true;
         s.crashT = 0.0f;
         s.crashSpin = Rand(0, 1) < 0.5f ? Rand(-5.0f, -3.0f) : Rand(3.0f, 5.0f);
-        s.vel.y = 1.5f;
+        if (orbit) {
+            const float speed = sqrtf(s.vel.x * s.vel.x + s.vel.z * s.vel.z);
+            const Vector3 dir = speed > 0.5f ? Vector3{s.vel.x / speed, 0.0f, s.vel.z / speed} : ForwardFromYaw(s.yaw);
+            s.vel = Vector3Scale(dir, std::max(speed, cfg::ORBIT_TUMBLE_SPEED));
+        } else {
+            s.vel.y = 1.5f;
+        }
         s.mining = false;
         Explosion(s.pos, 0.7f);
         SoundAt(Sfx::ShipExplode, s.pos);
         if (s.mission >= 0) MissionShipDown(s);
+        // Mutterschiff: Belohnung für alle Beteiligten, auch wenn ein
+        // Geschützturm den letzten Treffer setzt
+        if (s.kind == ShipKind::Boss) BossBounty(s);
         if (s.kind == ShipKind::Player) {
             if (PlayerState* ps = FindPlayer(s.playerId)) {
                 ps->mining = false;
                 ps->scanOn = false;
-                Notify(*ps, "Schild zerstört! Dein Schiff stürzt ab!", Color{255, 110, 90, 255});
+                Notify(*ps, orbit ? "Schild zerstört! Dein Schiff taumelt und explodiert gleich!" : "Schild zerstört! Dein Schiff stürzt ab!",
+                       Color{255, 110, 90, 255});
                 FailMission(*ps, true);   // Absturz: laufende Mission scheitert
             }
         } else if (attacker == Faction::Player && attackerId >= 0 && attackerPlayer) {
             ++attackerPlayer->kills;
             // Weltraumkarte: Punkte gleich aufs Konto statt eines Wracks
             if (orbit) {
-                if (s.faction == Faction::Pirate) OrbitBounty(*attackerPlayer, s);
+                if (s.faction == Faction::Pirate && s.kind != ShipKind::Boss) OrbitBounty(*attackerPlayer, s);
             } else if (!simulation) {
                 Notify(*attackerPlayer, s.faction == Faction::Pirate ? "Pirat abgeschossen! Wrack kann abgebaut werden."
                                                                      : "Händler abgeschossen. Wrack kann abgebaut werden.",

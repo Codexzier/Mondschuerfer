@@ -6,11 +6,16 @@
 //   - kein Boden, keine Kristalle, keine Händler und keine Missionen;
 //   - in der Mitte die Raumstation (station-a bzw. station-b) mit
 //     Strukturpunkten (World::stationHp);
-//   - im Süden das Trägerschiff mit Werft und Raumschiffsverkäufer (zwei
-//     Stationen, Andocken wie auf dem Mond, mit Geschütztürmen);
+//   - im Süden zwei Trägerschiffe nebeneinander, eins mit der Werft, eins mit
+//     dem Raumschiffsverkäufer (Andocken wie auf dem Mond, mit
+//     Geschütztürmen; beim Verkäufer auch Reparatur und Schiffswechsel);
 //   - Piraten: Nur ihre Abschüsse bringen Punkte (OrbitBounty);
-//   - ab und an ein Asteroid, der langsam auf die Station zufliegt. Trifft er
-//     sie, verliert sie Strukturpunkte. Bei 0 explodiert sie: Alle Piloten
+//   - alle fünf Minuten ein Alien-Mutterschiff (höchstens vier): zehnfacher
+//     Schild, Waffe Stufe 5, Belohnung nach Schadensanteil (UpdateBosses,
+//     BossBounty);
+//   - ab und an ein Asteroid, der langsam auf die Station zufliegt. Wer ihn
+//     berührt, verliert Schild (ORBIT_ASTEROID_CONTACT). Trifft er die Station,
+//     verliert sie Strukturpunkte. Bei 0 explodiert sie: Alle Piloten
 //     auf der Karte haben Kontostand 0, nach cfg::ORBIT_STATION_RESPAWN kommt
 //     eine neue Station (abwechselnd das andere Modell).
 // Ziel: wieder cfg::GOAL_POINTS auf dem Konto. Die nächste Karte gibt es noch
@@ -21,7 +26,7 @@
 //
 // Aufrufer: main.cpp (NewOrbit und CarryPilot beim Sprung ins All), Save.cpp
 // (NewOrbit beim Laden), World::Update (UpdateOrbit), World::UpdateBullets
-// (DamageAsteroid), World::DamageShip (OrbitBounty).
+// (DamageAsteroid), World::DamageShip (OrbitBounty, BossBounty).
 // Gezeichnet wird in src/Render.cpp, das HUD steht in src/Hud.cpp.
 // ---------------------------------------------------------------------------
 #include "World.hpp"
@@ -34,7 +39,7 @@ namespace {
 // Schiffe fliegen über sie hinweg (wie auf dem Mond gibt es keine Kollision).
 constexpr float DECK_Y = cfg::SHIP_ALTITUDE - 1.2f;
 constexpr float CARRIER_SCALE = 50.0f;   // Trägerschiff: 50 m lang
-constexpr float DOCK_SPACING = 16.0f;    // Andockplätze 16 m links und rechts der Schiffsmitte
+constexpr float CARRIER_X = 35.0f;       // Trägerschiffe 35 m links und rechts der Mitte (20 m Lücke)
 
 // Punkte mit Tausenderpunkten ("2.000") für die Meldungen
 std::string Points(long long v) {
@@ -59,23 +64,25 @@ void World::NewOrbit(unsigned int newSeed, long long delivered) {
     // Insgesamt abgeliefert (vom Mond): bestimmt, wie stark die Piraten sind
     totalDelivered = delivered;
     ResolveModels();
+    mdl.pirateA = mdl.pirateB = mdl.elite = ModelId(cfg::ORBIT_PIRATE_MODEL);
 
-    // Trägerschiff längs der x-Achse; sein Rumpf ist ein Bauteil der Werft.
-    // Auf dem Deck zwei Andockplätze: Werft im Westen, Raumschiffsverkäufer
-    // im Osten, je mit zwei Geschütztürmen (Schutz am Rückzugspunkt).
+    // Zwei Trägerschiffe längs der x-Achse nebeneinander: im Westen die Werft
+    // (carrier-a), im Osten der Raumschiffsverkäufer (carrier-b). Der Rumpf
+    // ist ein Bauteil der jeweiligen Station; angedockt wird mitten auf dem
+    // Deck, je mit zwei Geschütztürmen (Schutz am Rückzugspunkt).
     // Die Stationen liegen in Deckhöhe (Render.cpp: Andockring auf dem Deck).
-    const int carrier = ModelId("carrier/carrier-a");
-    const float carrierY = -ModelBounds(carrier).max.y * CARRIER_SCALE;
     Station yard;
     yard.type = StationType::Shipyard;
     yard.name = "Werft";
-    yard.pos = {-DOCK_SPACING, DECK_Y, cfg::ORBIT_CARRIER_Z};
-    yard.parts.push_back({carrier, {DOCK_SPACING, carrierY, 0.0f}, PI * 0.5f, CARRIER_SCALE, 0});
+    yard.pos = {-CARRIER_X, DECK_Y, cfg::ORBIT_CARRIER_Z};
     Station dealer;
     dealer.type = StationType::Dealer;
     dealer.name = "Raumschiffsverkäufer";
-    dealer.pos = {DOCK_SPACING, DECK_Y, cfg::ORBIT_CARRIER_Z};
-    for (Station* st : {&yard, &dealer}) {
+    dealer.pos = {CARRIER_X, DECK_Y, cfg::ORBIT_CARRIER_Z};
+    const std::pair<Station*, const char*> carriers[2] = {{&yard, "carrier/carrier-a"}, {&dealer, "carrier/carrier-b"}};
+    for (const auto& [st, hull] : carriers) {
+        const int carrier = ModelId(hull);
+        st->parts.push_back({carrier, {0.0f, -ModelBounds(carrier).max.y * CARRIER_SCALE, 0.0f}, PI * 0.5f, CARRIER_SCALE, 0});
         st->turrets.push_back({{-6.0f, 0.0f, -4.0f}, 0.0f, 0.0f, 0, true});
         st->turrets.push_back({{6.0f, 0.0f, 4.0f}, PI, 0.0f, 0, false});
     }
@@ -96,6 +103,7 @@ void World::NewOrbit(unsigned int newSeed, long long delivered) {
 
     for (int i = 0; i < cfg::PIRATES_BASE; ++i) SpawnPirate();
     asteroidT = cfg::ORBIT_ASTEROID_FIRST;
+    bossT = cfg::ORBIT_BOSS_INTERVAL;
     Notify(ps, "Willkommen im All! Beschütze die Raumstation vor Asteroiden.", Color{150, 230, 255, 255});
     Notify(ps, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
 }
@@ -134,9 +142,11 @@ void World::PlaceOrbitStation() {
     stationDownT = 0.0f;
 }
 
-// Ein Schritt der Weltraumkarte (aus World::Update): Asteroiden kommen und
-// fliegen, Einschläge an der Station; nach einer Explosion die neue Station.
+// Ein Schritt der Weltraumkarte (aus World::Update): Alien-Mutterschiffe,
+// Asteroiden kommen und fliegen, Einschläge an der Station; nach einer
+// Explosion die neue Station.
 void World::UpdateOrbit(float dt) {
+    UpdateBosses(dt);
     if (stationDownT > 0.0f) {
         stationDownT -= dt;
         if (stationDownT <= 0.0f) {
@@ -175,6 +185,16 @@ void World::UpdateOrbit(float dt) {
     }
     if (destroyed) StationExplodes();
     asteroids.erase(std::remove_if(asteroids.begin(), asteroids.end(), [](const Asteroid& a) { return a.dead; }), asteroids.end());
+    // Berührt ein Spielerschiff einen Asteroiden (Schiff etwa 2 m breit),
+    // verliert es je Sekunde ORBIT_ASTEROID_CONTACT seines vollen Schilds.
+    for (Ship& s : ships) {
+        if (s.kind != ShipKind::Player || s.dead || s.crashing || s.hidden || s.docked) continue;
+        for (const Asteroid& a : asteroids) {
+            if (Dist2D(s.pos, a.pos) > a.r + 1.0f) continue;
+            DamageShip(s, s.maxHp * cfg::ORBIT_ASTEROID_CONTACT * dt, -1, Faction::Neutral, -1);
+            break;
+        }
+    }
 }
 
 // Neuer Asteroid in ORBIT_ASTEROID_DIST um die Station, aus einer zufälligen
@@ -247,6 +267,71 @@ void World::StationExplodes() {
     }
 }
 
+// Alien-Mutterschiffe (aus UpdateOrbit): alle ORBIT_BOSS_INTERVAL Sekunden
+// eins, solange weniger als ORBIT_BOSS_MAX da sind; die Zeit läuft nur, wenn
+// Piloten auf der Karte sind. Nach ORBIT_BOSS_REGEN_DELAY ohne Treffer erholt
+// sich der Schild; ist er wieder voll, zählt der bisherige Schaden nicht mehr.
+// Wer eins im Radarkreis hat, hat es entdeckt: Es steht für ihn bis zur
+// Zerstörung auf der Minikarte und mit seinem Schild im HUD
+// (PlayerState::bosses, im Mehrspieler im Snapshot).
+void World::UpdateBosses(float dt) {
+    int count = 0;
+    for (const Ship& s : ships)
+        if (s.kind == ShipKind::Boss && !s.dead) ++count;
+    if (!players.empty()) bossT -= dt;
+    if (bossT <= 0.0f) {
+        bossT = cfg::ORBIT_BOSS_INTERVAL;
+        if (count < cfg::ORBIT_BOSS_MAX) {
+            Ship s = MakeShip(ShipKind::Boss, RandomFreePos(cfg::STATION_SAFE_RADIUS + 25.0f, 70.0f));
+            s.ai = AiState::Wander;
+            s.waypoint = s.pos;
+            ships.push_back(s);
+            for (PlayerState& ps : players)
+                Notify(ps, "Ein Alien-Mutterschiff ist aufgetaucht! Halte im Radar Ausschau.", Color{215, 140, 255, 255});
+        }
+    }
+    for (PlayerState& ps : players) ps.bosses.clear();
+    for (Ship& s : ships) {
+        if (s.kind != ShipKind::Boss || s.dead || s.crashing) continue;
+        s.calmT += dt;
+        if (s.calmT >= cfg::ORBIT_BOSS_REGEN_DELAY && s.hp < s.maxHp) {
+            s.hp = std::min(s.maxHp, s.hp + s.maxHp / cfg::ORBIT_BOSS_REGEN_TIME * dt);
+            if (s.hp >= s.maxHp) s.bossDamage.clear();
+        }
+        for (PlayerState& ps : players) {
+            if (std::find(s.seenBy.begin(), s.seenBy.end(), ps.id) == s.seenBy.end()) {
+                const Ship* own = PlayerShip(ps);
+                if (!own || own->dead || own->hidden || Dist2D(own->pos, s.pos) > cfg::ORBIT_BOSS_SIGHT) continue;
+                s.seenBy.push_back(ps.id);
+                Notify(ps, "Alien-Mutterschiff entdeckt! Es bleibt auf der Minikarte, bis es zerstört ist.", Color{215, 140, 255, 255});
+            }
+            ps.bosses.push_back({s.pos, s.hp, s.maxHp});
+        }
+    }
+}
+
+// Mutterschiff zerstört (aus DamageShip): ORBIT_BOSS_BOUNTY wird nach dem
+// Schaden aufgeteilt, den jeder Spieler (noch auf der Karte) angerichtet hat:
+// Anteil = Belohnung * eigener Schaden / Schaden aller. Mit gleicher Waffe
+// ist das dasselbe wie Belohnung / alle Treffer * eigene Treffer.
+void World::BossBounty(const Ship& s) {
+    float total = 0.0f;
+    for (const auto& [id, dmg] : s.bossDamage)
+        if (FindPlayer(id)) total += dmg;
+    for (PlayerState& ps : players) {
+        float mine = 0.0f;
+        for (const auto& [id, dmg] : s.bossDamage)
+            if (id == ps.id) mine = dmg;
+        if (total <= 0.0f || mine <= 0.0f) {
+            Notify(ps, "Ein Alien-Mutterschiff wurde zerstört.", Color{215, 140, 255, 255});
+            continue;
+        }
+        const int pct = static_cast<int>(lroundf(mine / total * 100.0f));
+        const int points = static_cast<int>(lroundf(cfg::ORBIT_BOSS_BOUNTY * mine / total));
+        OrbitPay(ps, points, Fmt("Alien-Mutterschiff zerstört! Dein Anteil %d %%: +%s Punkte", pct, Points(points).c_str()));
+    }
+}
+
 bool World::CanSwitchMap(const PlayerState& ps) const {
     if (!ps.orbitGoal || ps.dockedAt < 0 || ps.dockedAt >= static_cast<int>(stations.size())) return false;
     const StationType t = stations[static_cast<size_t>(ps.dockedAt)].type;
@@ -260,8 +345,14 @@ bool World::CanSwitchMap(const PlayerState& ps) const {
 void World::OrbitBounty(PlayerState& ps, const Ship& s) {
     const bool elite = s.kind == ShipKind::Elite;
     const int bounty = elite ? cfg::ORBIT_BOUNTY_ELITE : cfg::ORBIT_BOUNTY_PIRATE;
-    ps.balance += bounty;
-    Notify(ps, Fmt("%s abgeschossen! +%s Punkte", elite ? "Elite-Pirat" : "Pirat", Points(bounty).c_str()), Color{255, 210, 130, 255});
+    OrbitPay(ps, bounty, Fmt("%s abgeschossen! +%s Punkte", elite ? "Elite-Pirat" : "Pirat", Points(bounty).c_str()));
+}
+
+// Punkte aufs Konto (Abschuss, Anteil am Mutterschiff) mit Meldung; danach
+// das Ziel prüfen.
+void World::OrbitPay(PlayerState& ps, int points, const std::string& text) {
+    ps.balance += points;
+    Notify(ps, text, Color{255, 210, 130, 255});
     if (ps.balance < cfg::GOAL_POINTS) return;
     if (!ps.orbitGoal) {
         ps.orbitGoal = true;
