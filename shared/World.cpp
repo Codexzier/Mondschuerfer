@@ -669,6 +669,11 @@ void World::Update(float dt) {
     }
 
     if (!instance && !orbit) UpdateMissions(dt);
+    // Funksprüche laufen nur außerhalb der Station ab (der Startfunkspruch
+    // kommt beim Annehmen, also angedockt: er soll nach dem Abdocken zu sehen
+    // sein). Auf allen Karten, auch ohne Missionen (sonst bliebe einer stehen).
+    for (auto& ps : players)
+        if (ps.cueT > 0.0f && ps.dockedAt < 0) ps.cueT = std::max(0.0f, ps.cueT - dt);
 
     // Tote Schiffe entfernen. Einzelspieler: das Spielerschiff bleibt immer an Index 0.
     // Erst hier am Ende, damit während des Schritts kein Schiff aus der Liste
@@ -1771,11 +1776,6 @@ void World::UpdateMissions(float dt) {
     }
     for (const auto& [id, success] : ended)
         if (Mission* m = FindMission(id)) EndMission(*m, success);
-
-    // Funksprüche laufen nur außerhalb der Station ab (der Startfunkspruch
-    // kommt beim Annehmen, also angedockt: er soll nach dem Abdocken zu sehen sein).
-    for (auto& ps : players)
-        if (ps.cueT > 0.0f && ps.dockedAt < 0) ps.cueT = std::max(0.0f, ps.cueT - dt);
 }
 
 // ===========================================================================
