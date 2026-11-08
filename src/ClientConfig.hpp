@@ -43,6 +43,8 @@
 //     tank_steering 0
 //     ground_stones 1
 //     enemy_bars 1
+//     space_dust 2
+//     nebula 0.60
 // Unbekannte Zeilen werden ignoriert (so bleiben ältere Spielversionen mit
 // neueren Dateien verträglich). Fehlende Zeilen behalten ihren Standardwert
 // (z. B. eine Datei aus der Zeit vor den Musik-Einstellungen).
@@ -75,6 +77,8 @@ struct ClientConfig {
     bool tankSteering = false;                // Optionen: Controller-Stick als Tank-Steuerung statt Richtung im Bild (Zeile "tank_steering 1|0")
     int groundStones = 1;                     // Optionen: Bodensteine 0 (aus), 1 nur zu Fuß, 2 immer (Zeile "ground_stones 1")
     bool enemyBars = true;                    // Optionen: HP-Balken über Gegnern zu Fuß an/aus (Zeile "enemy_bars 1|0")
+    int spaceDust = 2;                        // Optionen: Sternenstaub im All 0 (aus), 1 Staub, 2 mit Streifen (Zeile "space_dust 2")
+    float nebula = 0.6f;                      // Optionen: Weltraumnebel im All 0..1, 0 = aus (Zeile "nebula 0.60")
 
     // Steht NICHT in der Datei: true, wenn ein Wert geändert, aber noch nicht
     // gespeichert wurde. Setzt, wer ändert, ohne gleich zu speichern (die

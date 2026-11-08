@@ -541,6 +541,13 @@ und setzen später an derselben Stelle fort.
   im Karteneditor und nicht in der Kartenübersicht des Zuschauers). Reine Optik, ohne Kollision.
   Auf Einsatzkarten mit dem Thema Dorf oder Wald wächst stattdessen Gras, auf dem Friedhof liegen
   graue Feldsteine.
+- **Sternenstaub (All)** – nur auf der Weltraumkarte der Piloten: feine Staubkörnchen, die fest im
+  Raum stehen und beim Fliegen vorbeiziehen (tiefere langsamer), damit man sieht, dass sich das
+  Schiff bewegt. Aus, Staub oder Staub und Streifen (Standard; im schnellen Flug ziehen die Körnchen
+  Streifen gegen die Flugrichtung). Reine Optik.
+- **Weltraumnebel (All)** – nur auf der Weltraumkarte der Piloten: farbige Nebelwolken tief unter
+  der Flughöhe, mal dicht, mal dünn, manche Gebiete frei. Regler in 10-%-Schritten, Standard 60 %.
+  Reine Optik, die Sicht auf Schiffe bleibt frei.
 - **Fahrspuren (Rover)** – wie lange die Reifenspuren der Rover sichtbar bleiben: Aus, 15 s, 30 s,
   1 min (Standard), 2 min oder 5 min. Danach verblassen sie; „Aus“ spart am meisten Leistung.
 
@@ -581,17 +588,19 @@ trail 2
 hit_flash 1.00
 pixel_look 0
 ground_stones 1
+space_dust 2
+nebula 0.60
 ```
 
-`music` und `subtitles` sind `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift`, `fxaa`, `sandstorm` und
-`hit_flash` je eine Zahl von `0` bis `1`
+`music` und `subtitles` sind `1` (an) oder `0` (aus), `music_volume`, `clip_volume`, `tilt_shift`, `fxaa`, `sandstorm`,
+`hit_flash` und `nebula` je eine Zahl von `0` bis `1`
 (Punkt oder Komma; `0` = aus), `msaa` eine der Stufen `0`, `2`, `4`, `8`, `16`, `track_time` die
 Sekunden der Fahrspuren (`0`, `15`, `30`, `60`, `120`, `300`), `shadows` die Auflösung der
 Schattenkarte (`0`, `1024`, `2048`, `4096`), `trail` und `pixel_look` die Stufe `0` (aus) bis `3`, `ground_stones`
-`0` (aus), `1` (nur zu Fuß) oder `2` (immer). Fehlt die Datei
+`0` (aus), `1` (nur zu Fuß) oder `2` (immer), `space_dust` `0` (aus), `1` (Staub) oder `2` (mit Streifen). Fehlt die Datei
 oder eine Zeile, gelten die Standardwerte (Musik an, Musiklautstärke 50 %, Clip-Lautstärke 100 %, Untertitel an, Tilt-Shift 50 %,
 Kantenglättung 4x, FXAA aus, Fahrspuren 1 min, Schatten Mittel, Sandsturm aus, Schweif Mittel, Aufblitzen 100 %,
-Stil-Look aus, Bodensteine nur zu Fuß).
+Stil-Look aus, Bodensteine nur zu Fuß, Sternenstaub mit Streifen, Weltraumnebel 60 %).
 
 Im Code: `src/Options.*` (Bildschirm), `src/Audio.*` (Laden, Abspielen, Überblenden),
 `src/MusicMix.hpp` (die Überblend-Rechnung, ohne raylib testbar), `src/TiltShift.*`

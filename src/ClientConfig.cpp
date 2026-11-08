@@ -178,6 +178,12 @@ bool ClientConfig::Load() {
             const std::string v = Clean(value, 8);
             if (v == "1") enemyBars = true;
             else if (v == "0") enemyBars = false;
+        } else if (key == "space_dust") {
+            const std::string v = Clean(value, 8);
+            if (v == "0" || v == "1" || v == "2") spaceDust = std::stoi(v);
+        } else if (key == "nebula") {
+            float v = 0.0f;
+            if (ParseNumber(Clean(value, 16), v)) nebula = v > 1.0f ? 1.0f : v;
         }
         // andere Schlüssel: ignorieren (z. B. aus einer neueren Spielversion)
     }
@@ -208,6 +214,8 @@ bool ClientConfig::Save() {
     f << "tank_steering " << (tankSteering ? 1 : 0) << '\n';
     f << "ground_stones " << groundStones << '\n';
     f << "enemy_bars " << (enemyBars ? 1 : 0) << '\n';
+    f << "space_dust " << spaceDust << '\n';
+    f << "nebula " << FormatVolume(nebula) << '\n';
     // Absichtlich KEIN Passwort (siehe ClientConfig.hpp).
     f.close();   // erst beim Schließen ist sicher alles geschrieben
     if (!f) return false;

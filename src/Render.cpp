@@ -1075,6 +1075,171 @@ void DrawSkyBox(const SkyBox& box, const Camera3D& cam) {
     rlEnableBackfaceCulling();
 }
 
+// ===========================================================================
+// Weltraumkarte der Piloten: Sternenstaub und Weltraumnebel (Optionen →
+// Grafik, g_clientConfig.spaceDust und .nebula)
+//
+// Die Skybox hängt an der Kamera, und einen Boden gibt es im All nicht. Ohne
+// etwas, das fest im Raum steht, sieht man kaum, dass das Schiff fliegt.
+//   - Sternenstaub: kleine helle Körnchen, fest im Raum, 2 bis 32 m unter der
+//     Flughöhe. Sie ziehen beim Fliegen vorbei, die tieferen langsamer
+//     (Parallaxe). Stufe 2: im schnellen Flug als Streifen gegen die
+//     Flugrichtung (wie Bewegungsunschärfe).
+//   - Weltraumnebel: große, weiche, farbige Wolken 60 bis 140 m unter der
+//     Flughöhe, je Gebiet unterschiedlich dicht, manche Gebiete frei.
+// Beides kommt aus einem Raster: Jede Zelle bekommt aus ihrer Nummer (Hash)
+// immer dieselben Körnchen bzw. Wolken. Nichts davon wird gespeichert oder
+// übertragen, auf das Spiel hat es keinen Einfluss.
+// Gezeichnet additiv, ohne Tiefenmaske (im Effekt-Teil von World::Draw).
+// ===========================================================================
+constexpr float kDustCell = 10.0f;      // Rasterweite des Sternenstaubs (je Zelle zwei Körnchen)
+constexpr float kDustRange = 120.0f;    // so weit um den Blickpunkt
+constexpr float kDustDepth = 30.0f;     // Tiefe der Staubschicht
+constexpr float kNebulaCell = 90.0f;    // Rasterweite der Nebel (je Zelle höchstens eine Wolke)
+constexpr float kNebulaRange = 420.0f;  // so weit um den Blickpunkt
+
+// Startwert der Zufallszahlen einer Rasterzelle
+uint32_t CellSeed(int ix, int iz, uint32_t salt) {
+    return SkyHash((static_cast<uint32_t>(ix) * 73856093u) ^ (static_cast<uint32_t>(iz) * 19349663u) ^ salt);
+}
+
+// vel = Geschwindigkeit des eigenen Schiffs (für die Streifen)
+void DrawSpaceDust(const Camera3D& cam, Vector3 focus, Vector3 vel, bool streaks) {
+    const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    const Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, cam.up));
+    const Vector3 up = Vector3CrossProduct(right, fwd);
+    // Streifen: so lang, wie das Schiff in 0,07 s fliegt (höchstens 3 m), ab 4 m/s
+    const float speed = sqrtf(vel.x * vel.x + vel.z * vel.z);
+    const float len = streaks && speed > 4.0f ? std::min(3.0f, speed * 0.07f) : 0.0f;
+    const Vector3 back = len > 0.0f ? Vector3{-vel.x / speed * len, 0.0f, -vel.z / speed * len} : Vector3{0.0f, 0.0f, 0.0f};
+    const int x0 = static_cast<int>(floorf((focus.x - kDustRange) / kDustCell));
+    const int x1 = static_cast<int>(floorf((focus.x + kDustRange) / kDustCell));
+    const int z0 = static_cast<int>(floorf((focus.z - kDustRange) / kDustCell));
+    const int z1 = static_cast<int>(floorf((focus.z + kDustRange) / kDustCell));
+    rlBegin(RL_QUADS);
+    for (int ix = x0; ix <= x1; ++ix) {
+        for (int iz = z0; iz <= z1; ++iz) {
+            uint32_t s = CellSeed(ix, iz, 0x5eedu);
+            for (int k = 0; k < 2; ++k) {
+                const Vector3 p{(ix + SkyRand(s)) * kDustCell, cfg::SHIP_ALTITUDE - 2.0f - SkyRand(s) * kDustDepth,
+                                (iz + SkyRand(s)) * kDustCell};
+                const float size = 0.06f + 0.1f * SkyRand(s), bright = 0.35f + 0.65f * SkyRand(s), tint = SkyRand(s);
+                const float d = Dist2D(p, focus);
+                if (d > kDustRange || Vector3DotProduct(Vector3Subtract(p, cam.position), fwd) < 1.0f) continue;
+                const unsigned char a = static_cast<unsigned char>(200.0f * bright * std::clamp((kDustRange - d) / 25.0f, 0.0f, 1.0f));
+                const Color c = tint < 0.2f ? Color{170, 200, 255, a} : tint < 0.3f ? Color{255, 220, 180, a} : Color{220, 225, 235, a};
+                SkyQuad(p, right, up, size, c);
+                if (len <= 0.0f) continue;
+                // Streifen vom Körnchen nach hinten, zum Ende hin durchsichtig
+                const Vector3 tail = Vector3Add(p, back);
+                const Vector3 side = Vector3Scale(Vector3Normalize(Vector3CrossProduct(back, Vector3Subtract(cam.position, p))), size * 0.7f);
+                rlColor4ub(c.r, c.g, c.b, static_cast<unsigned char>(a * 0.7f));
+                rlVertex3f(p.x - side.x, p.y - side.y, p.z - side.z);
+                rlVertex3f(p.x + side.x, p.y + side.y, p.z + side.z);
+                rlColor4ub(c.r, c.g, c.b, 0);
+                rlVertex3f(tail.x + side.x, tail.y + side.y, tail.z + side.z);
+                rlVertex3f(tail.x - side.x, tail.y - side.y, tail.z - side.z);
+            }
+        }
+    }
+    rlEnd();
+}
+
+// Drei weiche Wolkenbilder: weiß, Deckkraft aus Perlin-Rauschen, zum Rand
+// hin rund auslaufend. Beim ersten Bild im All erzeugt.
+const Texture2D* NebulaTextures() {
+    static Texture2D tex[3]{};
+    static bool made = false;
+    if (made) return tex;
+    made = true;
+    const int n = 256;
+    for (int i = 0; i < 3; ++i) {
+        Image noise = GenImagePerlinNoise(n, n, 97 * i, 31 * i, 2.5f + 0.8f * i);
+        Color* src = LoadImageColors(noise);
+        Image img = GenImageColor(n, n, BLANK);
+        Color* dst = static_cast<Color*>(img.data);
+        for (int y = 0; y < n; ++y) {
+            for (int x = 0; x < n; ++x) {
+                const float dx = (x - 127.5f) / 127.5f, dy = (y - 127.5f) / 127.5f;
+                float fall = std::clamp(1.0f - sqrtf(dx * dx + dy * dy), 0.0f, 1.0f);
+                fall = fall * fall * (3.0f - 2.0f * fall);
+                const float a = std::clamp(src[y * n + x].r / 255.0f * 1.6f - 0.25f, 0.0f, 1.0f) * fall;
+                dst[y * n + x] = Color{255, 255, 255, static_cast<unsigned char>(255.0f * a)};
+            }
+        }
+        UnloadImageColors(src);
+        UnloadImage(noise);
+        tex[i] = LoadTextureFromImage(img);
+        UnloadImage(img);
+        SetTextureFilter(tex[i], TEXTURE_FILTER_BILINEAR);
+    }
+    return tex;
+}
+
+// strength = Einstellung 0..1 (Helligkeit aller Wolken)
+void DrawNebula(Vector3 focus, float strength) {
+    // Farben der Nebelgebiete: violett, blau, türkis, magenta, orange
+    static const Color kColors[5] = {{150, 80, 220, 255}, {60, 110, 230, 255}, {40, 180, 190, 255}, {210, 70, 160, 255}, {220, 120, 70, 255}};
+    struct Blob {
+        Vector3 pos;
+        float half, yaw;
+        int tex;
+        Color col;
+    };
+    std::vector<Blob> blobs;
+    const int x0 = static_cast<int>(floorf((focus.x - kNebulaRange) / kNebulaCell));
+    const int x1 = static_cast<int>(floorf((focus.x + kNebulaRange) / kNebulaCell));
+    const int z0 = static_cast<int>(floorf((focus.z - kNebulaRange) / kNebulaCell));
+    const int z1 = static_cast<int>(floorf((focus.z + kNebulaRange) / kNebulaCell));
+    for (int ix = x0; ix <= x1; ++ix) {
+        for (int iz = z0; iz <= z1; ++iz) {
+            uint32_t s = CellSeed(ix, iz, 0x4e65u);
+            // Große Gebiete dicht oder frei (langsame Welle), darin jede Wolke anders dicht
+            const float region = 0.5f + 0.5f * sinf(ix * 0.83f + 1.7f) * cosf(iz * 0.61f - 0.9f);
+            const float density = region * (0.4f + 0.6f * SkyRand(s));
+            if (density < 0.18f) continue;
+            // Farbe: gleich für 3 x 3 Zellen, damit ein Gebiet eine Grundfarbe hat
+            const int fx = static_cast<int>(floorf(ix / 3.0f)), fz = static_cast<int>(floorf(iz / 3.0f));
+            const int hue = static_cast<int>(CellSeed(fx, fz, 0xc010u) % 5u);
+            const Vector3 center{(ix + 0.5f) * kNebulaCell, 0.0f, (iz + 0.5f) * kNebulaCell};
+            for (int b = 0; b < 3; ++b) {
+                Blob bl;
+                bl.pos = {center.x + (SkyRand(s) - 0.5f) * kNebulaCell * 0.8f, cfg::SHIP_ALTITUDE - 60.0f - 80.0f * SkyRand(s),
+                          center.z + (SkyRand(s) - 0.5f) * kNebulaCell * 0.8f};
+                bl.half = 55.0f + 75.0f * SkyRand(s);
+                bl.yaw = SkyRand(s) * 2.0f * PI;
+                bl.tex = static_cast<int>(SkyRand(s) * 2.999f);
+                const Color c = kColors[(hue + (SkyRand(s) < 0.3f ? 1 : 0)) % 5];
+                const float fade = std::clamp((kNebulaRange - Dist2D(bl.pos, focus)) / 80.0f, 0.0f, 1.0f);
+                bl.col = Color{c.r, c.g, c.b, static_cast<unsigned char>(std::min(255.0f, 120.0f * density * strength * fade))};
+                if (bl.col.a > 0) blobs.push_back(bl);
+            }
+        }
+    }
+    // Nach Bild geordnet: Jeder Wechsel des Bildes leert den Render-Batch
+    const Texture2D* tex = NebulaTextures();
+    for (int t = 0; t < 3; ++t) {
+        if (tex[t].id == 0) continue;
+        rlSetTexture(tex[t].id);
+        rlBegin(RL_QUADS);
+        for (const Blob& b : blobs) {
+            if (b.tex != t) continue;
+            const float c = cosf(b.yaw) * b.half, sn = sinf(b.yaw) * b.half;
+            rlColor4ub(b.col.r, b.col.g, b.col.b, b.col.a);
+            rlTexCoord2f(0.0f, 0.0f);
+            rlVertex3f(b.pos.x - c + sn, b.pos.y, b.pos.z - sn - c);
+            rlTexCoord2f(0.0f, 1.0f);
+            rlVertex3f(b.pos.x - c - sn, b.pos.y, b.pos.z - sn + c);
+            rlTexCoord2f(1.0f, 1.0f);
+            rlVertex3f(b.pos.x + c - sn, b.pos.y, b.pos.z + sn + c);
+            rlTexCoord2f(1.0f, 0.0f);
+            rlVertex3f(b.pos.x + c + sn, b.pos.y, b.pos.z + sn - c);
+        }
+        rlEnd();
+        rlSetTexture(0);
+    }
+}
+
 } // namespace
 
 // Zeichnet die ganze Welt aus Sicht von cam. Muss zwischen BeginMode3D(cam)
@@ -1534,6 +1699,14 @@ void World::Draw(const Camera3D& cam) const {
     // Alpha regelt hier die Helligkeit; dunkle Farben wären fast unsichtbar.
     // (BeginBlendMode leert den Render-Batch selbst.)
     BeginBlendMode(BLEND_ADDITIVE);
+
+    // Weltraumkarte der Piloten: Nebel und Sternenstaub (siehe DrawSpaceDust),
+    // nicht in der Übersicht des Zuschauers
+    if (orbit && cullR < 200.0f) {
+        if (g_clientConfig.nebula > 0.0f) DrawNebula(focus, g_clientConfig.nebula);
+        if (g_clientConfig.spaceDust > 0)
+            DrawSpaceDust(cam, focus, player.dead || player.hidden ? Vector3{0.0f, 0.0f, 0.0f} : player.vel, g_clientConfig.spaceDust >= 2);
+    }
 
     // Scanner
     // Ein Ring läuft in SCANNER_PULSE_TIME (1,25 s) vom Schiff bis
