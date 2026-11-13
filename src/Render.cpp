@@ -359,6 +359,7 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
     for (const auto& s : w.ships) {
         if (s.dead || s.hidden) continue;
         if (Dist2D(s.pos, focus) > cullR) continue;
+        if (s.cloak > 0.0f) continue;   // Tarnschiff: eigener Durchgang ohne Schatten (DrawCloakedShips)
         // Farbton je Schiffsart: Piraten rötlich, Elite-Piraten violett.
         // Spieler (auch fremde im Mehrspieler) und Händler/Miner bleiben unverändert.
         Color tint = WHITE;
@@ -376,6 +377,26 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
         // abgeschossenes Schiff: Es nickt so schnell, wie es rollt.
         float pitch = s.crashing ? (w.orbit ? s.bank : -0.5f) : -0.06f * s.thrustVisual;
         g_assets.Draw(s.model, TRS(s.pos, s.yaw, pitch, s.bank, 1.0f), tint, em);
+    }
+}
+
+// Tarnschiffe der Alien-Station (Ship::cloak > 0), nach allen festen
+// Modellen: Erst wird das bisher gezeichnete Bild kopiert (fx::GrabScene),
+// dann zeichnet Assets::DrawCloaked jedes Schiff als leichte Krümmung dieses
+// Bildes. Beim Ent- und Tarnen blendet es zum normalen Aussehen über
+// (cloak 0..1). Ohne Bildkopie bleiben sie sichtbar.
+static void DrawCloakedShips(const World& w, Vector3 focus, float cullR) {
+    bool any = false;
+    for (const auto& s : w.ships)
+        if (!s.dead && !s.hidden && s.cloak > 0.0f && Dist2D(s.pos, focus) <= cullR) any = true;
+    if (!any) return;
+    Vector4 rect{};
+    const bool grabbed = fx::GrabScene(rect);
+    for (const auto& s : w.ships) {
+        if (s.dead || s.hidden || s.cloak <= 0.0f || Dist2D(s.pos, focus) > cullR) continue;
+        const float pitch = s.crashing ? s.bank : -0.06f * s.thrustVisual;
+        g_assets.DrawCloaked(s.model, TRS(s.pos, s.yaw, pitch, s.bank, 1.0f), Color{190, 150, 255, 255}, grabbed ? s.cloak : 0.0f,
+                             rect, w.time);
     }
 }
 
@@ -1571,6 +1592,7 @@ void World::Draw(const Camera3D& cam) const {
 
     // --- Züge, Raketen, Rover, Personen, Figuren und Schiffe -----------------------------------
     DrawMovingModels(*this, focus, cullR, flashK);
+    DrawCloakedShips(*this, focus, cullR);   // Alien-Station: Tarnschiffe als Krümmung
 
     // ===== Ab hier transparente / leuchtende Effekte ====================================
     // raylib sammelt einfache Formen (DrawCylinder, DrawCube, rlBegin/rlVertex)
@@ -1664,7 +1686,8 @@ void World::Draw(const Camera3D& cam) const {
         DrawGroundRing(player.pos, 1.7f, 1.95f, Color{255, 170, 60, 130}, 40, ringY);
     for (const auto& s : ships) {
         // &s == &player: das eigene Schiff (ships[0]) hat oben schon seinen Ring.
-        if (s.dead || s.hidden || s.crashing || &s == &player) continue;
+        // Getarnte Alien-Schiffe haben keinen Ring.
+        if (s.dead || s.hidden || s.crashing || &s == &player || Cloaked(s)) continue;
         if (Dist2D(s.pos, focus) > cullR) continue;
         if (s.kind == ShipKind::Player)   // andere Spieler (Mehrspieler)
             DrawGroundRing(s.pos, 1.7f, 1.95f, Color{110, 240, 170, 130}, 32, ringY);
@@ -1847,7 +1870,7 @@ void World::Draw(const Camera3D& cam) const {
     // (thrustVisual 0..1), dazu schnelles Flackern (40 rad/s, ca. 6 Mal pro
     // Sekunde) mit der Schiffs-id als Phasenversatz. Piraten rot, sonst orange.
     for (const auto& s : ships) {
-        if (s.dead || s.hidden || Dist2D(s.pos, focus) > cullR) continue;
+        if (s.dead || s.hidden || Cloaked(s) || Dist2D(s.pos, focus) > cullR) continue;   // getarnt: ohne Flammen
         Vector3 fwd = ForwardFromYaw(s.yaw);
         float len = 0.25f + s.thrustVisual * 0.9f + 0.08f * sinf(time * 40.0f + s.id);
         for (int k = -1; k <= 1; k += 2) {
@@ -1879,7 +1902,7 @@ void World::Draw(const Camera3D& cam) const {
         const long first = static_cast<long>(floorf(g_trail.last / kTrailStep)) + 1;
         const long newest = static_cast<long>(floorf(time / kTrailStep));
         for (const auto& s : ships) {
-            if (s.dead || s.hidden || s.crashing || Dist2D(s.pos, focus) > cullR) continue;
+            if (s.dead || s.hidden || s.crashing || Cloaked(s) || Dist2D(s.pos, focus) > cullR) continue;
             const float speed = sqrtf(s.vel.x * s.vel.x + s.vel.z * s.vel.z);
             const float power = std::max(s.thrustVisual, std::min(1.0f, speed / 12.0f));
             if (power < 0.08f) continue;

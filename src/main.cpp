@@ -437,6 +437,23 @@ private:
         dockFrames_ = 0;
     }
 
+    // Ziel auf der Weltraumkarte erreicht, "Weiter zur Alien-Station": die
+    // dritte Karte der Piloten (World::NewAlien), sonst wie EnterOrbit.
+    // keepBalance: Kartenwechsel am Trägerschiff (Reiter "Karte").
+    void EnterAlien(bool keepBalance = false) {
+        auto next = std::make_unique<World>();
+        next->NewAlien(static_cast<unsigned int>(std::time(nullptr)), world_.totalDelivered);
+        next->CarryPilot(next->Me(), world_.Me(), keepBalance);
+        next->mapFile = world_.mapFile;
+        world_ = std::move(*next);
+        SaveGame(world_);
+        controls_.Reset();
+        screen_ = Screen::Playing;
+        camTarget_ = world_.Player().pos;
+        endHandled_ = false;
+        dockFrames_ = 0;
+    }
+
     // Kartenwechsel am Trägerschiff (Reiter "Karte"): zurück auf den Mond, mit
     // der Karte von vor dem Sprung ins All. Lagerstätten und Gegner entstehen
     // neu; Kontostand, Aufrüstungen, Schiffe, Leben und Statistik bleiben.
@@ -1107,7 +1124,10 @@ private:
     void DrawPlaying() {
         if (world_.outcome == Outcome::Won) {
             DrawHud(world_, cam_, false);
-            if (DrawVictory(world_, true)) EnterOrbit();
+            if (DrawVictory(world_, true)) {
+                if (world_.orbit) EnterAlien();   // Ziel im All: weiter zur Alien-Station
+                else EnterOrbit();
+            }
             return;
         }
         if (world_.outcome == Outcome::Dead) {
@@ -1138,11 +1158,13 @@ private:
                 world_.SetRole(world_.Me(), PlayerRole::Trooper);
                 OpenCommand();
             }
-            // Reiter "Karte": Mond <-> Weltraumkarte (ersetzt die Welt, daher zuletzt)
-            else if (req.switchMap && world_.CanSwitchMap(world_.Me())) {
+            // Reiter "Karte": Mond, Weltraumkarte oder Alien-Station (ersetzt
+            // die Welt, daher zuletzt)
+            else if (req.switchMap >= 0 && world_.CanSwitchMap(world_.Me(), req.switchMap)) {
                 g_audio.Play(Sfx::UiConfirm);
-                if (world_.orbit) EnterMoon();
-                else EnterOrbit(true);
+                if (req.switchMap == 0) EnterMoon();
+                else if (req.switchMap == 1) EnterOrbit(true);
+                else EnterAlien(true);
             }
         }
     }

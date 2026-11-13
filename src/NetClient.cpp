@@ -1011,14 +1011,16 @@ void NetClient::Impl::HandleInstanceStart(const net::InstanceStartMsg& m) {
 
 // Der Pilot fliegt auf der Weltraumkarte weiter: Die Spiegelwelt wird wie
 // beim Server mit World::NewOrbit gebaut (Trägerschiff mit Werft und
-// Raumschiffsverkäufer in derselben Reihenfolge: dockedAt passt). Raumstation
-// und Asteroiden kommen mit jedem Snapshot (ApplyOrbit).
+// Raumschiffsverkäufer in derselben Reihenfolge: dockedAt passt), bei der
+// Alien-Station (map 2) mit World::NewAlien. Raumstation und Asteroiden
+// kommen mit jedem Snapshot (ApplyOrbit).
 void NetClient::Impl::HandleOrbitStart(const net::OrbitStartMsg& m) {
     if (!worldReady || state != NetState::Playing) return;
     const PlayerState me = world.Me();
     const GameSettings settings = world.settings;
     const float keepDrawRange = world.drawRange;
-    world.NewOrbit(m.seed, totalDelivered);
+    if (m.map == 2) world.NewAlien(m.seed, totalDelivered);
+    else world.NewOrbit(m.seed, totalDelivered);
     world.isMirror = true;
     world.settings = settings;
     world.drawRange = keepDrawRange;
@@ -1036,12 +1038,17 @@ void NetClient::Impl::ApplyOrbit(const net::SnapshotMsg& m) {
     if (m.stationDownT > 0.0f) {
         world.spaceStations.clear();
     } else if (world.spaceStations.empty() || world.stationVariant != m.stationVariant) {
-        world.stationVariant = m.stationVariant;
-        world.PlaceOrbitStation();
+        if (world.alien) {
+            world.PlaceAlienStation();   // Alien-Station: immer dasselbe Modell (Variante 2)
+        } else {
+            world.stationVariant = m.stationVariant;
+            world.PlaceOrbitStation();
+        }
     }
     world.stationHp = m.stationHp;
     world.stationMaxHp = m.stationMaxHp;
     world.stationDownT = m.stationDownT;
+    world.alienT = m.alienT;
     std::vector<Asteroid> list;
     list.reserve(m.asteroids.size());
     for (const net::SnapAsteroid& k : m.asteroids) {
@@ -1297,6 +1304,7 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
     ps.scanOn = me.scanOn;
     ps.mining = me.mining;
     ps.orbitGoal = me.orbitGoal;
+    ps.alienGoal = me.alienGoal;
     ps.mineKind = me.mineKind;
     ps.mineId = me.mineId;
     ps.mineT = me.mineT;
@@ -1946,6 +1954,7 @@ void NetClient::Impl::UpdateRemoteShips() {
             s.bank = WrapAngle(a->bank + AngleDiff(a->bank, b.bank) * k);
             s.thrustVisual = Lerp(a->thrustVisual, b.thrustVisual, k);
             s.hitFlash = Lerp(a->hitFlash, b.hitFlash, k);
+            s.cloak = Lerp(a->cloak, b.cloak, k);
             hpFrac = Lerp(a->hpFrac, b.hpFrac, k);
             if (span > 1e-5f) s.vel = Vector3Scale(Vector3Subtract(pb, pa), 1.0f / span);
             s.vel.y = 0.0f;
@@ -1955,6 +1964,7 @@ void NetClient::Impl::UpdateRemoteShips() {
             s.bank = b.bank;
             s.thrustVisual = b.thrustVisual;
             s.hitFlash = b.hitFlash;
+            s.cloak = b.cloak;
         }
         // Der Snapshot enthält nur den Anteil des Schilds (für Balken über
         // fremden Schiffen genügt das)

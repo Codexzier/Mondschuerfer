@@ -786,12 +786,14 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U8(QUnit(e.thrustVisual));
         // Mehrere Ja/Nein-Werte in EINEM Byte ("Bitfeld"): Bit 0 (Wert 1) =
         // stürzt ab, Bit 1 (2) = Scanner an, Bit 2 (4) = baut ab, Bit 3 (8)
-        // = Kartenwechsel frei. Decode prüft jedes Bit mit "flags & Wert".
+        // = Kartenwechsel frei, Bit 4 (16) = Alien-Station besiegt. Decode
+        // prüft jedes Bit mit "flags & Wert".
         uint8_t flags = 0;
         if (e.crashing) flags |= 1;
         if (e.scanOn) flags |= 2;
         if (e.mining) flags |= 4;
         if (e.orbitGoal) flags |= 8;
+        if (e.alienGoal) flags |= 16;
         w.U8(flags);
         w.I32(e.cargo);
         w.I32(e.cargoMax);
@@ -897,14 +899,16 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.U8(QUnit(s.thrustVisual));
         w.U8(QUnit(s.hitFlash));
         // Bitfeld wie oben: 1 = stürzt ab, 2 = feindlich, 4 = baut ab,
-        // 8 = angedockt, 16 = tippt im Chat
+        // 8 = angedockt, 16 = tippt im Chat, 32 = (teilweise) getarnt
         uint8_t flags = 0;
         if (s.crashing) flags |= 1;
         if (s.hostile) flags |= 2;
         if (s.mining) flags |= 4;
         if (s.docked) flags |= 8;
         if (s.chatting) flags |= 16;
+        if (s.cloak > 0.0f) flags |= 32;
         w.U8(flags);
+        if (s.cloak > 0.0f) w.U8(QUnit(s.cloak));
         // Das Abbauziel nur, wenn das Schiff gerade abbaut (spart 4 Byte je
         // Schiff). Decode liest es nur dann, wenn Bit 4 gesetzt ist.
         if (s.mining) {
@@ -977,6 +981,7 @@ std::vector<uint8_t> Encode(const SnapshotMsg& m) {
         w.F32(m.stationMaxHp);
         w.F32(m.stationDownT);
         w.U8(m.stationVariant);
+        w.F32(m.alienT);
         w.U8(static_cast<uint8_t>(std::min<size_t>(m.asteroids.size(), 255)));
         for (size_t i = 0; i < m.asteroids.size() && i < 255; ++i) {
             const SnapAsteroid& a = m.asteroids[i];
@@ -1024,6 +1029,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         e.scanOn = (flags & 2) != 0;
         e.mining = (flags & 4) != 0;
         e.orbitGoal = (flags & 8) != 0;
+        e.alienGoal = (flags & 16) != 0;
         e.cargo = r.I32();
         e.cargoMax = r.I32();
         e.balance = r.I64();
@@ -1139,6 +1145,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         s.mining = (flags & 4) != 0;
         s.docked = (flags & 8) != 0;
         s.chatting = (flags & 16) != 0;
+        s.cloak = (flags & 32) != 0 ? DUnit(r.U8()) : 0.0f;
         if (s.mining) {
             s.mineX = DPos(r.I16());
             s.mineZ = DPos(r.I16());
@@ -1224,6 +1231,7 @@ bool Decode(Reader& r, SnapshotMsg& m) {
         m.stationMaxHp = r.F32();
         m.stationDownT = r.F32();
         m.stationVariant = r.U8();
+        m.alienT = r.F32();
         const uint8_t na = r.U8();
         for (uint8_t i = 0; i < na && r.ok(); ++i) {
             SnapAsteroid a;
@@ -1685,13 +1693,15 @@ std::vector<uint8_t> Encode(const OrbitStartMsg& m) {
     Start(MsgType::OrbitStart, w);
     w.U32(m.tick);
     w.U32(m.seed);
+    w.U8(m.map);
     return w.buf;
 }
 
 bool Decode(Reader& r, OrbitStartMsg& m) {
     m.tick = r.U32();
     m.seed = r.U32();
-    return r.ok();
+    m.map = r.U8();
+    return r.ok() && (m.map == 1 || m.map == 2);
 }
 
 std::vector<uint8_t> Encode(const ScoreboardMsg& m) {

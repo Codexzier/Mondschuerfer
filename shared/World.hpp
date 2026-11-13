@@ -33,6 +33,8 @@
 //   MapAnim.cpp    Kartenanimation: Rover, Monorail zwischen Stationen, Raketen (nur Kulisse)
 //   Ai.cpp         KI der Piraten/Händler, der Kameraden und Bodenpiraten zu Fuß und der Autopilot (Simulation)
 //   Trooper.cpp    Trupp zu Fuß (FPS-Modus): Rolle, Einsatz, Stargates, Bewegung, Hindernisse, Schüsse, Treffer, KI-Figuren erzeugen
+//   Orbit.cpp      Weltraumkarte der Piloten (zweite Pilotenkarte)
+//   AlienStation.cpp  Alien-Station (dritte Pilotenkarte)
 //   src/Render.cpp World::Draw (nur im Client)
 //
 // Abhängigkeiten: nur raylib.h/raymath.h (Datentypen wie Vector3/Color und
@@ -159,6 +161,12 @@ struct Ship {
     std::vector<std::pair<int, float>> bossDamage;
     float calmT = 0.0f;
     std::vector<int> seenBy;
+    // Alien-Station (AlienStation.cpp): Tarnschiffe (Typ 2, ShipKind::Elite)
+    // sind getarnt (cloak 1 = nur eine leichte Krümmung zu sehen, 0 =
+    // sichtbar); nach einem Schuss oder Treffer zeigen sie sich decloakT
+    // Sekunden lang. Im Mehrspieler kommt cloak vom Server.
+    float cloak = 0.0f;
+    float decloakT = 0.0f;
 };
 
 // Zustand einer Lagerstätte im FPS-Modus (Zahlenwerte bleiben fest, sie
@@ -670,6 +678,10 @@ struct PlayerState {
     // sowieso): Kartenwechsel Mond <-> All an Handelsstation bzw.
     // Trägerschiff frei (Reiter "Karte"). Bleibt auch nach einem Absturz.
     bool orbitGoal = false;
+    // Alien-Station (dritte Karte) einmal besiegt: Kartenwechsel zwischen
+    // allen drei Karten frei. Vorher führt das Ziel auf der Weltraumkarte
+    // zur Alien-Station, und von dort geht es erst nach dem Sieg zurück.
+    bool alienGoal = false;
     // Mehrspieler: alle Leben verbraucht, Fortschritt zurückgesetzt
     // (ResetProgress). Ein Pilot im All kommt dann zurück auf den Mond.
     bool progressLost = false;
@@ -745,9 +757,24 @@ public:
     // Aufrüstungen, Schiffe, Leben und Statistik aus from übernehmen. Der
     // Kontostand beginnt bei 0, beim Kartenwechsel (keepBalance) bleibt er.
     void CarryPilot(PlayerState& ps, const PlayerState& from, bool keepBalance = false);
-    // Kartenwechsel Mond <-> Weltraumkarte frei (PlayerState::orbitGoal)?
-    // Angedockt an der Handelsstation (Mond) bzw. am Trägerschiff (All).
-    bool CanSwitchMap(const PlayerState& ps) const;
+    // Alien-Station, dritte Karte der Piloten (AlienStation.cpp): ersetzt die
+    // komplette Welt wie NewOrbit. Im Norden die Station der Aliens, im
+    // Süden ein Trägerschiff (Reparatur und Kartenwechsel), dazu
+    // Alien-Schiffe, die sich erholen, ein Teil davon getarnt.
+    void NewAlien(unsigned int seed, long long delivered);
+    // Karten der Piloten: 0 = Mond, 1 = Weltraumkarte, 2 = Alien-Station
+    int PilotMap() const { return alien ? 2 : orbit ? 1 : 0; }
+    // Kartenwechsel auf die Karte target (PilotMap) frei? Angedockt an der
+    // Handelsstation (Mond) bzw. an einem Trägerschiff (All). Mond <-> All
+    // ab PlayerState::orbitGoal, die Alien-Station und der Weg von ihr
+    // zurück ab PlayerState::alienGoal.
+    bool CanSwitchMap(const PlayerState& ps, int target) const;
+    // Darf diese Karte überhaupt gewählt werden (ohne Andocken)? Für den
+    // Reiter "Karte" (Hud.cpp).
+    static bool MapUnlocked(const PlayerState& ps, int from, int target);
+    // Tarnschiff gerade (fast) unsichtbar? Dann zeigen Minikarte, Ringe und
+    // Triebwerke es nicht, und die Geschütztürme sehen es nicht.
+    static bool Cloaked(const Ship& s) { return s.cloak > 0.5f; }
     // Ein Zeitschritt der Spielregeln (Einzelspieler: einmal pro Bild mit dem
     // dt des Bildes; Server: fest 1/30 s). Danach liegen in sounds, fx, goals
     // und PlayerState::outbox neue Ereignisse, die der Aufrufer abarbeitet
@@ -961,7 +988,15 @@ public:
     float asteroidT = 0.0f;        // Sekunden bis zum nächsten Asteroiden
     float bossT = 0.0f;            // Sekunden bis zum nächsten Alien-Mutterschiff
     float stationDownT = 0.0f;     // > 0: Station explodiert, so lange bis zur neuen
-    int stationVariant = 0;        // Modell der Station: 0 = station-a, 1 = station-b (wechselt nach jeder Explosion)
+    int stationVariant = 0;        // Modell der Station: 0 = station-a, 1 = station-b (wechselt nach jeder Explosion), 2 = Alien-Station
+    // Alien-Station, dritte Karte der Piloten (NewAlien, AlienStation.cpp):
+    // die Station der Aliens in spaceStations mit stationHp (Schild),
+    // Restzeit bis zur Reparatur, Schaden je Spieler-ID (Belohnung nach
+    // Anteil) und Takt der Stationsgeschütze. Gilt zusätzlich zu orbit.
+    bool alien = false;
+    float alienT = 0.0f;
+    std::vector<std::pair<int, float>> alienDamage;
+    float alienGunT = 0.0f;
     GameSettings settings;     // Einzelspieler: Standardwerte; Server/Client: vom Server
     // Zufallsgenerator (Mersenne-Twister). Gleicher Seed -> gleiche Zahlenfolge.
     // Darauf beruht, dass Client und Server dieselbe Mondoberfläche erzeugen,
@@ -1111,6 +1146,13 @@ public:
     void UpdateBosses(float dt);                       // Alien-Mutterschiffe: kommen, erholen sich, werden entdeckt
     void BossBounty(const Ship& s);                    // Mutterschiff zerstört: Belohnung nach Schadensanteil (DamageShip)
     void NextRound(PlayerState& ps);                   // Einzelspieler, Ziel bei freiem Kartenwechsel: neue Runde auf dieser Karte
+    void AddCarrier(StationType type, const char* name, const char* hull, float x);   // Trägerschiff im Süden (NewOrbit, NewAlien)
+    // Alien-Station (AlienStation.cpp)
+    void PlaceAlienStation();                          // neue Station der Aliens, Schild voll, Zeit von vorn (auch Client)
+    void UpdateAlien(float dt);                        // Zeit, Geschütze, neue Station, Erholung und Tarnung der Schiffe (Update)
+    void FireAlienGun(const SpaceStation& st, const Ship& target);
+    void DamageAlienStation(float dmg, int attackerPlayerId);   // Treffer eines Spielergeschosses (UpdateBullets)
+    void AlienStationDown();                           // Schild 0: Belohnung nach Anteil, Karte geschafft
     void UpdateTrooperAi(Trooper& t, float dt);        // Eingabe einer KI-Figur (Ai.cpp)
     // Bodengegner (Ai.cpp): beschossen oder getroffen, Schuss gehört, Gruppe alarmieren
     void NoticeShooter(Trooper& t, int shooterId);

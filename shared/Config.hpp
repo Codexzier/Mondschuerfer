@@ -483,4 +483,31 @@ constexpr float ORBIT_BOSS_REGEN_DELAY = 120.0f;
 constexpr float ORBIT_BOSS_REGEN_TIME = 30.0f;
 constexpr float ORBIT_BOSS_SIGHT = 90.0f;        // Radarkreis der Minikarte
 
+// Alien-Station, die dritte Karte der Piloten (shared/AlienStation.cpp): Wer
+// auf der Weltraumkarte das Ziel erreicht, fliegt dort weiter. Die Aliens
+// haben im Norden eine Raumstation, die in ALIEN_TIME_LIMIT besiegt werden
+// muss (Gesamtbedingung der Karte). Ihre Schiffe erholen sich, Typ 2 tarnt
+// sich. Im Süden nur ein Trägerschiff: Reparatur und Kartenwechsel, kein
+// Schiffswechsel. Die Station ist vorerst das Alien-Mutterschiff in groß
+// (ALIEN_STATION_MODEL, Platzhalter bis zum eigenen Modell).
+constexpr const char* ALIEN_STATION_MODEL = "ships/alien-mothership";
+constexpr float ALIEN_STATION_SCALE = 22.0f;     // Mutterschiff-Modell: gut 70 m lang
+constexpr float ALIEN_STATION_Z = -120.0f;       // Lage der Station (Norden)
+constexpr float ALIEN_STATION_HP = 30000.0f;     // Schild der Station
+constexpr float ALIEN_TIME_LIMIT = 1200.0f;      // 20 Minuten; danach repariert sie sich ganz
+constexpr float ALIEN_STATION_RESPAWN = 60.0f;   // Sekunden nach dem Sieg bis zur neuen Station
+constexpr int ALIEN_STATION_BOUNTY = GOAL_POINTS;   // 100.000, geteilt nach Schaden
+constexpr float ALIEN_GUN_RANGE = 50.0f;         // Geschütze der Station: so weit über die Hülle hinaus
+constexpr float ALIEN_GUN_INTERVAL = 0.5f;       // ein Schuss je Geschütz und so viele Sekunden
+constexpr int ALIEN_GUNS = 2;                    // so viele Ziele gleichzeitig
+constexpr float ALIEN_GUN_DAMAGE = 12.0f;
+constexpr int ALIEN_PIRATES = 10;                // so viele Alien-Schiffe gleichzeitig (Einzelspieler)
+constexpr float ALIEN_CLOAKER_SHARE = 0.35f;     // Anteil der Tarnschiffe (Typ 2, ShipKind::Elite)
+constexpr const char* ALIEN_CLOAKER_MODEL = "ships/alien-mothership";   // Typ 2 (alien_spacecraft_02)
+constexpr float ALIEN_REGEN_DELAY = 5.0f;        // Alien-Schiffe: so lange ohne Treffer, dann erholt sich der Schild ...
+constexpr float ALIEN_REGEN_TIME = 8.0f;         // ... von 0 auf voll in so vielen Sekunden
+constexpr float ALIEN_DECLOAK_TIME = 1.5f;       // Tarnschiff sichtbar nach einem Schuss ...
+constexpr float ALIEN_DECLOAK_HIT = 0.8f;        // ... bzw. nach einem Treffer
+constexpr float ALIEN_CLOAK_FADE = 2.5f;         // Tarnung ein- und ausblenden (je Sekunde)
+
 } // namespace cfg

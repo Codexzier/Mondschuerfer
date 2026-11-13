@@ -18,11 +18,13 @@
 //     verliert sie Strukturpunkte. Bei 0 explodiert sie: Alle Piloten
 //     auf der Karte haben Kontostand 0, nach cfg::ORBIT_STATION_RESPAWN kommt
 //     eine neue Station (abwechselnd das andere Modell).
-// Ziel: wieder cfg::GOAL_POINTS auf dem Konto. Die nächste Karte gibt es noch
-// nicht; bis dahin beginnt danach eine neue Runde auf dieser Karte. Ab dann
-// ist der Kartenwechsel frei (PlayerState::orbitGoal): angedockt an der
-// Handelsstation bzw. am Trägerschiff (Reiter "Karte"), mit demselben
-// Kontostand; das Ziel auf dem Mond ist dann ebenfalls eine neue Runde dort.
+// Ziel: wieder cfg::GOAL_POINTS auf dem Konto. Danach geht es zur
+// Alien-Station, der dritten Karte (AlienStation.cpp), solange sie noch nicht
+// besiegt ist (PlayerState::alienGoal); sonst beginnt eine neue Runde auf
+// dieser Karte. Ab dem ersten Ziel ist der Kartenwechsel Mond <-> All frei
+// (PlayerState::orbitGoal): angedockt an der Handelsstation bzw. am
+// Trägerschiff (Reiter "Karte"), mit demselben Kontostand; das Ziel auf dem
+// Mond ist dann ebenfalls eine neue Runde dort.
 //
 // Aufrufer: main.cpp (NewOrbit und CarryPilot beim Sprung ins All), Save.cpp
 // (NewOrbit beim Laden), World::Update (UpdateOrbit), World::UpdateBullets
@@ -37,6 +39,7 @@
 namespace {
 // Oberkante von Raumstation und Trägerschiff: knapp unter der Flughöhe, die
 // Schiffe fliegen über sie hinweg (wie auf dem Mond gibt es keine Kollision).
+// Gleicher Wert in AlienStation.cpp.
 constexpr float DECK_Y = cfg::SHIP_ALTITUDE - 1.2f;
 constexpr float CARRIER_SCALE = 50.0f;   // Trägerschiff: 50 m lang
 constexpr float CARRIER_X = 35.0f;       // Trägerschiffe 35 m links und rechts der Mitte (20 m Lücke)
@@ -67,27 +70,9 @@ void World::NewOrbit(unsigned int newSeed, long long delivered) {
     mdl.pirateA = mdl.pirateB = mdl.elite = ModelId(cfg::ORBIT_PIRATE_MODEL);
 
     // Zwei Trägerschiffe längs der x-Achse nebeneinander: im Westen die Werft
-    // (carrier-a), im Osten der Raumschiffsverkäufer (carrier-b). Der Rumpf
-    // ist ein Bauteil der jeweiligen Station; angedockt wird mitten auf dem
-    // Deck, je mit zwei Geschütztürmen (Schutz am Rückzugspunkt).
-    // Die Stationen liegen in Deckhöhe (Render.cpp: Andockring auf dem Deck).
-    Station yard;
-    yard.type = StationType::Shipyard;
-    yard.name = "Werft";
-    yard.pos = {-CARRIER_X, DECK_Y, cfg::ORBIT_CARRIER_Z};
-    Station dealer;
-    dealer.type = StationType::Dealer;
-    dealer.name = "Raumschiffsverkäufer";
-    dealer.pos = {CARRIER_X, DECK_Y, cfg::ORBIT_CARRIER_Z};
-    const std::pair<Station*, const char*> carriers[2] = {{&yard, "carrier/carrier-a"}, {&dealer, "carrier/carrier-b"}};
-    for (const auto& [st, hull] : carriers) {
-        const int carrier = ModelId(hull);
-        st->parts.push_back({carrier, {0.0f, -ModelBounds(carrier).max.y * CARRIER_SCALE, 0.0f}, PI * 0.5f, CARRIER_SCALE, 0});
-        st->turrets.push_back({{-6.0f, 0.0f, -4.0f}, 0.0f, 0.0f, 0, true});
-        st->turrets.push_back({{6.0f, 0.0f, 4.0f}, PI, 0.0f, 0, false});
-    }
-    stations.push_back(yard);
-    stations.push_back(dealer);
+    // (carrier-a), im Osten der Raumschiffsverkäufer (carrier-b).
+    AddCarrier(StationType::Shipyard, "Werft", "carrier/carrier-a", -CARRIER_X);
+    AddCarrier(StationType::Dealer, "Raumschiffsverkäufer", "carrier/carrier-b", CARRIER_X);
     lastStage = StationStage();
     PlaceOrbitStation();
 
@@ -108,12 +93,29 @@ void World::NewOrbit(unsigned int newSeed, long long delivered) {
     Notify(ps, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
 }
 
+// Trägerschiff im Süden bei x (NewOrbit, NewAlien): Der Rumpf ist ein
+// Bauteil der Station; angedockt wird mitten auf dem Deck, mit zwei
+// Geschütztürmen (Schutz am Rückzugspunkt). Die Station liegt in Deckhöhe
+// (Render.cpp: Andockring auf dem Deck).
+void World::AddCarrier(StationType type, const char* name, const char* hull, float x) {
+    Station st;
+    st.type = type;
+    st.name = name;
+    st.pos = {x, DECK_Y, cfg::ORBIT_CARRIER_Z};
+    const int carrier = ModelId(hull);
+    st.parts.push_back({carrier, {0.0f, -ModelBounds(carrier).max.y * CARRIER_SCALE, 0.0f}, PI * 0.5f, CARRIER_SCALE, 0});
+    st.turrets.push_back({{-6.0f, 0.0f, -4.0f}, 0.0f, 0.0f, 0, true});
+    st.turrets.push_back({{6.0f, 0.0f, 4.0f}, PI, 0.0f, 0, false});
+    stations.push_back(st);
+}
+
 void World::CarryPilot(PlayerState& ps, const PlayerState& from, bool keepBalance) {
     ps.name = from.name;
     // Ziel auf dieser Karte: wieder 100.000, der Kontostand beginnt bei 0
     // (Kartenwechsel: ein Konto für beide Karten)
     ps.balance = keepBalance ? from.balance : 0;
     ps.orbitGoal = from.orbitGoal;
+    ps.alienGoal = from.alienGoal;
     ps.delivered = from.delivered;
     ps.lives = from.lives;
     for (int u = 0; u < cfg::UP_COUNT; ++u) ps.upgrades[u] = from.upgrades[u];
@@ -146,6 +148,10 @@ void World::PlaceOrbitStation() {
 // Asteroiden kommen und fliegen, Einschläge an der Station; nach einer
 // Explosion die neue Station.
 void World::UpdateOrbit(float dt) {
+    if (alien) {
+        UpdateAlien(dt);   // dritte Karte: keine Asteroiden, keine Mutterschiffe (AlienStation.cpp)
+        return;
+    }
     UpdateBosses(dt);
     if (stationDownT > 0.0f) {
         stationDownT -= dt;
@@ -332,8 +338,17 @@ void World::BossBounty(const Ship& s) {
     }
 }
 
-bool World::CanSwitchMap(const PlayerState& ps) const {
-    if (!ps.orbitGoal || ps.dockedAt < 0 || ps.dockedAt >= static_cast<int>(stations.size())) return false;
+// Kartenwechsel von from nach target (PilotMap: 0 Mond, 1 All, 2 Alien-Station):
+// Mond <-> All ab dem ersten Ziel im All; zur Alien-Station und von ihr weg
+// erst, wenn sie einmal besiegt ist (Gesamtbedingung der Karte).
+bool World::MapUnlocked(const PlayerState& ps, int from, int target) {
+    if (target == from || target < 0 || target > 2) return false;
+    if (from == 2 || target == 2) return ps.alienGoal;
+    return ps.orbitGoal;
+}
+
+bool World::CanSwitchMap(const PlayerState& ps, int target) const {
+    if (!MapUnlocked(ps, PilotMap(), target) || ps.dockedAt < 0 || ps.dockedAt >= static_cast<int>(stations.size())) return false;
     const StationType t = stations[static_cast<size_t>(ps.dockedAt)].type;
     return orbit ? t == StationType::Shipyard || t == StationType::Dealer : t == StationType::Trade;
 }
@@ -345,21 +360,35 @@ bool World::CanSwitchMap(const PlayerState& ps) const {
 void World::OrbitBounty(PlayerState& ps, const Ship& s) {
     const bool elite = s.kind == ShipKind::Elite;
     const int bounty = elite ? cfg::ORBIT_BOUNTY_ELITE : cfg::ORBIT_BOUNTY_PIRATE;
-    OrbitPay(ps, bounty, Fmt("%s abgeschossen! +%s Punkte", elite ? "Elite-Pirat" : "Pirat", Points(bounty).c_str()));
+    const char* name = alien ? (elite ? "Tarnschiff" : "Alien-Jäger") : (elite ? "Elite-Pirat" : "Pirat");
+    OrbitPay(ps, bounty, Fmt("%s abgeschossen! +%s Punkte", name, Points(bounty).c_str()));
 }
 
 // Punkte aufs Konto (Abschuss, Anteil am Mutterschiff) mit Meldung; danach
-// das Ziel prüfen.
+// das Ziel prüfen. Auf der Alien-Station zählt nur der Sieg über die
+// Station (AlienStationDown), nicht der Kontostand.
+// Einzelspieler: Ist die Alien-Station noch nicht besiegt, endet die Runde
+// wie auf dem Mond mit dem Siegesbildschirm ("Weiter zur Alien-Station",
+// main.cpp). Im Mehrspieler schickt der Server den Spieler dorthin.
 void World::OrbitPay(PlayerState& ps, int points, const std::string& text) {
     ps.balance += points;
     Notify(ps, text, Color{255, 210, 130, 255});
-    if (ps.balance < cfg::GOAL_POINTS) return;
+    if (alien || ps.balance < cfg::GOAL_POINTS) return;
     if (!ps.orbitGoal) {
         ps.orbitGoal = true;
         Notify(ps, "Kartenwechsel frei: Mond und All im Reiter Karte (Handelsstation, Trägerschiff).", Color{150, 230, 255, 255});
     }
-    if (isServer) GoalReached(ps);
-    else NextRound(ps);
+    if (isServer) {
+        GoalReached(ps);
+    } else if (!ps.alienGoal && !simulation) {
+        if (outcome == Outcome::None) {
+            outcome = Outcome::Won;
+            outcomeT = 0.0f;
+            if (const Ship* sp = PlayerShip(ps)) SoundAt(Sfx::Victory, sp->pos, 1.0f, 0.4f, ps.id);
+        }
+    } else {
+        NextRound(ps);
+    }
 }
 
 // Einzelspieler: Ziel erreicht auf der Weltraumkarte oder, bei freiem
