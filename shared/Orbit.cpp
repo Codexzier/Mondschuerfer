@@ -3,7 +3,9 @@
 // in World.hpp, Zahlenwerte in Config.hpp unter ORBIT_*).
 //
 // Wer auf dem Mond das Ziel erreicht (cfg::GOAL_POINTS), fliegt hier weiter:
-//   - kein Boden, keine Kristalle, keine Händler und keine Missionen;
+//   - kein Boden, keine Kristalle und keine Händler; eigene Mini-Missionen
+//     (Rettungskapseln, Asteroiden abfangen, Versorgungsfrachter; World.cpp
+//     Abschnitt "Missionen"), angenommen beim Raumschiffsverkäufer;
 //   - in der Mitte die Raumstation (station-a bzw. station-b) mit
 //     Strukturpunkten (World::stationHp);
 //   - im Süden zwei Trägerschiffe nebeneinander, eins mit der Werft, eins mit
@@ -174,7 +176,8 @@ void World::UpdateOrbit(float dt) {
         a.dead = true;
         Explosion({a.pos.x, cfg::SHIP_ALTITUDE, a.pos.z}, 2.5f);
         SoundAt(Sfx::CrashBoom, a.pos);
-        stationHp = std::max(0.0f, stationHp - cfg::ORBIT_ASTEROID_DAMAGE);
+        // Missions-Asteroiden sind kleiner und richten weniger an
+        stationHp = std::max(0.0f, stationHp - (a.mission >= 0 ? cfg::ORBIT_MISSION_ASTEROID_DAMAGE : cfg::ORBIT_ASTEROID_DAMAGE));
         if (stationHp <= 0.0f) {
             destroyed = true;
             break;
@@ -199,14 +202,17 @@ void World::UpdateOrbit(float dt) {
 
 // Neuer Asteroid in ORBIT_ASTEROID_DIST um die Station, aus einer zufälligen
 // Richtung; er fliegt geradewegs auf ihre Mitte zu. Alle Piloten bekommen
-// eine Warnung mit der Himmelsrichtung.
-void World::SpawnAsteroid() {
+// eine Warnung mit der Himmelsrichtung. mission >= 0: Asteroid der Mission
+// "Asteroiden abfangen" (kleiner, weniger Treffer, die Warnung bekommt nur
+// der Auftraggeber).
+void World::SpawnAsteroid(int mission) {
     if (spaceStations.empty()) return;
     const SpaceStation& st = spaceStations[0];
     Asteroid a;
     a.id = nextId++;
+    a.mission = mission;
     a.model = ModelId(RandInt(0, 1) == 0 ? "meteor" : "meteor_detailed");
-    a.scale = cfg::ORBIT_ASTEROID_SIZE * Rand(0.85f, 1.15f);
+    a.scale = (mission >= 0 ? cfg::ORBIT_MISSION_ASTEROID_SIZE : cfg::ORBIT_ASTEROID_SIZE) * Rand(0.85f, 1.15f);
     const BoundingBox b = ModelBounds(a.model);
     a.r = std::max(b.max.x - b.min.x, b.max.z - b.min.z) * 0.5f * a.scale;
     // Winkel 0 = Süden (+z), PI / 2 = Osten (+x); Mitte des Modells in Flughöhe
@@ -216,12 +222,15 @@ void World::SpawnAsteroid() {
     a.vel = {-sinf(ang) * cfg::ORBIT_ASTEROID_SPEED, 0.0f, -cosf(ang) * cfg::ORBIT_ASTEROID_SPEED};
     a.yaw = Rand(0.0f, 2.0f * PI);
     a.spin = Rand(-0.6f, 0.6f);
-    a.hp = a.maxHp = cfg::ORBIT_ASTEROID_HP;
+    a.hp = a.maxHp = mission >= 0 ? cfg::ORBIT_MISSION_ASTEROID_HP : cfg::ORBIT_ASTEROID_HP;
     asteroids.push_back(a);
     static const char* const kDirs[8] = {"Süden", "Südosten", "Osten", "Nordosten", "Norden", "Nordwesten", "Westen", "Südwesten"};
     const int dir = (static_cast<int>(lroundf(ang / (PI / 4.0f))) + 8) % 8;
+    const Mission* m = mission >= 0 ? FindMission(mission) : nullptr;
     for (PlayerState& ps : players) {
-        Notify(ps, Fmt("Asteroid im Anflug aus %s! Zerstöre ihn vor dem Einschlag.", kDirs[dir]), Color{255, 170, 90, 255});
+        if (mission >= 0 && (!m || m->owner != ps.id)) continue;
+        Notify(ps, Fmt(m ? "Missions-Asteroid im Anflug aus %s! Fang ihn ab." : "Asteroid im Anflug aus %s! Zerstöre ihn vor dem Einschlag.", kDirs[dir]),
+               Color{255, 170, 90, 255});
         if (const Ship* sp = PlayerShip(ps)) SoundAt(Sfx::LowShield, sp->pos, 1.0f, 0.0f, ps.id);
     }
 }
@@ -234,9 +243,18 @@ void World::DamageAsteroid(Asteroid& a, float dmg, int attackerPlayerId) {
     a.dead = true;
     Explosion({a.pos.x, cfg::SHIP_ALTITUDE, a.pos.z}, 2.0f);
     SoundAt(Sfx::ShipExplode, a.pos);
-    for (PlayerState& ps : players)
+    // Missions-Asteroid: zählt für die Mission, egal wer ihn erwischt hat
+    // (erfüllt wird sie in UpdateMissions)
+    Mission* m = a.mission >= 0 ? FindMission(a.mission) : nullptr;
+    if (m) ++m->progress;
+    for (PlayerState& ps : players) {
+        if (m && ps.id == m->owner) {
+            if (m->progress < m->goal) Notify(ps, Fmt("Missions-Asteroid zerstört (%d/%d)", m->progress, m->goal), Color{150, 255, 170, 255});
+            continue;
+        }
         Notify(ps, ps.id == attackerPlayerId ? "Asteroid zerstört! Die Station ist in Sicherheit." : "Ein Asteroid wurde zerstört.",
                Color{150, 255, 170, 255});
+    }
 }
 
 // Strukturpunkte 0: große Explosion, die Station ist weg (keine Asteroiden
