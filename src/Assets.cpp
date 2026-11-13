@@ -3,7 +3,8 @@
 // (Schnittstelle und Überblick: Assets.hpp).
 //
 // Inhalt dieser Datei:
-//   - LoadFilePatched: repariert die GLB-Dateien des Kits beim Einlesen.
+//   - LoadFilePatched: liest Dateien aus dem Asset-Paket oder von der Platte
+//     und repariert die GLB-Dateien des Kits beim Einlesen.
 //   - MoonTone: färbt das orange Gestein des Kits grau oder blau.
 //   - kVertexShader / kFragmentHead / kFragmentMain: einfache Beleuchtung
 //     (Sonne + Himmel + Randlicht + Leuchten), dazu Schatten, Blitze und
@@ -23,6 +24,7 @@
 // nach InitWindow().
 // ---------------------------------------------------------------------------
 #include "Assets.hpp"
+#include "AssetPack.hpp"
 #include "Effects.hpp"
 #include "Models.hpp"
 #include <algorithm>
@@ -34,6 +36,54 @@
 Assets g_assets;
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Asset-Paket assets.pak (AssetPack.hpp). Ist es geöffnet, beginnen alle
+// Asset-Pfade mit kPakPrefix ("pak:/models/..."); der Teil danach ist der
+// Pfad im Paket. Den Präfix gibt es auf keiner Platte, eine Verwechslung mit
+// echten Dateien ist also ausgeschlossen.
+// ---------------------------------------------------------------------------
+pak::Reader g_pak;
+const char* kPakPrefix = "pak:/";
+
+// Paketschlüssel: CMake schreibt ihn verwürfelt nach build/generated/PakKey.inc
+// (aus der Schlüsseldatei, siehe CMakeLists.txt). Das Verwürfeln sorgt nur
+// dafür, dass die 32 Bytes nicht unverändert in der ausführbaren Datei stehen.
+pak::Key PakKey() {
+    static const unsigned char kMasked[32] = {
+#include "PakKey.inc"
+    };
+    pak::Key k{};
+    for (int i = 0; i < 32; ++i) k[i] = static_cast<uint8_t>(kMasked[i] ^ ((i * 73 + 90) & 255));
+    return k;
+}
+
+// Pfad im Paket zu einem Asset-Pfad. raylib baut die Pfade von Texturen
+// eines Modells selbst zusammen ("./pak:/models/kit/Textures/colormap.png",
+// GetDirectoryPath setzt "./" davor); deshalb werden "." und ".." aufgelöst
+// und der Backslash wie "/" behandelt. false: kein Pfad im Paket (oder kein Paket).
+bool PakRelative(const std::string& path, std::string& rel) {
+    if (!g_pak.IsOpen()) return false;
+    std::vector<std::string> parts;
+    std::string part;
+    for (size_t i = 0; i <= path.size(); ++i) {
+        const char c = i < path.size() ? path[i] : '/';
+        if (c != '/' && c != '\\') {
+            part += c;
+            continue;
+        }
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(part);
+        }
+        part.clear();
+    }
+    if (parts.empty() || parts[0] != "pak:") return false;
+    rel.clear();
+    for (size_t i = 1; i < parts.size(); ++i) rel += (i > 1 ? "/" : "") + parts[i];
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // Die GLB-Dateien des Space Kits enthalten einen Hilfsknoten "tmpParent"
@@ -56,22 +106,41 @@ namespace {
 //   danach       BIN-Block mit den Eckpunktdaten
 //
 // Eingebunden wird die Funktion mit SetLoadFileDataCallback() in Init(). Ab
-// dann liest raylib JEDE Datei über diese Funktion (auch Töne und Schriften);
-// alles, was nicht mit "glTF" beginnt, wird unverändert durchgereicht. Der
-// Speicher muss mit MemAlloc() kommen, weil raylib ihn später selbst mit
-// UnloadFileData() (MemFree) freigibt.
+// dann liest raylib JEDE Datei über diese Funktion (auch Töne, Bilder und
+// Schriften). Pfade im Asset-Paket ("pak:/...") kommen entschlüsselt aus dem
+// Paket, alle anderen von der Platte. Alles, was nicht mit "glTF" beginnt,
+// wird unverändert durchgereicht. Der Speicher muss mit MemAlloc() kommen,
+// weil raylib ihn später selbst mit UnloadFileData() (MemFree) freigibt.
 // ---------------------------------------------------------------------------
 unsigned char* LoadFilePatched(const char* fileName, int* dataSize) {
     *dataSize = 0;
-    FILE* f = fopen(fileName, "rb");
-    if (!f) return nullptr;
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size <= 0) { fclose(f); return nullptr; }
-    auto* data = static_cast<unsigned char*>(MemAlloc(static_cast<unsigned int>(size)));
-    size_t read = fread(data, 1, static_cast<size_t>(size), f);
-    fclose(f);
+    unsigned char* data = nullptr;
+    size_t read = 0;
+    std::string rel;
+    if (PakRelative(fileName, rel)) {
+        const pak::Entry* e = g_pak.Find(rel);
+        if (!e || e->size == 0 || e->size > 0x7FFFFFFF) {
+            TraceLog(LOG_WARNING, "PAK: %s fehlt im Asset-Paket", rel.c_str());
+            return nullptr;
+        }
+        data = static_cast<unsigned char*>(MemAlloc(static_cast<unsigned int>(e->size)));
+        if (!g_pak.Read(*e, data)) {
+            TraceLog(LOG_WARNING, "PAK: %s nicht lesbar (Pruefsumme falsch)", rel.c_str());
+            MemFree(data);
+            return nullptr;
+        }
+        read = static_cast<size_t>(e->size);
+    } else {
+        FILE* f = fopen(fileName, "rb");
+        if (!f) return nullptr;
+        fseek(f, 0, SEEK_END);
+        long size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (size <= 0) { fclose(f); return nullptr; }
+        data = static_cast<unsigned char*>(MemAlloc(static_cast<unsigned int>(size)));
+        read = fread(data, 1, static_cast<size_t>(size), f);
+        fclose(f);
+    }
     *dataSize = static_cast<int>(read);
 
     if (read > 20 && memcmp(data, "glTF", 4) == 0) {
@@ -297,22 +366,40 @@ bool Assets::Init() {
     // Muss vor dem ersten LoadModel() eingetragen sein (siehe LoadFilePatched).
     SetLoadFileDataCallback(LoadFilePatched);
 
-    // Assets-Ordner suchen: zuerst neben der ausführbaren Datei (funktioniert
-    // unabhängig vom Arbeitsordner), dann relativ zum Arbeitsordner, auch ein
-    // oder zwei Ebenen höher (z. B. Start aus build/ oder build/Release/).
-    // Als Erkennungszeichen dient eine Modelldatei, die es immer gibt.
+    // Zuerst das Asset-Paket neben der ausführbaren Datei (so wird das Spiel
+    // ausgeliefert, siehe AssetPack.hpp). Lässt es sich nicht öffnen
+    // (beschädigt, anderer Schlüssel), weiter wie ohne Paket.
     const std::string app = GetApplicationDirectory();
-    const char* candidates[] = {"assets/", "../assets/", "../../assets/"};
-    std::vector<std::string> tries = {app + "assets/"};
-    for (const char* c : candidates) tries.emplace_back(c);
-    for (const auto& dir : tries) {
-        if (FileExists((dir + "models/craft_speederA.glb").c_str())) {
-            assetDir_ = dir;
-            break;
+    const std::string pakFile = app + "assets.pak";
+    if (FileExists(pakFile.c_str())) {
+        std::string err;
+        if (g_pak.Open(pakFile, PakKey(), err) && g_pak.Find("models/craft_speederA.glb")) {
+            assetDir_ = kPakPrefix;
+            TraceLog(LOG_INFO, "PAK: %s geoeffnet (%d Dateien)", pakFile.c_str(), static_cast<int>(g_pak.Entries().size()));
+        } else {
+            TraceLog(LOG_ERROR, "PAK: %s nicht lesbar: %s", pakFile.c_str(), err.empty() ? "Modelle fehlen" : err.c_str());
+            g_pak = pak::Reader{};
+        }
+    }
+
+    // Sonst den Assets-Ordner suchen (beim Entwickeln): zuerst neben der
+    // ausführbaren Datei (funktioniert unabhängig vom Arbeitsordner), dann
+    // relativ zum Arbeitsordner, auch ein oder zwei Ebenen höher (z. B. Start
+    // aus build/ oder build/Release/). Als Erkennungszeichen dient eine
+    // Modelldatei, die es immer gibt.
+    if (assetDir_.empty()) {
+        const char* candidates[] = {"assets/", "../assets/", "../../assets/"};
+        std::vector<std::string> tries = {app + "assets/"};
+        for (const char* c : candidates) tries.emplace_back(c);
+        for (const auto& dir : tries) {
+            if (FileExists((dir + "models/craft_speederA.glb").c_str())) {
+                assetDir_ = dir;
+                break;
+            }
         }
     }
     if (assetDir_.empty()) {
-        TraceLog(LOG_ERROR, "Assets-Ordner nicht gefunden (erwartet: assets/models/*.glb)");
+        TraceLog(LOG_ERROR, "Weder assets.pak noch Assets-Ordner gefunden (erwartet: assets/models/*.glb)");
         return false;
     }
 
@@ -544,4 +631,55 @@ void Assets::BeginLit() {
 
 void Assets::EndLit() {
     EndShaderMode();   // zeichnet die gesammelten Dreiecke mit lit_
+}
+
+// ---------------------------------------------------------------------------
+// Dateien aus dem Asset-Paket oder von der Platte (Erklärung: Assets.hpp)
+// ---------------------------------------------------------------------------
+bool InAssetPack(const std::string& path) {
+    std::string rel;
+    return PakRelative(path, rel);
+}
+
+bool AssetExists(const std::string& path) {
+    std::string rel;
+    if (PakRelative(path, rel)) return g_pak.Find(rel) != nullptr;
+    return FileExists(path.c_str());
+}
+
+bool LoadAssetBytes(const std::string& path, std::vector<unsigned char>& out) {
+    out.clear();
+    std::string rel;
+    if (PakRelative(path, rel)) {
+        if (g_pak.Read(rel, out)) return true;
+        TraceLog(LOG_WARNING, "PAK: %s fehlt oder ist nicht lesbar", rel.c_str());
+        out.clear();
+        return false;
+    }
+    int size = 0;
+    unsigned char* data = LoadFileData(path.c_str(), &size);
+    if (!data) return false;
+    out.assign(data, data + size);
+    UnloadFileData(data);
+    return true;
+}
+
+std::vector<std::string> ListAssetFiles(const std::string& dir, const char* ext) {
+    std::vector<std::string> list;
+    std::string rel;
+    if (PakRelative(dir, rel)) {
+        if (!rel.empty()) rel += '/';
+        const std::string base = dir.empty() || dir.back() == '/' ? dir : dir + "/";
+        for (const pak::Entry& e : g_pak.Entries()) {
+            if (e.path.compare(0, rel.size(), rel) != 0) continue;
+            const std::string name = e.path.substr(rel.size());
+            if (name.find('/') == std::string::npos && IsFileExtension(name.c_str(), ext)) list.push_back(base + name);
+        }
+        return list;
+    }
+    if (!DirectoryExists(dir.c_str())) return list;
+    FilePathList files = LoadDirectoryFilesEx(dir.c_str(), ext, false);
+    for (unsigned int i = 0; i < files.count; ++i) list.emplace_back(files.paths[i]);
+    UnloadDirectoryFiles(files);
+    return list;
 }

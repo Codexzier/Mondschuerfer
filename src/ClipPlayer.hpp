@@ -65,6 +65,7 @@ private:
     int cue_ = -1;            // Funkspruch, zu dem der geladene Clip gehört
     bool tried_ = false;      // Open() für cue_ schon versucht
     plm_t* plm_ = nullptr;    // Video-Decoder (Ton ist abgeschaltet)
+    std::vector<unsigned char> data_;  // Clip aus dem Asset-Paket (entschlüsselt), solange plm_ daraus liest
     Texture2D tex_{};
     std::vector<unsigned char> rgb_;   // ein Bild als RGB, für UpdateTexture
     bool hasFrame_ = false;

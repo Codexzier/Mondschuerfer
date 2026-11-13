@@ -163,6 +163,7 @@ private:
     // Ein Dauergeräusch als raylib-Music-Stream (siehe Dateikopf von Audio.cpp).
     struct Track {
         Music music{};
+        std::vector<unsigned char> data;   // Datei aus dem Asset-Paket, solange music sie liest
         bool valid = false;         // Datei geladen
         bool started = false;       // PlayMusicStream schon einmal aufgerufen
         bool playing = false;       // läuft gerade (false = pausiert)
