@@ -24,6 +24,8 @@
 //   Mondkarte und die auf dem Server freigegebenen Einsatzkarten
 //   (net::MissionMapsMsg). Was gewählt wird, schickt MultiplayerScreen als
 //   TeamAction an den Server; Anwahl und Ergebnis kommen von dort (net::TeamsMsg).
+//   Unten in der Mitte liegt der Chat des Command Centers (OnlineChatRect;
+//   das Fenster selbst zeichnet MultiplayerScreen).
 //
 // Wer benutzt die Datei?
 //   src/main.cpp (Bildschirm Screen::Command), src/Multiplayer.cpp (Command
@@ -75,10 +77,15 @@ public:
     // DrawOnline. teams = Stand vom Server, board = Scoreboard aller Spieler,
     // maps = freigegebene Einsatzkarten (Ziele), myId = eigene Spieler-ID,
     // sampleGoal = Proben-Ziel des Servers, fresh = gerade ist ein eigener
-    // Einsatz zu Ende gegangen (Ergebnis zeigen).
+    // Einsatz zu Ende gegangen (Ergebnis zeigen), chatBusy = der Chat des
+    // Command Centers hat gerade die Tastatur (Knöpfe und Reiter warten).
     void OpenOnline();
     OnlineCommand DrawOnline(const net::TeamsMsg& teams, const net::ScoreboardMsg& board, const std::vector<GameMap>& maps,
-                             int myId, int sampleGoal, bool fresh);
+                             int myId, int sampleGoal, bool fresh, bool chatBusy);
+    // Mehrspieler: Platz für das Chatfenster des Command Centers, unten in
+    // der Mitte zwischen den beiden Feldern (Höhe ChatBox::Height()). Die
+    // Anzeige der Anwahl rückt darüber.
+    static Rectangle OnlineChatRect();
 
 private:
     void DrawScene(int figures);   // figures = so viele Figuren vor dem Tor (1..4)

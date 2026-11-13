@@ -1591,6 +1591,8 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
 // Chat-Nachricht: prüfen, bremsen und als ChatLine an alle angemeldeten
 // Spieler schicken (auch an den Absender, der sie erst dann anzeigt).
 // Zuschauer haben keinen Namen und kein Chatfenster.
+// Kanal Command: nur aus dem Command Center und nur an die Spieler, die
+// gerade dort sind (eigenes Chatfenster im Command Center).
 void GameServer::HandleChat(Client& c, const net::ChatMsg& m) {
     if (c.role != Role::Player) return;
     c.chatting = false;   // gesendet = Eingabe zu (der Client schickt das auch noch)
@@ -1598,10 +1600,21 @@ void GameServer::HandleChat(Client& c, const net::ChatMsg& m) {
         BadPacket(c, "Chat");
         return;
     }
+    const bool command = m.channel == net::ChatChannel::Command;
+    if (command && !InCommandCenter(c)) return;   // gerade hinausgegangen: verwerfen
     const double now = Now();
     c.chatTokens = std::min(CHAT_BURST, c.chatTokens + (now - c.chatTokensAt) * CHAT_PER_SECOND);
     c.chatTokensAt = now;
     if (c.chatTokens < 1.0) {
+        if (command) {
+            // Das Command Center zeigt keine Meldungen der Welt: Hinweis als Chatzeile
+            net::ChatLineMsg note;
+            note.name = "Server";
+            note.text = "Bitte etwas langsamer schreiben.";
+            note.channel = net::ChatChannel::Command;
+            Send(c, net::Encode(note), true);
+            return;
+        }
         World& home = HomeOf(c.playerId);
         if (PlayerState* ps = home.FindPlayer(c.playerId))
             home.Notify(*ps, "Chat: bitte etwas langsamer schreiben.", Color{255, 200, 120, 255});
@@ -1612,9 +1625,19 @@ void GameServer::HandleChat(Client& c, const net::ChatMsg& m) {
     line.playerId = c.playerId;
     line.name = c.name;
     line.text = m.text;
+    line.channel = m.channel;
     const std::vector<uint8_t> bytes = net::Encode(line);
     for (auto& up : clients_)
-        if (up->role == Role::Player && !up->closing) Send(*up, bytes, true);
+        if (up->role == Role::Player && !up->closing && (!command || InCommandCenter(*up))) Send(*up, bytes, true);
+}
+
+// Im Command Center: Rolle gewählt, SG-Team, (noch) keine Figur und nicht auf
+// einer Einsatzkarte. Wer im All ist, steht nicht in world_ (dort gibt es
+// kein Command Center).
+bool GameServer::InCommandCenter(const Client& c) const {
+    if (c.role != Role::Player || c.closing || !c.roleChosen) return false;
+    const PlayerState* ps = world_.FindPlayer(c.playerId);
+    return ps && ps->role == PlayerRole::Trooper && ps->trooperId < 0 && !InstanceOf(c.playerId);
 }
 
 void GameServer::HandleChatTyping(Client& c, const net::ChatTypingMsg& m) {

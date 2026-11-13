@@ -352,6 +352,8 @@ private:
     void HandleInput(Client& c, const net::InputMsg& m);
     void HandleDockAction(Client& c, const net::DockActionMsg& m);
     void HandleChat(Client& c, const net::ChatMsg& m);
+    // Ist der Spieler gerade im Command Center? (eigener Chat-Kanal dort)
+    bool InCommandCenter(const Client& c) const;
     void HandleChatTyping(Client& c, const net::ChatTypingMsg& m);
     void HandleTeamAction(Client& c, const net::TeamActionMsg& m);
     void HandleLeave(Client& c);

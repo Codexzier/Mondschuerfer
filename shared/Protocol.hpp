@@ -91,7 +91,8 @@ namespace net {
 // Version 18: Weltraumkarte der Piloten (OrbitStart; Snapshot: Raumstation und Asteroiden;
 //             DockAction SwitchMap und SnapMe::orbitGoal für den Kartenwechsel).
 // Version 19: Alien-Mutterschiff (ShipKind::Boss, Modellvariante, SnapMe::bosses).
-constexpr uint16_t PROTOCOL_VERSION = 19;
+// Version 20: eigener Chat im Command Center (ChatMsg/ChatLineMsg::channel).
+constexpr uint16_t PROTOCOL_VERSION = 20;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -192,6 +193,11 @@ bool ValidPlayerName(const std::string& name);
 // nicht nur Leerzeichen.
 bool ChatChar(int codepoint);
 bool ValidChatText(const std::string& text);
+
+// Chat-Kanal: All = alle angemeldeten Spieler (Chatfenster im Flug und zu
+// Fuß), Command = nur die Spieler, die gerade im Command Center sind
+// (eigenes Chatfenster dort).
+enum class ChatChannel : uint8_t { All = 0, Command = 1 };
 
 // ---------------------------------------------------------------------------
 // Schreiben und Lesen von Bytes
@@ -339,10 +345,12 @@ struct EventEditMsg {
 };
 
 // Chat-Nachricht des Spielers (nur angemeldete Spieler). Der Server prüft
-// den Text (ValidChatText) und schickt ihn als ChatLine an alle Spieler,
-// auch zurück an den Absender.
+// den Text (ValidChatText) und schickt ihn als ChatLine an alle Spieler des
+// Kanals, auch zurück an den Absender. Im Kanal Command darf nur schreiben,
+// wer im Command Center ist.
 struct ChatMsg {
     std::string text;             // UTF-8, ohne Spielername
+    ChatChannel channel = ChatChannel::All;
 };
 
 // Chat-Eingabe geöffnet (true) oder geschlossen (false). Der Server zeigt
@@ -714,11 +722,13 @@ struct MapDataMsg {
     GameMap map;                  // ohne author
 };
 
-// Eine Chat-Nachricht (Antwort auf ChatMsg, an alle angemeldeten Spieler)
+// Eine Chat-Nachricht (Antwort auf ChatMsg, an alle angemeldeten Spieler
+// bzw. im Kanal Command an alle im Command Center)
 struct ChatLineMsg {
     int32_t playerId = -1;        // Absender
     std::string name;             // Spielername des Absenders
     std::string text;
+    ChatChannel channel = ChatChannel::All;
 };
 
 // SG-Teams für das Command Center (an alle Spieler in der Rolle SG-Team, bei

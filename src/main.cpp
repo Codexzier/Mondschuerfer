@@ -776,8 +776,8 @@ private:
     //     Rollenwahl, Spielmusik im Spiel, in der Pause (auch in deren
     //     Optionen), auf den Endbildschirmen und in der Simulation – dort,
     //     solange die eigene Piraten-Mission läuft, die Piratenmusik. Die
-    //     Musik "Stargate" im Command Center und im Einsatz rund um das Tor
-    //     (StargateMusic). Die Zielmusik stößt UpdatePlaying beim Sieg an
+    //     Musik "Command" im Command Center, "Stargate" im Einsatz rund um
+    //     das Tor (StargateMusic). Die Zielmusik stößt UpdatePlaying beim Sieg an
     //     (PlayGoalMusic).
     // ========================================================================
     void UpdateAudio(float dt) {
@@ -808,7 +808,9 @@ private:
         // Menü/in der Pause) leeren, sonst kämen sie im nächsten Frame wieder.
         world_.sounds.clear();
         MusicTrack track = MusicTrack::Menu;
-        if (screen_ == Screen::Command || StargateMusic()) {
+        if (screen_ == Screen::Command) {
+            track = MusicTrack::Command;
+        } else if (StargateMusic()) {
             track = MusicTrack::Stargate;
         } else if (!MenuBackground() && screen_ != Screen::Editor && screen_ != Screen::Roles) {
             const Mission* m = world_.FindMission(world_.Me().mission);

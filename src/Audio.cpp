@@ -186,7 +186,7 @@ const LoopDef kLoops[Audio::LOOP_COUNT] = {
 //            (Situationsmusik: jede Piraten-Mission beginnt mit dem Anfang
 //            des Stücks).
 // Die Spielmusik (SONG_GAME_1..3) läuft der Reihe nach im Kreis.
-enum Song { SONG_MENU, SONG_GAME_1, SONG_GAME_2, SONG_GAME_3, SONG_PIRATES, SONG_GOAL, SONG_STARGATE, SONG_COUNT };
+enum Song { SONG_MENU, SONG_GAME_1, SONG_GAME_2, SONG_GAME_3, SONG_PIRATES, SONG_GOAL, SONG_STARGATE, SONG_COMMAND, SONG_COUNT };
 constexpr int kPlaylist = SONG_GAME_3 - SONG_GAME_1 + 1;   // Stücke der Spielmusik
 
 struct SongDef {
@@ -202,6 +202,7 @@ const SongDef kSongs[] = {
     {"music/enteringPirateTerritory.mp3", true, true},    // Pirates: "Entering Pirate Territory"
     {"music/deepSpaceHorizon.mp3", false, true},          // Ziel erreicht: "Deep Space Horizon"
     {"music/breathingPulse.mp3", true, true},             // Stargate: "Breathing Pulse"
+    {"music/lunar_sg1_team.mp3", true, false},            // Command: "Lunar SG1 Team (Mondkarte)"
 };
 static_assert(sizeof(kSongs) / sizeof(kSongs[0]) == SONG_COUNT, "kSongs passt nicht zu enum Song");
 static_assert(SONG_COUNT == MusicMix::kTracks, "MusicMix::kTracks passt nicht zu kSongs");
@@ -470,9 +471,10 @@ void Audio::UpdateLoop(int loop, float level, float pitch, float dt) {
 //   - Menu: Menümusik, None: Stille (beide beenden eine laufende Zielmusik,
 //     ebenso "Musik aus" in den Optionen)
 //   - Zielmusik, solange angestoßen (PlayGoalMusic) und nicht zu Ende
-//   - Pirates: Piratenmusik, Stargate: Musik des SG-Teams
+//   - Pirates: Piratenmusik, Stargate: Musik des SG-Teams am Tor,
+//     Command: Musik des Command Centers
 //   - sonst das aktuelle Stück der Spielmusik
-// Fehlt die Datei der Ziel-, Piraten- bzw. Stargate-Musik, gilt die nächste Stufe;
+// Fehlt die Datei der Ziel-, Piraten-, Stargate- bzw. Command-Center-Musik, gilt die nächste Stufe;
 // fehlende Stücke der Spielmusik werden übersprungen.
 int Audio::WantedSong() {
     if (track_ == MusicTrack::None || track_ == MusicTrack::Menu || !mix_.enabled) goalMusic_ = false;
@@ -482,6 +484,7 @@ int Audio::WantedSong() {
     goalMusic_ = false;
     if (track_ == MusicTrack::Pirates && songs_[SONG_PIRATES].valid) return SONG_PIRATES;
     if (track_ == MusicTrack::Stargate && songs_[SONG_STARGATE].valid) return SONG_STARGATE;
+    if (track_ == MusicTrack::Command && songs_[SONG_COMMAND].valid) return SONG_COMMAND;
     for (int n = 0; n < kPlaylist && !songs_[SONG_GAME_1 + playlist_].valid; ++n) playlist_ = (playlist_ + 1) % kPlaylist;
     return SONG_GAME_1 + playlist_;
 }
@@ -555,10 +558,10 @@ void Audio::UpdateMusic(float dt) {
 
 // Nur für die Testoption --music-test (main.cpp): eine Zeile, an der man
 // ablesen kann, ob die Musik wirklich läuft und wie sie überblendet.
-//   track  gewünschte Musik (MusicTrack: -1 keine, 0 Menü, 1 Spiel, 2 Piraten, 3 Stargate)
+//   track  gewünschte Musik (MusicTrack: -1 keine, 0 Menü, 1 Spiel, 2 Piraten, 3 Stargate, 4 Command Center)
 //   goal   Zielmusik angestoßen, list = aktuelles Stück der Spielmusik (0..2)
 //   want   gewünschtes Stück (Index in kSongs: 0 Menü, 1-3 Spiel,
-//          4 Piraten, 5 Ziel, 6 Stargate; -1 keins)
+//          4 Piraten, 5 Ziel, 6 Stargate, 7 Command Center; -1 keins)
 //   on/vol Optionen (Musik an, Regler)
 //   fade, gain, play, pos: je Stück in der Reihenfolge von kSongs, durch "/"
 //          getrennt: Blende, fertige Lautstärke, läuft der Stream laut raylib
