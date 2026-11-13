@@ -402,11 +402,9 @@ private:
     // gesperrt und ein Fehlerton kommt.
     void Continue() {
         if (LoadGame(world_)) {
-            // Auf der Weltraumkarte vorerst kein Funkspruch (die Clips handeln vom Mond)
-            if (!world_.orbit) {
-                world_.Me().cue = cfg::CUE_RETURN;
-                world_.Me().cueT = cfg::CUE_TIME;
-            }
+            // Auf der Weltraumkarte der eigene Funkspruch "Willkommen zurück im All"
+            world_.Me().cue = world_.orbit ? cfg::CUE_ORBIT_RETURN : cfg::CUE_RETURN;
+            world_.Me().cueT = cfg::CUE_TIME;
             controls_.Reset();
             screen_ = Screen::Playing;
             camTarget_ = world_.Player().pos;
@@ -428,6 +426,10 @@ private:
         next->NewOrbit(static_cast<unsigned int>(std::time(nullptr)), world_.totalDelivered);
         next->CarryPilot(next->Me(), world_.Me(), keepBalance);
         next->mapFile = world_.mapFile;
+        // Funkspruch im All: zum ersten Mal "Willkommen im All", nach dem Ziel
+        // im All (Kartenwechsel frei) "Willkommen zurück im All"
+        next->Me().cue = next->Me().orbitGoal ? cfg::CUE_ORBIT_RETURN : cfg::CUE_ORBIT_NEWSTART;
+        next->Me().cueT = cfg::CUE_TIME;
         world_ = std::move(*next);
         SaveGame(world_);
         controls_.Reset();
@@ -823,7 +825,7 @@ private:
         if (screen_ == Screen::Playing || screen_ == Screen::Paused ||
             (screen_ == Screen::Options && optionsReturn_ == Screen::Paused)) {
             const PlayerState& me = world_.Me();
-            if (me.cueT > 0.0f && !world_.orbit) cue = me.cue;   // im All vorerst keine Funksprüche
+            if (me.cueT > 0.0f && cfg::CueOnOrbit(me.cue) == world_.orbit) cue = me.cue;   // nur Funksprüche dieser Karte
             showClip = screen_ == Screen::Playing && me.dockedAt < 0;
         }
         g_clip.Update(dt, cue, showClip);

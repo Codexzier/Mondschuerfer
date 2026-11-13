@@ -105,7 +105,7 @@ den **Optionen**.
 | A / D oder ← / → | Drehen |
 | Leertaste | Schießen (2 Schuss pro Sekunde) |
 | E | Scanner an / aus |
-| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person einsammeln (Mission) |
+| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person bzw. Rettungskapsel einsammeln (Mission) |
 | R | Schild reparieren (an der Handelsstation) |
 | 1 – 4 | Upgrade kaufen (in der Werft) / Schiff kaufen (beim Raumschiffsverkäufer, mit Umschalt: in Zahlung geben) |
 | 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) / Mission annehmen (Tab „Missionen“) |
@@ -297,6 +297,14 @@ glimmen.
   - *Konvoi verteidigen* (3.500 Punkte): drei Frachter (grün) fliegen zu einer anderen Station,
     unterwegs greifen zwei Piratenwellen an. Kommt keiner an, ist die Mission gescheitert.
   Stürzt du ab, scheitert die Mission, und das Angebot steht wieder an der Station.
+  Auf der Weltraumkarte gibt es eigene Missionen beim Raumschiffsverkäufer (Reiter *Missionen*):
+  - *Rettungskapseln bergen* (5.000 Punkte): drei treibende Kapseln (gelb) mit F aufnehmen und an
+    einem Trägerschiff abliefern.
+  - *Asteroiden abfangen* (7.500 Punkte): nach dem Abdocken kommen im Abstand von 20 Sekunden drei
+    kleinere Asteroiden (rot auf dem Radar) auf die Raumstation zu. Schlägt einer ein, ist die
+    Mission gescheitert (ein Einschlag kostet ein Zehntel der Struktur).
+  - *Versorgungsfrachter eskortieren* (10.000 Punkte): drei Frachter fliegen vom Trägerschiff zur
+    Raumstation, unterwegs greifen zwei Piratenwellen an.
 - **Kampf:** Leertaste feuert 2 Schuss pro Sekunde mit je 10 Schaden. Dein Schild hat zu Beginn
   100 Punkte: nach 10 Treffern stürzt das Schiff ab, und das Spiel ist zu Ende.
   - *Piraten* (rötlich) greifen an, sobald du in ihre Nähe kommst.
@@ -320,8 +328,9 @@ glimmen.
   wechseln (Reiter *Schiff*). Etwa jede
   Minute fliegt ein Asteroid langsam auf die Station zu (Warnung mit Himmelsrichtung, orange auf dem
   Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.
-  Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Die
-  Funksprüche mit Avatar laufen im All noch nicht.
+  Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Im All
+  gibt es eigene Mini-Missionen (siehe oben) und eigene Funksprüche: *Willkommen im All* bei der
+  Ankunft, *Willkommen zurück im All* beim Fortsetzen und nach dem Kartenwechsel.
   Explodiert die Station, stehen alle Kontostände auf 0, und nach 30 Sekunden kommt eine neue.
   Die nächste Karte folgt später; bis dahin beginnt nach dem Ziel eine neue Runde im All.
   Ab dem ersten Ziel im All ist der **Kartenwechsel** frei: Reiter *Karte* an der Handelsstation

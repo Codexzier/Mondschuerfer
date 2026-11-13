@@ -986,7 +986,7 @@ void MultiplayerScreen::UpdateAudio(float dt) {
         const Ship& p = w.Player();
         const PlayerState& me = w.Me();
         // Die Welt läuft im Mehrspieler auch in der Pause weiter, der Clip auch.
-        if (me.cueT > 0.0f && !w.orbit) cue = me.cue;   // im All vorerst keine Funksprüche
+        if (me.cueT > 0.0f && cfg::CueOnOrbit(me.cue) == w.orbit) cue = me.cue;   // nur Funksprüche dieser Karte
         showClip = me.dockedAt < 0;
         if (!paused_ && w.PlayerAlive() && !p.hidden && me.dockedAt < 0) {
             loops.engine = 1.0f;

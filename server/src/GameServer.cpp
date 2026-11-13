@@ -1574,9 +1574,10 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             if (st.type == StationType::Trade || (w.orbit && st.type == StationType::Dealer)) w.SwitchShip(*ps, m.param);
             break;
         case net::DockActionType::AcceptMission:
-            // Mini-Mission annehmen an der Handelsstation (Tab "Missionen");
-            // Art und freies Angebot prüft AcceptMission.
-            if (st.type == StationType::Trade) w.AcceptMission(*ps, m.param);
+            // Mini-Mission annehmen an der Handelsstation (Tab "Missionen"),
+            // im All beim Raumschiffsverkäufer; Art (auch: zur Karte passend)
+            // und freies Angebot prüft AcceptMission.
+            if (st.type == StationType::Trade || (w.orbit && st.type == StationType::Dealer)) w.AcceptMission(*ps, m.param);
             break;
         case net::DockActionType::SwitchMap:
             // Reiter "Karte": Mond <-> Weltraumkarte mit demselben Kontostand.
@@ -2334,6 +2335,10 @@ void GameServer::EnterOrbit(Client& c) {
     if (const Ship* s = o.PlayerShip(op)) c.lastPos = s->pos;
     o.Notify(op, "Willkommen im All! Beschütze die Raumstation vor Asteroiden.", Color{150, 230, 255, 255});
     o.Notify(op, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
+    // Funkspruch: zum ersten Mal "Willkommen im All", nach dem Ziel im All
+    // (Kartenwechsel) "Willkommen zurück im All"
+    op.cue = op.orbitGoal ? cfg::CUE_ORBIT_RETURN : cfg::CUE_ORBIT_NEWSTART;
+    op.cueT = cfg::CUE_TIME;
     FlushEvents(c);   // Ziel, Fanfare und Meldungen vom Mond kommen noch vor dem Wechsel an
     SendOrbitStart(c);
     SendDepositsNow(c);   // keine Kristalle im All (leere Liste)
@@ -2531,12 +2536,10 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
             home.Notify(ps, "Weltraumkarte: Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
         else
             home.Notify(ps, "Ziel: 100.000 Ressourcenpunkte auf dem Konto.", Color{200, 220, 255, 255});
-        // Funkspruch unten rechts: neues Spiel bzw. Fortsetzen (clip_newstart/clip_return).
-        // Auf der Weltraumkarte vorerst keiner (die Clips handeln vom Mond).
-        if (!inOrbit) {
-            ps.cue = resumed || returning ? cfg::CUE_RETURN : cfg::CUE_NEWSTART;
-            ps.cueT = cfg::CUE_TIME;
-        }
+        // Funkspruch unten rechts: neues Spiel bzw. Fortsetzen (clip_newstart/clip_return),
+        // auf der Weltraumkarte "Willkommen zurück im All" (clip_orbit_return).
+        ps.cue = inOrbit ? cfg::CUE_ORBIT_RETURN : resumed || returning ? cfg::CUE_RETURN : cfg::CUE_NEWSTART;
+        ps.cueT = cfg::CUE_TIME;
     }
 
     SendWelcome(c);

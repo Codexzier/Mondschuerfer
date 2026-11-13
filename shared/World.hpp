@@ -420,6 +420,7 @@ struct Asteroid {
     float yaw = 0.0f, spin = 0.0f;   // Drehung und Drehgeschwindigkeit (rad/s)
     float hitFlash = 0.0f;       // 1 beim Treffer, klingt ab
     bool dead = false;
+    int mission = -1;            // Mission::id ("Asteroiden abfangen"), -1 = gewöhnlicher Asteroid
 };
 
 // Stargates (Trooper.cpp): Zustand der Tore aus der Deko (gate_simple,
@@ -580,28 +581,34 @@ struct OwnedShip {
 // Mini-Missionen (World.cpp, Abschnitt "Missionen"). An der Handelsstation
 // (Tab "Missionen") nimmt ein Spieler ein Angebot an; die Mission gehört dann
 // ihm allein. Jeder Spieler hat höchstens eine laufende Mission.
+// Die letzten drei Arten gibt es nur auf der Weltraumkarte der Piloten
+// (cfg::MissionDef::orbit, angenommen beim Raumschiffsverkäufer auf dem
+// Trägerschiff): Rettungskapseln wie Personen, Asteroiden abfangen und
+// Versorgungsfrachter wie der Konvoi, nur vom Trägerschiff zur Raumstation.
 // Zahlenwerte: Index in cfg::MISSIONS und Teil des Netzwerkprotokolls.
 // ---------------------------------------------------------------------------
-enum class MissionType { Persons = 0, Pirates = 1, Convoy = 2 };
+enum class MissionType { Persons = 0, Pirates = 1, Convoy = 2, Capsules = 3, Asteroids = 4, Supply = 5 };
 
 struct Mission {
     int id = 0;                   // eindeutig (World::nextMissionId)
     MissionType type = MissionType::Persons;
     int owner = -1;               // Spieler-ID; -1 = Angebot (noch nicht angenommen)
-    int progress = 0;             // eingesammelte Personen, abgeschossene Piraten bzw. angekommene Frachter
+    int progress = 0;             // eingesammelte Personen/Kapseln, abgeschossene Piraten, zerstörte Asteroiden bzw. angekommene Frachter
     int goal = cfg::MISSION_GOAL;
-    int alive = 0;                // Konvoi: Frachter noch unterwegs (World::UpdateMissions)
+    int alive = 0;                // Konvoi: Frachter noch unterwegs, Asteroiden: noch im Anflug (World::UpdateMissions)
     // Konvoi: Wegpunkte von der Start- zur Zielstation, aktueller Wegpunkt,
     // Zeit seit dem Abflug und schon gestartete Piratenwellen.
+    // Asteroiden: t = Zeit seit dem ersten, waves = schon losgeschickte.
     std::vector<Vector3> route;
     int leg = 0;
     float t = 0.0f;
     int waves = 0;
-    bool hold = false;            // Konvoi wartet (Auftraggeber angedockt oder ohne Schiff)
+    bool hold = false;            // Konvoi/Asteroiden warten (Auftraggeber angedockt oder ohne Schiff)
 };
 
-// Eine verirrte Person (Mission "Personen einsammeln"). Nur der Spieler, dem
-// die Mission gehört, sieht und sammelt sie.
+// Eine verirrte Person (Mission "Personen einsammeln") bzw. eine treibende
+// Rettungskapsel (Weltraumkarte, "Rettungskapseln bergen"). Nur der Spieler,
+// dem die Mission gehört, sieht und sammelt sie.
 struct Person {
     int id = 0;
     int mission = -1;             // Mission::id
@@ -612,7 +619,7 @@ struct Person {
 };
 
 // Markierung auf der Minikarte für die laufende Mission des Spielers.
-// kind: 0 = Person, 1 = Ziel (Pirat), 2 = Konvoi-Frachter.
+// kind: 0 = Person/Rettungskapsel, 1 = Ziel (Pirat, Asteroid), 2 = Konvoi-Frachter.
 struct MissionMarker {
     int kind = 0;
     Vector3 pos{};
@@ -684,7 +691,8 @@ struct PlayerState {
     std::vector<BossMark> bosses;         // entdeckte Alien-Mutterschiffe (World::UpdateBosses)
     // Funkspruch unten rechts (Clip und Untertitel): Missionstyp * 3 +
     // Phase (0 Start, 1 Ende, 2 Fehlschlag), cfg::CUE_NEWSTART/CUE_RETURN
-    // (neues Spiel, Fortsetzen), -1 = keiner. cueT = Restzeit;
+    // (neues Spiel, Fortsetzen), CUE_ORBIT_NEWSTART/CUE_ORBIT_RETURN (dasselbe
+    // auf der Weltraumkarte), -1 = keiner. cueT = Restzeit;
     // sie läuft nur, solange der Spieler nicht angedockt ist.
     int cue = -1;
     float cueT = 0.0f;
@@ -1033,6 +1041,7 @@ public:
         int terrain;
         int crystalSmall, crystalA, crystalB;
         int astronautA, astronautB;
+        int capsuleA, capsuleB;   // Rettungskapseln (Weltraumkarte)
     } mdl{};
 
     // --- interne Helfer ------------------------------------------------------
@@ -1103,7 +1112,7 @@ public:
     // Weltraumkarte der Piloten (Orbit.cpp)
     void PlaceOrbitStation();                          // Station in der Mitte (neu), Strukturpunkte voll
     void UpdateOrbit(float dt);                        // Asteroiden, Einschläge, neue Station (Update)
-    void SpawnAsteroid();
+    void SpawnAsteroid(int mission = -1);   // mission >= 0: kleinerer Asteroid der Mission "Asteroiden abfangen"
     void DamageAsteroid(Asteroid& a, float dmg, int attackerPlayerId);   // Treffer eines Spielergeschosses (UpdateBullets)
     void StationExplodes();                            // Strukturpunkte 0: alle Konten auf 0
     void OrbitBounty(PlayerState& ps, const Ship& s);  // Abschuss eines Piraten: Punkte, Ziel prüfen (DamageShip)

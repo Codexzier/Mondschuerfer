@@ -91,7 +91,10 @@ namespace net {
 // Version 18: Weltraumkarte der Piloten (OrbitStart; Snapshot: Raumstation und Asteroiden;
 //             DockAction SwitchMap und SnapMe::orbitGoal für den Kartenwechsel).
 // Version 19: Alien-Mutterschiff (ShipKind::Boss, Modellvariante, SnapMe::bosses).
-constexpr uint16_t PROTOCOL_VERSION = 19;
+// Version 20: Mini-Missionen auf der Weltraumkarte (MissionType 3–5, DockAction
+//             AcceptMission beim Raumschiffsverkäufer im All) und eigene Funksprüche
+//             dort (SnapMe::cue: neue Nummern ab cfg::CUE_NEWSTART).
+constexpr uint16_t PROTOCOL_VERSION = 20;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)

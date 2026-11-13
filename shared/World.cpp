@@ -668,7 +668,7 @@ void World::Update(float dt) {
         minerSpawnT = Rand(25.0f, 40.0f);
     }
 
-    if (!instance && !orbit) UpdateMissions(dt);
+    if (!instance) UpdateMissions(dt);   // Mond und Weltraumkarte, je mit eigenen Missionsarten
     // Funksprüche laufen nur außerhalb der Station ab (der Startfunkspruch
     // kommt beim Annehmen, also angedockt: er soll nach dem Abdocken zu sehen
     // sein). Auf allen Karten, auch ohne Missionen (sonst bliebe einer stehen).
@@ -1214,6 +1214,12 @@ void World::Dock(PlayerState& ps, int station) {
             SoundAt(Sfx::Victory, p.pos, 1.0f, 1.3f, ps.id);
         }
     }
+    // Weltraumkarte: Rettungskapseln an einem der Trägerschiffe (Werft oder
+    // Raumschiffsverkäufer) abliefern
+    if (orbit) {
+        if (Mission* m = FindMission(ps.mission))
+            if (m->type == MissionType::Capsules && m->progress >= m->goal) EndMission(*m, true);
+    }
     // Einzelspieler: nach jedem Andocken speichern (main.cpp). Der Server
     // speichert selbst und beachtet das Feld nicht.
     wantAutosave = !simulation;
@@ -1478,7 +1484,14 @@ void World::Cue(PlayerState& ps, MissionType t, int phase) {
 // angenommen wurde).
 bool World::AcceptMission(PlayerState& ps, int type) {
     const Ship* sp = PlayerShip(ps);
-    if (!sp || ps.mission >= 0 || type < 0 || type >= cfg::MISSION_TYPE_COUNT) return false;
+    if (!sp || ps.mission >= 0 || type < 0 || type >= cfg::MISSION_TYPE_COUNT || cfg::MISSIONS[type].orbit != orbit) return false;
+    // Asteroiden und Versorgungsfrachter brauchen die Raumstation (nach einer
+    // Explosion kommt bald eine neue)
+    const MissionType mt = static_cast<MissionType>(type);
+    if ((mt == MissionType::Asteroids || mt == MissionType::Supply) && spaceStations.empty()) {
+        Notify(ps, "Ohne Raumstation geht das nicht. Warte auf die neue Station.", Color{255, 140, 110, 255});
+        return false;
+    }
     // Position merken: push_back in ships (unten) kann sp ungültig machen.
     const Vector3 shipPos = sp->pos;
     auto it = std::find_if(missions.begin(), missions.end(),
@@ -1490,10 +1503,16 @@ bool World::AcceptMission(PlayerState& ps, int type) {
     m.goal = cfg::MISSION_GOAL;
     ps.mission = m.id;
     switch (m.type) {
-        case MissionType::Persons: {
+        case MissionType::Persons:
+        case MissionType::Capsules: {
             // Die Personen stehen beieinander (bis 40 Einheiten um einen
-            // Treffpunkt), weit weg von Stationen und vom Spieler.
-            const Vector3 c = RandomFreePos(cfg::STATION_SAFE_RADIUS + 40.0f, 60.0f);
+            // Treffpunkt), weit weg von Stationen und vom Spieler. Die
+            // Rettungskapseln treiben ebenso, aber nicht über der Raumstation
+            // (die steht nicht in stations).
+            Vector3 c = RandomFreePos(cfg::STATION_SAFE_RADIUS + 40.0f, 60.0f);
+            for (int k = 0; k < 20 && !spaceStations.empty() && Dist2D(c, spaceStations[0].pos) < spaceStations[0].r + 70.0f; ++k)
+                c = RandomFreePos(cfg::STATION_SAFE_RADIUS + 40.0f, 60.0f);
+            const bool capsule = m.type == MissionType::Capsules;
             for (int i = 0; i < m.goal; ++i) {
                 Person pe;
                 pe.id = nextMissionId++;
@@ -1501,11 +1520,17 @@ bool World::AcceptMission(PlayerState& ps, int type) {
                 pe.owner = ps.id;
                 pe.pos = ClampToMap({c.x + Rand(-40, 40), 0.0f, c.z + Rand(-40, 40)}, 10.0f);
                 pe.yaw = Rand(0, 2 * PI);
-                pe.model = i % 2 == 0 ? mdl.astronautA : mdl.astronautB;
+                pe.model = capsule ? (i % 2 == 0 ? mdl.capsuleA : mdl.capsuleB) : (i % 2 == 0 ? mdl.astronautA : mdl.astronautB);
                 persons.push_back(pe);
             }
             break;
         }
+        case MissionType::Asteroids:
+            // Die Asteroiden kommen erst nach dem Abdocken (UpdateMissions)
+            m.t = 0.0f;
+            m.waves = 0;
+            m.alive = 0;
+            break;
         case MissionType::Pirates: {
             // Drei eigene Piraten (auch wenn der Server keine Gegner hat) in
             // einem Gebiet bis 30 Einheiten um einen Ort weit weg vom Spieler.
@@ -1519,15 +1544,24 @@ bool World::AcceptMission(PlayerState& ps, int type) {
             }
             break;
         }
-        case MissionType::Convoy: {
+        case MissionType::Convoy:
+        case MissionType::Supply: {
             // Start: die Handelsstation, an der angenommen wurde; Ziel: eine
-            // zufällige andere Station.
-            const int from = ps.dockedAt >= 0 ? ps.dockedAt : std::max(0, NearestStation(shipPos, StationType::Trade));
-            std::vector<int> others;
-            for (int i = 0; i < static_cast<int>(stations.size()); ++i)
-                if (i != from) others.push_back(i);
-            const int to = others.empty() ? from : others[RandInt(0, static_cast<int>(others.size()) - 1)];
-            const Vector3 a = stations[from].pos, b = stations[to].pos;
+            // zufällige andere Station. Versorgungsfrachter (Weltraumkarte):
+            // vom Trägerschiff des Raumschiffsverkäufers zur Raumstation.
+            const int from = ps.dockedAt >= 0 ? ps.dockedAt
+                                              : std::max(0, NearestStation(shipPos, orbit ? StationType::Dealer : StationType::Trade));
+            const Vector3 a = stations[from].pos;
+            Vector3 b{};
+            if (m.type == MissionType::Supply) {
+                b = {spaceStations[0].pos.x, 0.0f, spaceStations[0].pos.z};
+            } else {
+                std::vector<int> others;
+                for (int i = 0; i < static_cast<int>(stations.size()); ++i)
+                    if (i != from) others.push_back(i);
+                const int to = others.empty() ? from : others[RandInt(0, static_cast<int>(others.size()) - 1)];
+                b = stations[to].pos;
+            }
             // Umweg: beide Stationen um CONVOY_DETOUR zur Seite versetzt
             // (a -> a' -> b' -> b). Gewählt wird die Seite, die auf der Karte
             // bleibt und weniger Schutzzonen berührt, sonst zufällig.
@@ -1578,11 +1612,15 @@ void World::FailMission(PlayerState& ps, bool notify) {
     ps.markers.clear();
 }
 
-// Mission beendet. Erfüllt: Belohnung sofort aufs Konto, die Mission
-// verschwindet und nach cfg::MISSION_RESPAWN kommt ein neues Angebot.
+// Mission beendet. Erfüllt: Belohnung sofort aufs Konto (Weltraumkarte: über
+// OrbitPay, das auch das Ziel prüft), die Mission verschwindet und nach
+// cfg::MISSION_RESPAWN kommt ein neues Angebot.
 // Gescheitert: Sie wird wieder zum Angebot. Übrige Missionsschiffe (Piraten,
-// Frachter) ziehen ab, d. h. sie verschwinden ohne Wrack, Personen ebenso. So
-// bleiben auch auf einem Server ohne Gegner keine Piraten zurück.
+// Frachter) ziehen ab, d. h. sie verschwinden ohne Wrack, Personen,
+// Rettungskapseln und Missions-Asteroiden ebenso. So bleiben auch auf einem
+// Server ohne Gegner keine Piraten zurück. Die Asteroiden werden nur als tot
+// markiert (UpdateOrbit räumt sie weg), damit keine Schleife über
+// asteroids ins Leere läuft.
 // Achtung: m ist danach ungültig (missions wird verändert).
 void World::EndMission(Mission& m, bool success, bool notify) {
     const int id = m.id;
@@ -1598,14 +1636,23 @@ void World::EndMission(Mission& m, bool success, bool notify) {
     }
     persons.erase(std::remove_if(persons.begin(), persons.end(), [&](const Person& pe) { return pe.mission == id; }),
                   persons.end());
+    for (Asteroid& a : asteroids) {
+        if (a.mission != id) continue;
+        a.mission = -1;
+        a.dead = true;
+    }
     if (PlayerState* ps = FindPlayer(m.owner)) {
         ps->mission = -1;
         ps->markers.clear();
         if (success) {
-            ps->balance += def.reward;
-            Notify(*ps, Fmt("MISSION ERFÜLLT: %s  +%d Punkte", def.name, def.reward), Color{110, 240, 170, 255});
             Cue(*ps, type, 1);
             if (const Ship* p = PlayerShip(*ps)) SoundAt(Sfx::Sale, p->pos, 1.0f, 0.2f, ps->id);
+            if (orbit) {
+                OrbitPay(*ps, def.reward, Fmt("MISSION ERFÜLLT: %s  +%d Punkte", def.name, def.reward));
+            } else {
+                ps->balance += def.reward;
+                Notify(*ps, Fmt("MISSION ERFÜLLT: %s  +%d Punkte", def.name, def.reward), Color{110, 240, 170, 255});
+            }
         } else if (notify) {
             Notify(*ps, Fmt("MISSION GESCHEITERT: %s", def.name), Color{255, 110, 90, 255});
             Cue(*ps, type, 2);
@@ -1623,8 +1670,8 @@ void World::EndMission(Mission& m, bool success, bool notify) {
     }
 }
 
-// Person einsammeln (Taste F, InteractTarget kind 6): sofort, ohne Abbauzeit,
-// sie belegt kein Lager.
+// Person bzw. Rettungskapsel einsammeln (Taste F, InteractTarget kind 6):
+// sofort, ohne Abbauzeit, sie belegt kein Lager.
 void World::CollectPerson(PlayerState& ps, int personId) {
     auto it = std::find_if(persons.begin(), persons.end(), [&](const Person& pe) { return pe.id == personId && pe.owner == ps.id; });
     if (it == persons.end()) return;
@@ -1635,8 +1682,12 @@ void World::CollectPerson(PlayerState& ps, int personId) {
     SpawnSparks({pos.x, 1.0f, pos.z}, Color{255, 230, 90, 255}, 14);
     if (!m) return;
     ++m->progress;
-    if (m->progress >= m->goal) Notify(ps, "Alle Personen an Bord! Bring sie zu einer Handelsstation.", Color{255, 230, 120, 255});
-    else Notify(ps, Fmt("Person eingesammelt (%d/%d)", m->progress, m->goal), Color{255, 230, 120, 255});
+    const bool capsule = m->type == MissionType::Capsules;
+    if (m->progress >= m->goal)
+        Notify(ps, capsule ? "Alle Rettungskapseln an Bord! Bring sie zu einem Trägerschiff." : "Alle Personen an Bord! Bring sie zu einer Handelsstation.",
+               Color{255, 230, 120, 255});
+    else
+        Notify(ps, Fmt(capsule ? "Rettungskapsel geborgen (%d/%d)" : "Person eingesammelt (%d/%d)", m->progress, m->goal), Color{255, 230, 120, 255});
 }
 
 // Ein Missionsschiff wurde abgeschossen (Schild 0, DamageShip). Piraten der
@@ -1650,7 +1701,8 @@ void World::MissionShipDown(const Ship& s) {
         if (ps && m->progress < m->goal)
             Notify(*ps, Fmt("Missionspirat abgeschossen (%d/%d)", m->progress, m->goal), Color{255, 210, 130, 255});
     } else if (s.kind == ShipKind::Convoy && ps) {
-        Notify(*ps, "Ein Frachter des Konvois wurde zerstört!", Color{255, 140, 110, 255});
+        Notify(*ps, m->type == MissionType::Supply ? "Ein Versorgungsfrachter wurde zerstört!" : "Ein Frachter des Konvois wurde zerstört!",
+               Color{255, 140, 110, 255});
     }
 }
 
@@ -1686,7 +1738,9 @@ void World::SpawnConvoyWave(Mission& m) {
         s.yaw = YawTowards(p, c);
         ships.push_back(s);
     }
-    if (PlayerState* ps = FindPlayer(m.owner)) Notify(*ps, "Piraten greifen den Konvoi an!", Color{255, 140, 110, 255});
+    if (PlayerState* ps = FindPlayer(m.owner))
+        Notify(*ps, m.type == MissionType::Supply ? "Piraten greifen die Versorgungsfrachter an!" : "Piraten greifen den Konvoi an!",
+               Color{255, 140, 110, 255});
 }
 
 // Ein Schritt für alle Missionen (aus Update): Angebote auffüllen, laufende
@@ -1700,11 +1754,13 @@ void World::UpdateMissions(float dt) {
         if (missions[i].owner < 0) missions.erase(missions.begin() + i);
     missionSpawnT = std::max(-1.0f, missionSpawnT - dt);
     while (static_cast<int>(missions.size()) < slots && missionSpawnT <= 0.0f) {
+        // nur Arten dieser Karte (Mond bzw. Weltraumkarte, cfg::MissionDef::orbit)
         int count[cfg::MISSION_TYPE_COUNT] = {};
         for (const auto& m : missions) ++count[static_cast<int>(m.type)];
-        int type = 0;
-        for (int t = 1; t < cfg::MISSION_TYPE_COUNT; ++t)
-            if (count[t] < count[type]) type = t;
+        int type = -1;
+        for (int t = 0; t < cfg::MISSION_TYPE_COUNT; ++t)
+            if (cfg::MISSIONS[t].orbit == orbit && (type < 0 || count[t] < count[type])) type = t;
+        if (type < 0) break;
         Mission m;
         m.id = nextMissionId++;
         m.type = static_cast<MissionType>(type);
@@ -1721,9 +1777,41 @@ void World::UpdateMissions(float dt) {
         ps->markers.clear();
         switch (m.type) {
             case MissionType::Persons:
+            case MissionType::Capsules:
                 for (const auto& pe : persons)
                     if (pe.mission == m.id) ps->markers.push_back({0, pe.pos});
                 break;
+            case MissionType::Asteroids: {
+                // Die Asteroiden kommen nacheinander, solange der Auftraggeber
+                // unterwegs ist (wie der Konvoi). Zerstörte zählt DamageAsteroid
+                // mit (progress). Fehlt einer, der weder zerstört noch unterwegs
+                // ist, hat er die Station getroffen (oder sie ist explodiert).
+                const bool go = ps->dockedAt < 0 && PlayerAlive(*ps);
+                m.hold = !go;
+                int alive = 0;
+                for (const Asteroid& a : asteroids) {
+                    if (a.mission != m.id || a.dead) continue;
+                    ++alive;
+                    ps->markers.push_back({1, a.pos});
+                }
+                m.alive = alive;
+                if (m.progress >= m.goal) {
+                    ended.push_back({m.id, true});
+                    break;
+                }
+                if (m.waves > m.progress + alive || spaceStations.empty()) {
+                    ended.push_back({m.id, false});
+                    break;
+                }
+                if (go) {
+                    m.t += dt;
+                    if (m.waves < m.goal && m.t >= static_cast<float>(m.waves) * cfg::ORBIT_MISSION_ASTEROID_GAP) {
+                        SpawnAsteroid(m.id);
+                        ++m.waves;
+                    }
+                }
+                break;
+            }
             case MissionType::Pirates: {
                 int alive = 0;
                 for (const auto& s : ships) {
@@ -1743,7 +1831,8 @@ void World::UpdateMissions(float dt) {
                 }
                 break;
             }
-            case MissionType::Convoy: {
+            case MissionType::Convoy:
+            case MissionType::Supply: {
                 // Der Konvoi wartet, solange sein Auftraggeber angedockt ist
                 // oder kein Schiff hat (Mehrspieler: läuft die Welt weiter).
                 const bool go = ps->dockedAt < 0 && PlayerAlive(*ps);
