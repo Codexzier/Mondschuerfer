@@ -224,6 +224,7 @@ private:
     float autoDockNextAction_ = 0.0f;
     bool hadShip_ = false;         // schon einmal ein eigenes Schiff gesehen (für "zerstört")
     ChatBox chat_;                 // Chatfenster unten links
+    ChatBox ccChat_{KEY_T, "[T] oder Klick: Chat im Command Center"};   // eigener Chat im Command Center
     bool chatTypingSent_ = false;  // zuletzt an den Server gemeldet: Chat-Eingabe offen
 
     // SG-Team

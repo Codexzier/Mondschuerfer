@@ -324,6 +324,7 @@ void MultiplayerScreen::EnterPlaying() {
     controls_.Reset();
     autoDockT_ = 0.0f;
     chat_.Clear();
+    ccChat_.Clear();
     chatTypingSent_ = false;
     // Rollenwahl: vorausgewählt ist die zuletzt gespielte Rolle (Serverkonto)
     roleChoice_ = true;
@@ -506,8 +507,10 @@ void MultiplayerScreen::HandleNetwork() {
         }
     }
 
-    // Chat: neue Zeilen ins Fenster (auch die eigenen kommen vom Server zurück)
-    for (const net::ChatLineMsg& l : net_.TakeChat()) chat_.Add(l.name, l.text, l.playerId == net_.MyPlayerId());
+    // Chat: neue Zeilen ins Fenster (auch die eigenen kommen vom Server zurück),
+    // Kanal Command in das Fenster des Command Centers
+    for (const net::ChatLineMsg& l : net_.TakeChat())
+        (l.channel == net::ChatChannel::Command ? ccChat_ : chat_).Add(l.name, l.text, l.playerId == net_.MyPlayerId());
 }
 
 // ===========================================================================
@@ -537,6 +540,10 @@ void MultiplayerScreen::Update(float frameDt) {
         chatTypingSent_ = chat_.Active();
         net_.SendChatTyping(chatTypingSent_);
     }
+    // Eigener Chat im Command Center: T (oder ein Klick ins Fenster) öffnet die
+    // Eingabe, weil Enter dort die Knöpfe bestätigt. Keine Sprechblase (das
+    // Schiff ist im Command Center versteckt).
+    ccChat_.Update(phase_ == Phase::Playing && net_.WorldReady() && !roleChoice_ && inCommand_);
 
     // --- 1. Eingaben fürs eigene Schiff bzw. die Figur (nur im Spiel) ------------
     // Nicht in der Rollenwahl und im Command Center (dort nur Knöpfe).
@@ -1008,15 +1015,17 @@ void MultiplayerScreen::UpdateAudio(float dt) {
     // Zuschauen, solange die eigene Piraten-Mission läuft die Piratenmusik,
     // sonst (Adresse, Lobby, Anmeldung) die Menümusik. Beim Wechsel blendet
     // g_audio.Update weich über.
-    // SG-Team: im Command Center und im Einsatz wie im Einzelspieler (main.cpp,
-    // StargateMusic) die Stargate-Musik: in den ersten 10 s nach der Ankunft
-    // und solange ein Tor für die Rückkehr des Teams angewählt wird oder offen ist.
+    // SG-Team: im Command Center die Command-Center-Musik, im Einsatz wie im
+    // Einzelspieler (main.cpp, StargateMusic) die Stargate-Musik: in den
+    // ersten 10 s nach der Ankunft und solange ein Tor für die Rückkehr des
+    // Teams angewählt wird oder offen ist.
     MusicTrack track = MusicTrack::Menu;
     if (phase_ == Phase::Playing && net_.WorldReady() && !roleChoice_) {
         const World& w = net_.GetWorld();
         const PlayerState& me = w.Me();
-        bool stargate = inCommand_;
+        bool command = inCommand_, stargate = false;
         if (const Trooper* t = OwnTrooper()) {
+            command = false;
             stargate = t->age < 10.0f;
             for (const Stargate& g : w.stargates)
                 if (g.toCommand && (g.playerId == me.id || (g.team != 0 && g.team == me.sgTeam)) &&
@@ -1024,7 +1033,9 @@ void MultiplayerScreen::UpdateAudio(float dt) {
                     stargate = true;
         }
         const Mission* m = w.FindMission(me.mission);
-        track = stargate ? MusicTrack::Stargate : m && m->type == MissionType::Pirates ? MusicTrack::Pirates : MusicTrack::Game;
+        if (command) track = MusicTrack::Command;
+        else if (stargate) track = MusicTrack::Stargate;
+        else track = m && m->type == MissionType::Pirates ? MusicTrack::Pirates : MusicTrack::Game;
     } else if (phase_ == Phase::Playing && net_.WorldReady()) {
         track = MusicTrack::Menu;   // Rollenwahl (wie im Einzelspieler)
     } else if (phase_ == Phase::Playing || phase_ == Phase::Spectating) {
@@ -1415,7 +1426,11 @@ void MultiplayerScreen::DrawCommand() {
     tiltshift::SetEgoView(false);
     rlSetClipPlanes(0.5, 2500.0);
     const OnlineCommand c = command_.DrawOnline(net_.Teams(), net_.Scoreboard(), net_.MissionMaps(), net_.MyPlayerId(),
-                                                net_.GetWorld().settings.sampleGoal, net_.TakeTeamResult());
+                                                net_.GetWorld().settings.sampleGoal, net_.TakeTeamResult(), ccChat_.Busy());
+    // Chat des Command Centers unten in der Mitte (nur an die Spieler hier)
+    const Rectangle cr = CommandCenterScreen::OnlineChatRect();
+    std::string chatText;
+    if (ccChat_.Draw(chatText, cr.x, cr.y + cr.height, cr.width)) net_.SendChat(chatText, net::ChatChannel::Command);
     switch (c.kind) {
         case OnlineCommand::Kind::None: break;
         case OnlineCommand::Kind::Create: net_.SendTeamAction(net::TeamActionType::Create); break;

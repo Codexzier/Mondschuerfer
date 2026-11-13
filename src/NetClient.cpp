@@ -2331,11 +2331,12 @@ void NetClient::SendDockAction(net::DockActionType action, int param) {
     if (d.host) enet_host_flush(d.host);
 }
 
-void NetClient::SendChat(const std::string& text) {
+void NetClient::SendChat(const std::string& text, net::ChatChannel channel) {
     Impl& d = *impl_;
     if (d.state != NetState::Playing) return;
     net::ChatMsg m;
     m.text = text;
+    m.channel = channel;
     d.Send(net::Encode(m), true);
     if (d.host) enet_host_flush(d.host);
 }

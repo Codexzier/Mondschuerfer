@@ -243,6 +243,7 @@ abbrechen* zählt als gescheitert, *Speichern & zum Hauptmenü* verwirft einen l
 | ESC / P (Controller: Menü-Taste) | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt), zu Fuß zusätzlich *Einsatz abbrechen*. Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bzw. deine Figur bekommt nur keine Steuerbefehle. |
 | ESC / F im Stationsfenster (Controller: B / Y) | Abdocken |
 | Tab | im Anmeldefenster zwischen Name und Passwort wechseln; im Command Center rechts zwischen *SG-Teams* und *Scoreboard* (Controller: RB) |
+| T / Klick ins Chatfenster (im Command Center) | eigener Chat des Command Centers unten in der Mitte: Eingabe öffnen, Enter = senden, ESC = abbrechen. Die Nachrichten sehen nur die Spieler, die gerade im Command Center sind. |
 | Zuschauer: Mausrad / Ziehen / R / ESC | Zoom / Karte verschieben / ganze Karte / Zuschauen beenden (Controller: rechter Stick / A halten und linken Stick bewegen / – / B) |
 
 ---
@@ -500,7 +501,8 @@ Die Musikstücke von **dekker187** (erstellt mit Suno) liegen in `assets/music/`
 | *Lunar Silence 01–03* | `lunar_silence_01.mp3` … `_03.mp3` | im Spiel: Einzelspiel samt Pause und Endbildschirmen, Simulation, Mehrspieler-Spiel und Zuschauen; nacheinander, nach dem dritten wieder das erste |
 | *Entering Pirate Territory* | `enteringPirateTerritory.mp3` | im Spiel, solange die eigene Mini-Mission „Piraten abschießen“ läuft (Endlosschleife, beginnt jedes Mal von vorn) |
 | *Deep Space Horizon* | `deepSpaceHorizon.mp3` | einmal, sobald man das Ziel (100.000) erreicht; danach wieder die Spielmusik |
-| *Breathing Pulse* | `breathingPulse.mp3` | als SG-Team im Command Center, in den ersten 10 Sekunden eines Einsatzes und solange ein Stargate für die Rückkehr angewählt wird oder offen ist (Endlosschleife, beginnt jedes Mal von vorn) |
+| *Breathing Pulse* | `breathingPulse.mp3` | als SG-Team in den ersten 10 Sekunden eines Einsatzes und solange ein Stargate für die Rückkehr angewählt wird oder offen ist (Endlosschleife, beginnt jedes Mal von vorn) |
+| *Lunar SG1 Team (Mondkarte)* | `lunar_sg1_team.mp3` | als SG-Team im Command Center (Endlosschleife, setzt beim nächsten Besuch an derselben Stelle fort) |
 
 Beim Wechsel zwischen den Stücken blendet die Musik weich über (das alte Stück wird in 1 s
 leiser, das neue in 1,5 s lauter). Menü- und Spielmusik, die gerade nicht laufen, werden angehalten
