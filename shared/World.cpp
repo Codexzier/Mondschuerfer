@@ -259,9 +259,19 @@ Ship World::MakeShip(ShipKind kind, Vector3 pos) {
 // vollen Karte nimmt es danach die letzte Position.)
 // Die Chance auf einen Elite-Piraten wächst mit totalDelivered: 0 % am
 // Anfang, höchstens 45 % (ab 31.500 Punkten).
+// Alien-Station (AlienStation.cpp): Die Aliens starten an der Hülle ihrer
+// Station (ohne Station irgendwo draußen), ein Anteil
+// cfg::ALIEN_CLOAKER_SHARE sind Tarnschiffe (Typ 2, ShipKind::Elite).
 void World::SpawnPirate() {
-    Vector3 p = RandomFreePos(cfg::STATION_SAFE_RADIUS + 25.0f, ships.empty() ? 0.0f : 70.0f);
-    float eliteChance = std::clamp(static_cast<float>(totalDelivered) / 70000.0f, 0.0f, 0.45f);
+    Vector3 p{};
+    if (alien && !spaceStations.empty()) {
+        const SpaceStation& st = spaceStations[0];
+        const float ang = Rand(0.0f, 2.0f * PI);
+        p = {st.pos.x + sinf(ang) * (st.r + 6.0f), 0.0f, st.pos.z + cosf(ang) * (st.r + 6.0f)};
+    } else {
+        p = RandomFreePos(cfg::STATION_SAFE_RADIUS + 25.0f, ships.empty() ? 0.0f : 70.0f);
+    }
+    float eliteChance = alien ? cfg::ALIEN_CLOAKER_SHARE : std::clamp(static_cast<float>(totalDelivered) / 70000.0f, 0.0f, 0.45f);
     ShipKind k = Rand(0, 1) < eliteChance ? ShipKind::Elite : ShipKind::Pirate;
     Ship s = MakeShip(k, p);
     s.ai = AiState::Wander;
@@ -651,8 +661,10 @@ void World::Update(float dt) {
         if (s.faction == Faction::Pirate && s.mission < 0 && s.kind != ShipKind::Boss) ++pirates;
         if (s.kind == ShipKind::Miner) ++miners;
     }
-    // Weltraumkarte (Einzelspieler): feste Anzahl cfg::ORBIT_PIRATES.
+    // Weltraumkarte (Einzelspieler): feste Anzahl cfg::ORBIT_PIRATES,
+    // Alien-Station cfg::ALIEN_PIRATES.
     int wantPirates = isServer ? settings.enemyShips
+                      : alien  ? cfg::ALIEN_PIRATES
                       : orbit  ? cfg::ORBIT_PIRATES
                                : std::min<int>(cfg::PIRATES_MAX, cfg::PIRATES_BASE + static_cast<int>(totalDelivered / 12000));
     pirateSpawnT -= dt;
@@ -1787,6 +1799,8 @@ void World::UpdateMissions(float dt) {
 // und rechten Kanone (±0,55 zur Seite), fliegt waagerecht und übernimmt 40 %
 // der Schiffsgeschwindigkeit.
 void World::FireBullet(Ship& s) {
+    // Tarnschiff (Alien-Station): Wer schießt, ist kurz zu sehen
+    if (alien && s.kind == ShipKind::Elite) s.decloakT = cfg::ALIEN_DECLOAK_TIME;
     Vector3 fwd = ForwardFromYaw(s.yaw);
     float spread = s.kind == ShipKind::Player ? 0.0f : Rand(-0.045f, 0.045f);
     Vector3 side{fwd.z, 0.0f, -fwd.x};
@@ -1848,7 +1862,7 @@ void World::UpdateTurrets(float dt) {
             Ship* best = nullptr;
             float bestD = cfg::TURRET_RANGE;
             for (auto& s : ships) {
-                if (s.dead || s.crashing || s.hidden || s.faction != Faction::Pirate) continue;
+                if (s.dead || s.crashing || s.hidden || s.faction != Faction::Pirate || Cloaked(s)) continue;
                 float d = Dist2D(s.pos, wp);
                 if (d < bestD) { bestD = d; best = &s; }
             }
@@ -1973,6 +1987,12 @@ void World::UpdateBullets(float dt) {
             DamageAsteroid(a, b.damage, b.ownerPlayer);
             break;
         }
+        // Alien-Station: Geschosse der Spieler treffen ihre Hülle (in x/z)
+        if (b.life <= 0.0f || !alien || spaceStations.empty() || Dist2D(b.pos, spaceStations[0].pos) > spaceStations[0].r) continue;
+        b.life = 0.0f;
+        SpawnSparks(b.pos, Color{255, 200, 90, 255}, 7);
+        SoundAt(Sfx::HitMetal, b.pos);
+        DamageAlienStation(b.damage, b.ownerPlayer);
     }
     bullets.erase(std::remove_if(bullets.begin(), bullets.end(), [](const Bullet& b) { return b.life <= 0; }),
                   bullets.end());
@@ -2000,6 +2020,12 @@ void World::DamageShip(Ship& s, float dmg, int attackerId, Faction attacker, int
             if (it != s.bossDamage.end()) it->second += done;
             else s.bossDamage.push_back({attackerPlayerId, done});
         }
+    }
+    // Alien-Schiffe: Jeder Treffer hält die Erholung auf und macht ein
+    // Tarnschiff kurz sichtbar (AlienStation.cpp)
+    if (alien && s.faction == Faction::Pirate) {
+        s.calmT = 0.0f;
+        if (s.kind == ShipKind::Elite) s.decloakT = std::max(s.decloakT, cfg::ALIEN_DECLOAK_HIT);
     }
     s.hp -= dmg;
     s.hitFlash = 1.0f;

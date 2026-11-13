@@ -323,11 +323,21 @@ glimmen.
   Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Die
   Funksprüche mit Avatar laufen im All noch nicht.
   Explodiert die Station, stehen alle Kontostände auf 0, und nach 30 Sekunden kommt eine neue.
-  Die nächste Karte folgt später; bis dahin beginnt nach dem Ziel eine neue Runde im All.
-  Ab dem ersten Ziel im All ist der **Kartenwechsel** frei: Reiter *Karte* an der Handelsstation
-  (Mond) bzw. an Werft und Raumschiffsverkäufer (Trägerschiffe). Der Kontostand gilt für beide Karten
-  und bleibt beim Wechsel; das Ziel auf dem Mond bringt dann ebenfalls eine neue Runde statt des
-  Sprungs ins All. *Fortsetzen* führt auf die Karte, auf der du zuletzt warst.
+- **Alien-Station:** Das Ziel im All führt mit *Weiter zur Alien-Station* auf die dritte Karte
+  (Kontostand wieder 0). Im Norden liegt die Raumstation der Aliens: Besiege sie in **20 Minuten**
+  (Schild und Restzeit oben in der Mitte), sonst repariert sie sich ganz und die Zeit beginnt von
+  vorn. In ihrer Nähe schießen ihre Geschütze. Die Alien-Schiffe starten an der Station und erholen
+  sich, wenn sie 5 Sekunden nicht getroffen werden. **Tarnschiffe** (Typ 2) sieht man nur als leichte
+  Krümmung des Bildes, auch nicht auf dem Radar; kurz nach einem Schuss oder Treffer tauchen sie auf.
+  Im Süden liegt nur ein Trägerschiff: reparieren (Reiter *Schiff*) und Kartenwechsel (Reiter
+  *Karte*), kein Schiffswechsel. Die besiegte Station bringt 100.000 Punkte, aufgeteilt nach dem
+  Schaden; nach einer Minute kommt eine neue.
+  Ab dem ersten Ziel im All ist der **Kartenwechsel** zwischen Mond und All frei: Reiter *Karte* an der
+  Handelsstation (Mond) bzw. an den Trägerschiffen ([1]/[2] für die beiden anderen Karten). Zur
+  Alien-Station und von ihr weg geht es so, sobald du sie einmal besiegt hast; bis dahin führt das
+  Ziel im All wieder dorthin. Der Kontostand gilt für alle Karten und bleibt beim Wechsel; das Ziel
+  auf dem Mond bringt dann ebenfalls eine neue Runde statt des Sprungs ins All. *Fortsetzen* führt
+  auf die Karte, auf der du zuletzt warst.
 - **Fortsetzen:** Das Spiel speichert automatisch beim Andocken, nach jedem SG-Einsatz und beim Schließen des Fensters,
   außerdem über *Pause → Speichern & zum Hauptmenü*. Der Spielstand liegt als
   `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach einem Absturz wird er gelöscht.
@@ -433,7 +443,9 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
   Piratenabschüsse bringen Punkte, Asteroiden abschießen, die Raumstation schützen). Explodiert die
   Station, stehen die Kontostände **aller** Piloten im All auf 0. Wer sich im All abmeldet, kommt
   dort wieder an. Sind alle Leben verbraucht, beginnt der Fortschritt von vorn auf dem Mond.
-  Den Kartenwechsel (Reiter *Karte*) gibt es wie im Einzelspieler ab dem ersten Ziel im All.
+  Den Kartenwechsel (Reiter *Karte*) gibt es wie im Einzelspieler ab dem ersten Ziel im All. Das Ziel im
+  All führt alle, die die Alien-Station noch nicht besiegt haben, auf eine gemeinsame Alien-Station;
+  ihr Sieg gilt für alle Piloten dort.
 - Was alle zusammen abliefern, lässt die Handelsstationen wachsen.
 - **SG-Teams:** Im Command Center gründest du ein Team (SG1, SG2 …, bis zu 4 Spieler) oder trittst
   einem bei. Der Gründer wählt das **Ziel** (*Mondkarte (gemeinsam)* oder eine Einsatzkarte, die der

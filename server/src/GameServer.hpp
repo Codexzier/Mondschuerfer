@@ -30,6 +30,8 @@
 //   - Weltraumkarte der Piloten (shared/Orbit.cpp): Wer auf dem Mond das Ziel
 //     (100.000) erreicht, fliegt in einer gemeinsamen zweiten Welt weiter
 //     (orbit_), bis alle Leben verbraucht sind. Ohne Spieler wird sie aufgelöst.
+//     Das Ziel im All führt zur Alien-Station (shared/AlienStation.cpp), einer
+//     dritten gemeinsamen Welt (alien_), bis sie einmal besiegt ist.
 //   - Veröffentlicht jede Sekunde einen Statusbericht für die Webseite und
 //     übernimmt dort geänderte Einstellungen (SharedState).
 //
@@ -315,21 +317,22 @@ private:
     Instance* InstanceOf(int playerId);
     const Instance* InstanceOf(int playerId) const;
     const World& WorldOf(int playerId) const;            // Instanzwelt, Weltraumkarte oder world_
-    // --- Weltraumkarte der Piloten (orbit_) ---
-    // Ein Spieler steht mit Konto und Schiff entweder in world_ (Mond) oder in
-    // orbit_, nie in beiden. HomeOf liefert die Welt, in der er steht.
-    World* OrbitOf(int playerId);                        // orbit_, wenn der Spieler dort ist, sonst nullptr
+    // --- Weltraumkarte (orbit_) und Alien-Station (alien_) der Piloten ---
+    // Ein Spieler steht mit Konto und Schiff in genau einer Welt: world_
+    // (Mond), orbit_ oder alien_. HomeOf liefert die Welt, in der er steht.
+    // map wie World::PilotMap: 1 Weltraumkarte, 2 Alien-Station.
+    World* OrbitOf(int playerId);                        // orbit_ oder alien_, wenn der Spieler dort ist, sonst nullptr
     const World* OrbitOf(int playerId) const;
     World& HomeOf(int playerId);
     const World& HomeOf(int playerId) const;
-    World& OrbitWorld();                                 // orbit_, bei Bedarf neu angelegt (World::NewOrbit)
-    void EnterOrbit(Client& c);                          // Ziel auf dem Mond erreicht oder Kartenwechsel: Spieler wechselt ins All
+    World& OrbitWorld(int map = 1);                      // orbit_ bzw. alien_, bei Bedarf neu angelegt (NewOrbit/NewAlien)
+    void EnterOrbit(Client& c, int map = 1);             // Ziel erreicht oder Kartenwechsel: Spieler wechselt ins All bzw. zur Alien-Station
     void LeaveOrbit(Client& c, bool lost);               // alle Leben verbraucht (lost) oder Kartenwechsel: zurück auf den Mond
     void SendOrbitStart(Client& c);
-    // Weltraumkarte rechnen, Ereignisse verteilen, Rückkehrer auf den Mond
-    // holen, leere Weltraumkarte auflösen
+    // Weltraumkarte und Alien-Station rechnen, Ereignisse verteilen,
+    // Rückkehrer auf den Mond holen, leere Welten auflösen
     void UpdateOrbitWorld();
-    void DistributeOrbitEvents();
+    void DistributeOrbitEvents(World& w);
     // Ziel erreicht (Mond oder All): Bestenliste, Nachricht an alle, speichern
     void AnnounceGoal(const World& w, const GoalEvent& g);
 
@@ -430,6 +433,7 @@ private:
     bool teamsChanged_ = false;         // Teamliste neu schicken (SendTeams)
     std::vector<Instance> instances_;   // laufende Einsätze auf Einsatzkarten
     std::unique_ptr<World> orbit_;      // Weltraumkarte der Piloten (nullptr, solange niemand dort ist)
+    std::unique_ptr<World> alien_;      // Alien-Station, dritte Karte der Piloten (ebenso)
     int missionMapsRev_ = 0;            // zählt hoch, wenn sich die heute wählbaren Einsatzkarten ändern
     std::vector<std::string> missionFiles_;   // heute wählbare Einsatzkarten (Dateien), Reihenfolge wie net::MissionMapsMsg
     std::string missionDay_;            // Tag, für den missionFiles_ gilt (JJJJ-MM-TT, Ortszeit)

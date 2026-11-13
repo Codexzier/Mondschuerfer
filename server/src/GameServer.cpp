@@ -1567,11 +1567,13 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
         case net::DockActionType::BuyShip:
             // Schiff kaufen beim Raumschiffsverkäufer; Bit 7 = in Zahlung geben.
             // Typ und Preis prüft BuyShip.
-            if (st.type == StationType::Dealer) w.BuyShip(*ps, m.param & 0x7F, (m.param & 0x80) != 0);
+            // Nicht am Trägerschiff der Alien-Station (dort kein Schiffswechsel)
+            if (st.type == StationType::Dealer && !w.alien) w.BuyShip(*ps, m.param & 0x7F, (m.param & 0x80) != 0);
             break;
         case net::DockActionType::SwitchShip:
             // Schiff wechseln an der Handelsstation (Tab "Schiff"), im All beim Raumschiffsverkäufer
-            if (st.type == StationType::Trade || (w.orbit && st.type == StationType::Dealer)) w.SwitchShip(*ps, m.param);
+            // (nicht bei der Alien-Station)
+            if (st.type == StationType::Trade || (w.orbit && !w.alien && st.type == StationType::Dealer)) w.SwitchShip(*ps, m.param);
             break;
         case net::DockActionType::AcceptMission:
             // Mini-Mission annehmen an der Handelsstation (Tab "Missionen");
@@ -1579,11 +1581,12 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             if (st.type == StationType::Trade) w.AcceptMission(*ps, m.param);
             break;
         case net::DockActionType::SwitchMap:
-            // Reiter "Karte": Mond <-> Weltraumkarte mit demselben Kontostand.
-            // Danach sind ps und st ungültig (der Spieler zieht um).
-            if (!w.CanSwitchMap(*ps)) break;
-            if (&w == &world_) EnterOrbit(c);
-            else LeaveOrbit(c, false);
+            // Reiter "Karte": zur Zielkarte param (0 Mond, 1 Weltraumkarte,
+            // 2 Alien-Station) mit demselben Kontostand. Danach sind ps und
+            // st ungültig (der Spieler zieht um).
+            if (!w.CanSwitchMap(*ps, m.param)) break;
+            if (m.param == 0) LeaveOrbit(c, false);
+            else EnterOrbit(c, m.param);
             break;
     }
 }
@@ -2269,20 +2272,28 @@ const World& GameServer::WorldOf(int playerId) const {
 // (Kontostand 0, wie nach jedem Ziel) in die gemeinsame Welt orbit_. Dort
 // bringen nur Piratenabschüsse Punkte; Asteroiden, Raumstation und ihre
 // Explosion (alle Kontostände 0) gelten für alle Piloten im All. Das Ziel im
-// All ist wieder ein Eintrag in die Bestenliste, danach geht es dort weiter.
-// Sind alle Leben verbraucht (Fortschritt von vorn), geht es zurück auf den
+// All ist wieder ein Eintrag in die Bestenliste; danach geht es zur
+// Alien-Station (alien_, World::NewAlien), bis man sie einmal besiegt hat
+// (PlayerState::alienGoal), dann im All weiter. Sind alle Leben verbraucht (Fortschritt von vorn), geht es zurück auf den
 // Mond. Wer im All schon einmal das Ziel erreicht hat (PlayerState::orbitGoal),
 // wechselt angedockt an der Handelsstation bzw. am Trägerschiff frei zwischen
 // beiden Karten (DockAction SwitchMap), mit demselben Kontostand; das Ziel auf
-// dem Mond führt dann nicht mehr ins All. Die Clients bauen ihre Spiegelwelt
+// dem Mond führt dann nicht mehr ins All. Zur Alien-Station und von ihr weg
+// geht es so erst, wenn man sie einmal besiegt hat (World::MapUnlocked). Die Clients bauen ihre Spiegelwelt
 // mit OrbitStart bzw. InstanceEnd um.
 // ===========================================================================
 World* GameServer::OrbitOf(int playerId) {
-    return orbit_ && playerId >= 0 && orbit_->FindPlayer(playerId) ? orbit_.get() : nullptr;
+    if (playerId < 0) return nullptr;
+    for (World* w : {orbit_.get(), alien_.get()})
+        if (w && w->FindPlayer(playerId)) return w;
+    return nullptr;
 }
 
 const World* GameServer::OrbitOf(int playerId) const {
-    return orbit_ && playerId >= 0 && orbit_->FindPlayer(playerId) ? orbit_.get() : nullptr;
+    if (playerId < 0) return nullptr;
+    for (const World* w : {static_cast<const World*>(orbit_.get()), static_cast<const World*>(alien_.get())})
+        if (w && w->FindPlayer(playerId)) return w;
+    return nullptr;
 }
 
 World& GameServer::HomeOf(int playerId) {
@@ -2295,60 +2306,74 @@ const World& GameServer::HomeOf(int playerId) const {
     return o ? *o : world_;
 }
 
-World& GameServer::OrbitWorld() {
-    if (orbit_) return *orbit_;
-    orbit_ = std::make_unique<World>();
-    World& w = *orbit_;
-    w.NewOrbit(RandomSeed(), world_.totalDelivered);
+World& GameServer::OrbitWorld(int map) {
+    std::unique_ptr<World>& slot = map == 2 ? alien_ : orbit_;
+    if (slot) return *slot;
+    slot = std::make_unique<World>();
+    World& w = *slot;
+    if (map == 2) w.NewAlien(RandomSeed(), world_.totalDelivered);
+    else w.NewOrbit(RandomSeed(), world_.totalDelivered);
     w.isServer = true;
     w.settings = settings_;
     w.players.clear();   // Platzhalter des Einzelspielers
     w.ships.clear();
     for (int i = 0; i < settings_.enemyShips; ++i) w.SpawnPirate();
-    Log("Die Weltraumkarte der Piloten ist eröffnet");
+    Log(map == 2 ? "Die Alien-Station der Piloten ist eröffnet" : "Die Weltraumkarte der Piloten ist eröffnet");
     return w;
 }
 
 void GameServer::SendOrbitStart(Client& c) {
-    if (!orbit_) return;
+    const World* o = OrbitOf(c.playerId);
+    if (!o) return;
     net::OrbitStartMsg m;
     m.tick = static_cast<uint32_t>(tick_);
-    m.seed = orbit_->seed;
+    m.seed = o->seed;
+    m.map = static_cast<uint8_t>(o->PilotMap());
     Send(c, net::Encode(m), true);
 }
 
 // Aus DistributeWorldEvents (nach ++tick_): Der Snapshot dieses Schritts
 // zeigt schon die Weltraumkarte und wird vom Client verworfen (tick).
-void GameServer::EnterOrbit(Client& c) {
-    PlayerState* ps = world_.FindPlayer(c.playerId);
-    if (!ps) return;
+// Ebenso aus DistributeOrbitEvents (Ziel im All, weiter zur Alien-Station)
+// und dem Kartenwechsel: von jeder Welt aus in orbit_ (map 1) bzw. alien_ (map 2).
+void GameServer::EnterOrbit(Client& c, int map) {
+    World& from = HomeOf(c.playerId);
+    PlayerState* ps = from.FindPlayer(c.playerId);
+    if (!ps || from.PilotMap() == map) return;
     PlayerProgress p = CaptureProgress(*ps);
     p.hasPos = false;   // Start vor dem Trägerschiff
-    world_.RemovePlayer(c.playerId);
-    LeaveTeam(c.playerId);
-    World& o = OrbitWorld();
+    from.RemovePlayer(c.playerId);   // eine leere Weltraumkarte löst UpdateOrbitWorld auf
+    if (&from == &world_) LeaveTeam(c.playerId);
+    World& o = OrbitWorld(map);
     PlayerState& op = o.AddPlayer(c.playerId, c.name);
     RestoreProgress(op, p);
     c.lastShipId = op.shipId;
     c.lastDeaths = op.deaths;
     if (const Ship* s = o.PlayerShip(op)) c.lastPos = s->pos;
-    o.Notify(op, "Willkommen im All! Beschütze die Raumstation vor Asteroiden.", Color{150, 230, 255, 255});
-    o.Notify(op, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
-    FlushEvents(c);   // Ziel, Fanfare und Meldungen vom Mond kommen noch vor dem Wechsel an
+    if (map == 2) {
+        o.Notify(op, "Die Aliens haben eine Raumstation im Norden! Besiege sie in 20 Minuten.", Color{215, 140, 255, 255});
+        o.Notify(op, "Alien-Schiffe erholen sich, Tarnschiffe sieht man nur als leichte Krümmung.", Color{200, 220, 255, 255});
+    } else {
+        o.Notify(op, "Willkommen im All! Beschütze die Raumstation vor Asteroiden.", Color{150, 230, 255, 255});
+        o.Notify(op, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
+    }
+    FlushEvents(c);   // Ziel, Fanfare und Meldungen von vorher kommen noch vor dem Wechsel an
     SendOrbitStart(c);
     SendDepositsNow(c);   // keine Kristalle im All (leere Liste)
     StoreProgress(c);
-    Log(Fmt("%s fliegt jetzt auf der Weltraumkarte (%d Pilot(en) im All)", c.name.c_str(), static_cast<int>(o.players.size())));
+    Log(Fmt("%s fliegt jetzt %s (%d Pilot(en) dort)", c.name.c_str(), map == 2 ? "bei der Alien-Station" : "auf der Weltraumkarte",
+            static_cast<int>(o.players.size())));
 }
 
 // Aus UpdateOrbitWorld (vor ++tick_, lost: alle Leben verbraucht) bzw. dem
 // Kartenwechsel (zwischen zwei Schritten): Snapshots bis tick_ gehören noch zum All.
 void GameServer::LeaveOrbit(Client& c, bool lost) {
-    PlayerState* ps = orbit_ ? orbit_->FindPlayer(c.playerId) : nullptr;
+    World* o = OrbitOf(c.playerId);
+    PlayerState* ps = o ? o->FindPlayer(c.playerId) : nullptr;
     if (!ps) return;
     PlayerProgress p = CaptureProgress(*ps);
     p.hasPos = false;
-    orbit_->RemovePlayer(c.playerId);
+    o->RemovePlayer(c.playerId);
     PlayerState& mp = world_.AddPlayer(c.playerId, c.name);
     RestoreProgress(mp, p);
     c.lastShipId = mp.shipId;
@@ -2366,32 +2391,36 @@ void GameServer::LeaveOrbit(Client& c, bool lost) {
 }
 
 void GameServer::UpdateOrbitWorld() {
-    if (!orbit_) return;
-    World& w = *orbit_;
-    // Alle Leben verbraucht (World::ResetProgress, PlayerState::progressLost):
-    // kurz bevor das neue Schiff käme (cfg::MP_RESPAWN_TIME, die Explosion
-    // ist dann vorbei), zurück auf den Mond.
-    std::vector<Client*> back;
-    for (auto& up : clients_) {
-        Client& c = *up;
-        if (c.role != Role::Player || c.closing) continue;
-        const PlayerState* ps = w.FindPlayer(c.playerId);
-        if (ps && ps->shipId < 0 && ps->progressLost && ps->respawnT <= net::TICK_DT) back.push_back(&c);
+    for (std::unique_ptr<World>* slot : {&orbit_, &alien_}) {
+        if (!*slot) continue;
+        World& w = **slot;
+        // Alle Leben verbraucht (World::ResetProgress, PlayerState::progressLost):
+        // kurz bevor das neue Schiff käme (cfg::MP_RESPAWN_TIME, die Explosion
+        // ist dann vorbei), zurück auf den Mond.
+        std::vector<Client*> back;
+        for (auto& up : clients_) {
+            Client& c = *up;
+            if (c.role != Role::Player || c.closing) continue;
+            const PlayerState* ps = w.FindPlayer(c.playerId);
+            if (ps && ps->shipId < 0 && ps->progressLost && ps->respawnT <= net::TICK_DT) back.push_back(&c);
+        }
+        for (Client* c : back) LeaveOrbit(*c, true);
+        if (!back.empty()) accounts_.SaveAccounts();
+        w.Update(net::TICK_DT);
+        if (w.time > 20000.0f) w.time -= 6000.0f * PI;   // wie bei world_ (Step)
+        DistributeOrbitEvents(w);
+        if (!w.players.empty()) continue;
+        const bool alien = w.alien;
+        slot->reset();
+        Log(alien ? "Die Alien-Station ist leer und wird aufgelöst" : "Die Weltraumkarte ist leer und wird aufgelöst");
     }
-    for (Client* c : back) LeaveOrbit(*c, true);
-    if (!back.empty()) accounts_.SaveAccounts();
-    w.Update(net::TICK_DT);
-    if (w.time > 20000.0f) w.time -= 6000.0f * PI;   // wie bei world_ (Step)
-    DistributeOrbitEvents();
-    if (!w.players.empty()) return;
-    orbit_.reset();
-    Log("Die Weltraumkarte ist leer und wird aufgelöst");
 }
 
-// Wie DistributeWorldEvents, nur für die Piloten im All: Töne und Effekte in
-// Hörweite, Meldungen, Ziel erreicht, neues Schiff, Absturz.
-void GameServer::DistributeOrbitEvents() {
-    World& w = *orbit_;
+// Wie DistributeWorldEvents, nur für die Piloten im All bzw. bei der
+// Alien-Station: Töne und Effekte in Hörweite, Meldungen, Ziel erreicht
+// (im All weiter zur Alien-Station, bis sie einmal besiegt ist), neues
+// Schiff, Absturz.
+void GameServer::DistributeOrbitEvents(World& w) {
     struct View {
         Client* c;
         PlayerState* ps;
@@ -2440,9 +2469,13 @@ void GameServer::DistributeOrbitEvents() {
     for (PlayerState& ps : w.players) ps.outbox.clear();
 
     bool anyGoal = false, anyCrash = false;
+    std::vector<Client*> toAlien;
     for (const GoalEvent& g : w.goals) {
         AnnounceGoal(w, g);
         anyGoal = true;
+        if (w.alien) continue;
+        for (View& v : views)
+            if (v.ps->id == g.playerId && !v.ps->alienGoal && !v.c->isBot) toAlien.push_back(v.c);
     }
     for (View& v : views) {
         Client& c = *v.c;
@@ -2458,12 +2491,20 @@ void GameServer::DistributeOrbitEvents() {
             anyCrash = true;
             Log(c.name + " ist im All abgestürzt");
         }
+        // Alien-Station besiegt (World::AlienStationDown): Kartenwechsel gleich sichern
+        if (v.ps->alienGoal && c.account && !c.account->progress.alienGoal) {
+            StoreProgress(c);
+            anyCrash = true;   // Konten speichern
+        }
     }
     if (anyGoal) accounts_.SaveHighscores();
     if (anyGoal || anyCrash) accounts_.SaveAccounts();
     w.sounds.clear();
     w.fx.clear();
     w.goals.clear();
+    // Erst jetzt umziehen: RemovePlayer verschiebt w.players (die Zeiger in views oben)
+    for (Client* c : toAlien) EnterOrbit(*c, 2);
+    if (!toAlien.empty()) accounts_.SaveAccounts();
 }
 
 void GameServer::HandleLeave(Client& c) {
@@ -2482,7 +2523,7 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
     // sich im All abgemeldet (PlayerProgress::orbit; Bots bleiben auf dem Mond)
     PlayerState* resumed = resumePlayerId >= 0 ? HomeOf(resumePlayerId).FindPlayer(resumePlayerId) : nullptr;
     const int id = resumed ? resumePlayerId : NewPlayerId();
-    World& home = resumed ? HomeOf(id) : account && account->progress.orbit && !c.isBot ? OrbitWorld() : world_;
+    World& home = resumed ? HomeOf(id) : account && account->progress.orbit > 0 && !c.isBot ? OrbitWorld(account->progress.orbit) : world_;
     const bool inOrbit = &home != &world_;
     PlayerState& ps = resumed ? *resumed : home.AddPlayer(id, name);
     if (account && !resumed) RestoreProgress(ps, account->progress);
@@ -2804,6 +2845,7 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         e.scanPhase = std::fmod(ps->scanPulse, cfg::SCANNER_PULSE_TIME);
         e.mining = ps->mining;
         e.orbitGoal = ps->orbitGoal;
+        e.alienGoal = ps->alienGoal;
         e.mineKind = static_cast<uint8_t>(std::clamp(ps->mineKind, 0, 255));
         e.mineId = ps->mineId;
         e.mineT = ps->mineT;
@@ -3014,13 +3056,14 @@ net::SnapshotMsg GameServer::MakeSnapshot(const Client& c) const {
         }
     }
 
-    // --- Weltraumkarte der Piloten: Raumstation und alle Asteroiden ---
-    if (orbit_ && &w == orbit_.get()) {
+    // --- Weltraumkarte und Alien-Station der Piloten: Raumstation und alle Asteroiden ---
+    if (w.orbit) {
         m.hasOrbit = true;
         m.stationHp = w.spaceStations.empty() ? 0.0f : w.stationHp;
         m.stationMaxHp = w.stationMaxHp;
         m.stationDownT = w.stationDownT;
         m.stationVariant = static_cast<uint8_t>(w.stationVariant);
+        m.alienT = w.alienT;
         static const int detailed = ModelId("meteor_detailed");
         for (const Asteroid& a : w.asteroids) {
             if (a.dead) continue;
@@ -3076,9 +3119,9 @@ net::PlayersMsg GameServer::MakePlayers() const {
     m.totalDelivered = world_.totalDelivered;
     m.spectators = static_cast<uint8_t>(std::min(255, SpectatorsOnline()));
     m.maxPlayers = static_cast<uint8_t>(settings_.maxPlayers);
-    m.players.reserve(world_.players.size() + (orbit_ ? orbit_->players.size() : 0));
-    // Mond und Weltraumkarte
-    for (const World* w : {&world_, static_cast<const World*>(orbit_.get())}) {
+    m.players.reserve(world_.players.size() + (orbit_ ? orbit_->players.size() : 0) + (alien_ ? alien_->players.size() : 0));
+    // Mond, Weltraumkarte und Alien-Station
+    for (const World* w : {&world_, static_cast<const World*>(orbit_.get()), static_cast<const World*>(alien_.get())}) {
         if (!w) continue;
         for (const PlayerState& ps : w->players) {
             net::PlayerEntry e;
@@ -3296,6 +3339,7 @@ void GameServer::RestoreProgress(PlayerState& ps, const PlayerProgress& p) {
     ps.deaths = std::max(0, p.deaths);
     ps.goals = std::max(0, p.goals);
     ps.orbitGoal = p.orbitGoal;
+    ps.alienGoal = p.alienGoal;
     ps.lastRole = p.role == 1 ? PlayerRole::Trooper : PlayerRole::Pilot;   // Vorauswahl der Rollenwahl
     ps.sgTotal.points = std::max(0, p.sgPoints);
     ps.sgTotal.samples = std::max(0, p.sgSamples);
@@ -3334,7 +3378,7 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     p.lives = ps.lives;
     const World& w = HomeOf(ps.id);
     // Im All alle Leben verbraucht: es geht auf dem Mond weiter (UpdateOrbitWorld)
-    p.orbit = &w != &world_ && !ps.progressLost;
+    p.orbit = &w != &world_ && !ps.progressLost ? w.PilotMap() : 0;
     const Ship* s = w.PlayerShip(ps);
     if (s && !s->crashing) {
         p.cargo = s->cargo;
@@ -3355,6 +3399,7 @@ PlayerProgress GameServer::CaptureProgress(const PlayerState& ps) const {
     p.deaths = ps.deaths;
     p.goals = ps.goals;
     p.orbitGoal = ps.orbitGoal;
+    p.alienGoal = ps.alienGoal;
     p.role = static_cast<int>(ps.role);
     p.sgPoints = ps.sgTotal.points;
     p.sgSamples = ps.sgTotal.samples;
@@ -3395,7 +3440,9 @@ void GameServer::ApplySettings(const GameSettings& s) {
     if (old.fpsMode && !s.fpsMode) EndFpsMode();
     // Laufende Einsatzkarten übernehmen Friendly Fire, Bodenpiraten usw. sofort
     for (Instance& in : instances_) in.world->settings = s;
-    if (orbit_) orbit_->settings = s;   // Weltraumkarte: Gegnerzahl, Schiffe ... (wird nicht neu aufgebaut)
+    // Weltraumkarte und Alien-Station: Gegnerzahl, Schiffe ... (werden nicht neu aufgebaut)
+    for (World* o : {orbit_.get(), alien_.get()})
+        if (o) o->settings = s;
     if (rebuild) {
         RebuildWorld();
     } else {
@@ -3417,8 +3464,9 @@ void GameServer::ApplyShipsRequest() {
     accounts_.SaveShips(s.ships);
     settings_.ships = s.ships;
     world_.settings.ships = s.ships;
-    if (orbit_) orbit_->settings.ships = s.ships;
-    for (World* w : {&world_, orbit_.get()}) {
+    for (World* o : {orbit_.get(), alien_.get()})
+        if (o) o->settings.ships = s.ships;
+    for (World* w : {&world_, orbit_.get(), alien_.get()}) {
         if (!w) continue;
         for (PlayerState& ps : w->players) {
             w->ApplyUpgrades(ps, false);

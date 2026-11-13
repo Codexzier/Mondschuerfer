@@ -91,7 +91,9 @@ namespace net {
 // Version 18: Weltraumkarte der Piloten (OrbitStart; Snapshot: Raumstation und Asteroiden;
 //             DockAction SwitchMap und SnapMe::orbitGoal für den Kartenwechsel).
 // Version 19: Alien-Mutterschiff (ShipKind::Boss, Modellvariante, SnapMe::bosses).
-constexpr uint16_t PROTOCOL_VERSION = 19;
+// Version 20: Alien-Station, dritte Karte der Piloten (OrbitStart::map, Snapshot::alienT,
+//             SnapShip::cloak, SnapMe::alienGoal, DockAction SwitchMap mit Zielkarte).
+constexpr uint16_t PROTOCOL_VERSION = 20;
 constexpr uint16_t DEFAULT_PORT = 7777;
 
 constexpr int TICK_RATE = 30;                    // Simulationsschritte pro Sekunde (Server und Vorhersage)
@@ -298,7 +300,8 @@ struct InputMsg {
     std::vector<InputRecord> records;   // älteste zuerst, höchstens MAX_INPUTS_PER_MSG
 };
 
-// SwitchMap: Reiter "Karte", Wechsel Mond <-> Weltraumkarte (World::CanSwitchMap)
+// SwitchMap: Reiter "Karte", Wechsel zur Zielkarte param (0 Mond, 1 Weltraumkarte,
+// 2 Alien-Station; World::CanSwitchMap)
 enum class DockActionType : uint8_t { Undock = 0, Repair = 1, BuyUpgrade = 2, BuyShip = 3, SwitchShip = 4, AcceptMission = 5, SwitchMap = 6 };
 
 struct DockActionMsg {
@@ -472,6 +475,7 @@ struct SnapMe {
     float scanPhase = 0;          // Fortschritt des aktuellen Scannerrings in Sekunden (0..PULSE_TIME)
     bool mining = false;
     bool orbitGoal = false;       // im All schon einmal 100.000: Kartenwechsel frei (PlayerState::orbitGoal)
+    bool alienGoal = false;       // Alien-Station schon einmal besiegt (PlayerState::alienGoal)
     uint8_t mineKind = 0;
     int32_t mineId = -1;
     float mineT = 0;
@@ -528,6 +532,7 @@ struct SnapShip {
     float mineX = 0, mineZ = 0;   // Ziel des Abbaustrahls
     int16_t playerId = -1;        // >= 0: Schiff eines Spielers
     bool chatting = false;        // Spieler tippt gerade im Chat (Sprechblase)
+    float cloak = 0;              // Tarnschiff der Alien-Station: 0 sichtbar .. 1 getarnt (Ship::cloak)
 };
 
 struct SnapBullet {
@@ -602,7 +607,8 @@ struct SnapshotMsg {
     bool hasOrbit = false;
     float stationHp = 0, stationMaxHp = 0;
     float stationDownT = 0;       // > 0: Station explodiert, neue in so vielen Sekunden
-    uint8_t stationVariant = 0;   // 0 station-a, 1 station-b
+    uint8_t stationVariant = 0;   // 0 station-a, 1 station-b, 2 Alien-Station
+    float alienT = 0;             // Alien-Station: verbleibende Zeit in Sekunden (World::alienT)
     std::vector<SnapAsteroid> asteroids;
 };
 
@@ -813,12 +819,14 @@ struct InstanceEndMsg {
     uint32_t tick = 0;
 };
 
-// Ein Pilot fliegt auf der Weltraumkarte weiter (World::NewOrbit mit Seed):
-// Snapshots bis einschließlich tick gehören noch zur Mondkarte. Zurück zum
-// Mond geht es mit InstanceEnd.
+// Ein Pilot fliegt auf der Weltraumkarte weiter (World::NewOrbit mit Seed)
+// oder bei der Alien-Station (map 2, World::NewAlien): Snapshots bis
+// einschließlich tick gehören noch zur vorigen Karte. Zurück zum Mond geht es
+// mit InstanceEnd.
 struct OrbitStartMsg {
     uint32_t tick = 0;
     uint32_t seed = 0;
+    uint8_t map = 1;              // World::PilotMap: 1 Weltraumkarte, 2 Alien-Station
 };
 
 // ---------------------------------------------------------------------------
