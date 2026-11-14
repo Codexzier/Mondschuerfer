@@ -8,7 +8,8 @@
 //
 // Wofür ist die Datei da?
 //   Avatar-Clips prüfen, ohne ein Spiel zu starten (auch aus dem
-//   Hauptmenü): links alle .mpg-Dateien aus assets/clips/ (Klick spielt den
+//   Hauptmenü): links alle .mpg-Dateien aus clips/ (im Asset-Paket assets.pak
+//   oder im Ordner assets/, siehe Assets.hpp; Klick spielt den
 //   Clip rechts daneben ab), darunter ein Pfadfeld und der Knopf "Teste Video
 //   Datei abspielen" für eine beliebige Datei (Pfad eintippen oder einfügen
 //   oder die Datei ins Spielfenster ziehen). Abgespielt wird mit demselben
@@ -20,7 +21,8 @@
 //
 // Wer benutzt die Datei? src/Options.cpp (eigener Karteireiter).
 // Abhängigkeiten: ClipPlayer.hpp (Wiedergabe), third_party/pl_mpeg (Prüfung),
-// Ui.hpp, Assets.hpp (Ordner der Clips), ClientConfig.hpp (Clip-Lautstärke),
+// Ui.hpp, Assets.hpp (Ordner der Clips, Asset-Paket: ListAssetFiles,
+// LoadAssetBytes), ClientConfig.hpp (Clip-Lautstärke),
 // raylib (Ordnerliste, Drag & Drop, Zeichnen).
 // ---------------------------------------------------------------------------
 #ifdef MONDSCHUERFER_CLIP_TESTER

@@ -11,8 +11,11 @@
 //      Ton kodiert ist (Kopf des ersten Tonrahmens).
 //   2. Daraus je Grundbedingung eine Zeile (Checks).
 //   3. Abspielen mit ClipPlayer::PlayFile – immer, auch bei Fehlern.
-// Die Sollwerte stammen aus den Clips in assets/clips/ (ffprobe, 2026-11-14:
-// alle MPEG-1-Video 480x480, 30 fps, MP2 32000 Hz mono, 3,6 bis 8,0 s).
+// Die Sollwerte stammen aus den 19 Clips in assets/clips/ (ffprobe, 2026-11-14:
+// alle MPEG-1-Video 480x480, 30 fps, MP2 32000 Hz mono, 3,6 bis 8,9 s).
+// Clips aus dem Asset-Paket (AssetDir() = "pak:/") liest weder fopen noch
+// plm_create_with_filename: Sie werden wie in ClipPlayer::Open ganz geladen
+// (LoadAssetBytes) und aus dem Speicher gelesen.
 // ---------------------------------------------------------------------------
 #include "ClipTester.hpp"
 #ifdef MONDSCHUERFER_CLIP_TESTER
@@ -115,17 +118,28 @@ bool AudioHeader(const unsigned char* d, size_t n, Probe& p) {
 
 Probe Examine(const std::string& path) {
     Probe p;
-    std::FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) return p;
-    p.found = true;
+    // Im Paket: ganze Datei entschlüsselt in data. Sonst nur der Anfang (eine
+    // fremde Testdatei kann groß sein und wird vielleicht gar nicht gebraucht).
+    const bool inPak = InAssetPack(path);
+    std::vector<unsigned char> data;
     unsigned char head[512];
-    const size_t n = std::fread(head, 1, sizeof(head), f);
-    std::fclose(f);
+    size_t n = 0;
+    if (inPak) {
+        if (!LoadAssetBytes(path, data)) return p;
+        n = std::min(sizeof(head), data.size());
+        std::memcpy(head, data.data(), n);
+    } else {
+        std::FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) return p;
+        n = std::fread(head, 1, sizeof(head), f);
+        std::fclose(f);
+    }
+    p.found = true;
     DetectContainer(head, n, p);
     if (!p.mpeg1ps) return p;   // anderes liest pl_mpeg nicht (siehe ClipPlayer.hpp)
 
     // Bildgröße, Bildrate, Länge: so, wie der ClipPlayer sie sieht
-    if (plm_t* m = plm_create_with_filename(path.c_str())) {
+    if (plm_t* m = inPak ? plm_create_with_memory(data.data(), data.size(), 0) : plm_create_with_filename(path.c_str())) {
         p.w = plm_get_width(m);
         p.h = plm_get_height(m);
         p.video = p.w > 0 && p.h > 0;
@@ -134,7 +148,9 @@ Probe Examine(const std::string& path) {
         plm_destroy(m);
     }
     // Erste Pakete: Bild MPEG-2? Ton-Rahmenkopf (erster Tonstrom, wie im Spiel)
-    if (plm_buffer_t* buf = plm_buffer_create_with_filename(path.c_str())) {
+    plm_buffer_t* buf = inPak ? plm_buffer_create_with_memory(data.data(), data.size(), 0)
+                              : plm_buffer_create_with_filename(path.c_str());
+    if (buf) {
         plm_demux_t* dmx = plm_demux_create(buf, 1);
         bool seenVideo = false;
         for (int i = 0; i < 500 && !(seenVideo && p.audio); ++i) {
@@ -179,11 +195,7 @@ void ClipTester::Open() {
     dir_ = g_assets.AssetDir() + "clips/";
     files_.clear();
     first_ = 0;
-    if (DirectoryExists(dir_.c_str())) {
-        FilePathList list = LoadDirectoryFilesEx(dir_.c_str(), ".mpg", false);
-        for (unsigned int i = 0; i < list.count; ++i) files_.push_back(GetFileName(list.paths[i]));
-        UnloadDirectoryFiles(list);
-    }
+    for (const std::string& f : ListAssetFiles(dir_, ".mpg")) files_.push_back(GetFileName(f.c_str()));   // Paket oder Ordner
     std::sort(files_.begin(), files_.end());
     if (IsFileDropped()) UnloadDroppedFiles(LoadDroppedFiles());   // früher (auf anderen Seiten) Hineingezogenes verwerfen
 }
@@ -290,7 +302,7 @@ bool ClipTester::Draw(Rectangle area, bool focused) {
 
     // --- links: Liste der Clips --------------------------------------------------
     const float lw = kListW * s;
-    Text("Avatar-Clips (assets/clips)", area.x, area.y, 20 * s, MUTED);
+    Text(InAssetPack(dir_) ? "Avatar-Clips (assets.pak)" : "Avatar-Clips (assets/clips)", area.x, area.y, 20 * s, MUTED);
     TextRight(std::to_string(files_.size()), area.x + lw, area.y, 20 * s, MUTED);
     const float bottom = (12.0f + 44.0f + 10.0f + 50.0f + 10.0f + 18.0f) * s;   // Abstand, Feld, Knopf, Hinweis
     const Rectangle list{area.x, area.y + 30 * s, lw, area.height - 30 * s - bottom};
