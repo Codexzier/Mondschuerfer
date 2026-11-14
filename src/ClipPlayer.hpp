@@ -18,6 +18,8 @@
 //   - src/Hud.cpp: Frame() zeichnet das Bild im Funkspruch-Kasten.
 //   - src/Options.cpp: SetVolume() (Seite "Ton", Clip-Lautstärke); beim
 //     Start setzt main.cpp den Wert aus der Einstellungsdatei.
+//   - src/ClipTester.cpp: eigenes Objekt für den Videoclip-Tester der
+//     Optionen (nur Debug-Build), spielt beliebige Dateien mit PlayFile().
 //
 // Abhängigkeiten:
 //   - raylib (Textur, Sound), third_party/pl_mpeg (MPEG-1-Video, MP2-Ton).
@@ -57,8 +59,18 @@ public:
     // fehlt, noch nicht gestartet).
     const Texture2D* Frame(int cue) const { return cue == cue_ && hasFrame_ ? &tex_ : nullptr; }
 
+    // Videoclip-Tester der Optionen (ClipTester.cpp, nur im Debug-Build, mit
+    // eigenem Objekt ohne Init()): eine beliebige Datei (vollständiger Pfad)
+    // von vorn abspielen, ohne Funkspruch. Liefert false, wenn sie kein
+    // lesbares Bild hat. Danach jedes Frame UpdateFile(dt); das Bild liefert
+    // FileFrame(), beenden mit Shutdown().
+    bool PlayFile(const std::string& path);
+    void UpdateFile(float dt) { Advance(dt); }
+    const Texture2D* FileFrame() const { return hasFrame_ ? &tex_ : nullptr; }
+
 private:
     void Open(const std::string& file);   // Datei laden, Ton vorab ganz entpacken
+    void Advance(float dt);               // Uhr weiterzählen, fällige Bilder entpacken
     void Stop();                          // alles freigeben
 
     std::string dir_;
