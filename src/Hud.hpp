@@ -64,7 +64,7 @@ struct DockRequest {
     int switchShip = -1;   // Handelsstation, Tab "Schiff": zu diesem Schiffstyp wechseln, -1 = nein
     int acceptMission = -1;   // Handelsstation, Tab "Missionen": Missionsart (MissionType) annehmen, -1 = nein
     bool toTeam = false;      // Handelsstation: "Als SG-Team spielen" (ins Command Center)
-    bool switchMap = false;   // Reiter "Karte": zur anderen Karte wechseln (World::CanSwitchMap)
+    int switchMap = -1;       // Reiter "Karte": zu dieser Karte wechseln (World::PilotMap, CanSwitchMap), -1 = nein
 };
 
 // Stationsfenster des eigenen Spielers (w.Me()). Handelsstation: Tab
@@ -91,7 +91,8 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton = fa
 // nach 1 s (w.outcomeT), damit ein gerade noch gehaltener Tastendruck aus dem
 // Spiel den Bildschirm nicht sofort wegklickt.
 // toOrbit: Sieg auf dem Mond im Einzelspiel, der Knopf heißt "Weiter ins All"
-// (Sprung auf die Weltraumkarte der Piloten, main.cpp).
+// (Sprung auf die Weltraumkarte der Piloten, main.cpp); Sieg im All: "Weiter
+// zur Alien-Station" (dritte Karte).
 bool DrawGameOver(const World& w);
 bool DrawVictory(const World& w, bool toOrbit = false);
 

@@ -207,6 +207,44 @@ void main() {
 }
 )";
 
+// Tarnung (DrawCloaked): gleicher Vertex-Shader, eigener Fragment-Shader.
+// Er liest die Bildkopie (sceneTex) an der Stelle des Bildpunkts, verschoben
+// um die Flächenrichtung im Bild (matView setzt raylib) und ein leichtes
+// Wabern – so krümmt das Schiff das Bild dahinter wie eine Glaslinse. Am Rand
+// (flacher Blickwinkel) ein Hauch heller. cloakParams.x mischt mit dem
+// normalen Aussehen (einfaches Licht), y = Zeit. Verschiebung in Bildpunkten
+// bei 1080 Zeilen, für andere Auflösungen mitskaliert.
+const char* kCloakFragment = R"(
+#version 330
+in vec3 fragPosition;
+in vec2 fragTexCoord;
+in vec3 fragNormal;
+in vec4 fragColor;
+uniform sampler2D texture0;
+uniform vec4 colDiffuse;
+uniform sampler2D sceneTex;
+uniform vec4 sceneRect;
+uniform mat4 matView;
+uniform vec3 viewPos;
+uniform vec3 lightDir;
+uniform vec2 cloakParams;
+out vec4 finalColor;
+void main() {
+    vec3 n = normalize(fragNormal);
+    vec3 v = normalize(viewPos - fragPosition);
+    float rim = 1.0 - abs(dot(n, v));
+    vec3 vn = (matView * vec4(n, 0.0)).xyz;
+    vec2 wobble = vec2(sin(fragPosition.x * 4.0 + cloakParams.y * 3.0), cos(fragPosition.z * 4.0 + cloakParams.y * 2.6));
+    vec2 off = (vn.xy * 14.0 + wobble * 2.0) * sceneRect.w / 1080.0;
+    vec2 uv = clamp((gl_FragCoord.xy - sceneRect.xy + off) / sceneRect.zw, vec2(0.001), vec2(0.999));
+    vec3 behind = textureLod(sceneTex, uv, 0.0).rgb;
+    behind = mix(behind, behind * 1.1 + vec3(0.03, 0.035, 0.05), rim * rim);
+    vec4 base = texture(texture0, fragTexCoord) * colDiffuse * fragColor;
+    vec3 visible = base.rgb * (0.35 + 0.75 * max(dot(n, -lightDir), 0.0));
+    finalColor = vec4(mix(visible, behind, clamp(cloakParams.x, 0.0, 1.0)), 1.0);
+}
+)";
+
 // Der Fragment-Shader besteht aus drei Teilen: Kopf, Nebelrechnung
 // (fx::kFogGlsl) und Hauptteil; Init() fügt sie zusammen.
 const char* kFragmentHead = R"(
@@ -364,6 +402,8 @@ void Assets::Shutdown() {
     // Shader und Texturen der Materialien (die könnten mehrere Modelle teilen).
     // Den gemeinsamen Shader geben wir deshalb hier einmal selbst frei.
     if (ready_) UnloadShader(lit_);
+    if (cloakOk_) UnloadShader(cloak_);
+    cloakOk_ = cloakTried_ = false;
     ready_ = false;
 }
 
@@ -433,6 +473,7 @@ BoundingBox Assets::Bounds(int id) {
 
 // Kameraposition für das Randlicht (viewPos im Fragment-Shader).
 void Assets::SetCamera(Vector3 camPos) {
+    camPos_ = camPos;
     SetShaderValue(lit_, locViewPos_, &camPos, SHADER_UNIFORM_VEC3);
 }
 
@@ -488,6 +529,39 @@ void Assets::Draw(int id, const Matrix& world, Color tint, Vector3 emissive) {
 
 void Assets::Draw(int id, Vector3 pos, float yaw, float scale, Color tint, Vector3 emissive) {
     Draw(id, TRS(pos, yaw, scale), tint, emissive);
+}
+
+void Assets::DrawCloaked(int id, const Matrix& world, Color tint, float cloak, Vector4 rect, float time) {
+    Entry* ep = Ensure(id);
+    if (!ep) return;
+    if (!cloakTried_) {
+        cloakTried_ = true;
+        cloak_ = LoadShaderFromMemory(kVertexShader, kCloakFragment);
+        locCloakScene_ = GetShaderLocation(cloak_, "sceneTex");
+        locCloakRect_ = GetShaderLocation(cloak_, "sceneRect");
+        locCloakParams_ = GetShaderLocation(cloak_, "cloakParams");
+        locCloakViewPos_ = GetShaderLocation(cloak_, "viewPos");
+        locCloakLight_ = GetShaderLocation(cloak_, "lightDir");
+        cloakOk_ = IsShaderValid(cloak_) && locCloakScene_ >= 0;   // Fehler: Standard-Shader ohne sceneTex
+    }
+    // Ohne eigenen Shader: normal zeichnen (sichtbar)
+    if (!cloakOk_) {
+        Draw(id, world, tint);
+        return;
+    }
+    Entry& e = *ep;
+    e.model.transform = MatrixMultiply(e.base, world);
+    const int slot = fx::kGrabSlot;
+    const float params[2] = {cloak, time};
+    SetShaderValue(cloak_, locCloakScene_, &slot, SHADER_UNIFORM_INT);
+    SetShaderValue(cloak_, locCloakRect_, &rect, SHADER_UNIFORM_VEC4);
+    SetShaderValue(cloak_, locCloakParams_, params, SHADER_UNIFORM_VEC2);
+    SetShaderValue(cloak_, locCloakViewPos_, &camPos_, SHADER_UNIFORM_VEC3);
+    SetShaderValue(cloak_, locCloakLight_, &sun_, SHADER_UNIFORM_VEC3);
+    // Nur für diesen Aufruf den Shader der Materialien tauschen
+    for (int i = 0; i < e.model.materialCount; ++i) e.model.materials[i].shader = cloak_;
+    DrawModel(e.model, {0, 0, 0}, 1.0f, tint);
+    for (int i = 0; i < e.model.materialCount; ++i) e.model.materials[i].shader = lit_;
 }
 
 // Häute der Figur in der Reihenfolge von Trooper::skin (shared/World.hpp)

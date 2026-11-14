@@ -25,6 +25,10 @@
 //   Ein Framebuffer ganz ohne Farbbild gilt bei manchen Treibern als
 //   unvollständig.
 //
+// Tarnung: GrabScene kopiert das Bild per glBlitFramebuffer (rlgl) aus dem
+//   aktuellen Framebuffer – bei Kantenglättung ein MSAA-Bild, der Blit rechnet
+//   es dabei um – in eine Textur in Fenstergröße (gleiches Format RGBA8).
+//
 // Sandsturm: SetFog gibt Mitte, Radien, Deckkraft und Zeit an den
 //   Beleuchtungs-Shader (Modelle) und an den Effekt-Shader dieser Datei
 //   (Render-Batch: Ringe, Strahlen, Partikel). Der Effekt-Shader blendet die
@@ -124,6 +128,11 @@ Vector4 fogParams_{};            // wie fogParams im Shader (Effects.hpp)
 
 float screenFlash_ = 0.0f;
 
+unsigned int grabFbo_ = 0;       // Framebuffer der Bildkopie (Tarnung)
+unsigned int grabTex_ = 0;       // dessen Farbbild = die Kopie
+int grabW_ = 0, grabH_ = 0;
+bool grabFailed_ = false;
+
 void LoadGlOnce() {
     if (glTried_) return;
     glTried_ = true;
@@ -167,6 +176,31 @@ bool EnsureShadowMap(int size) {
         return false;
     }
     shadowSize_ = size;
+    return true;
+}
+
+void UnloadGrab() {
+    if (grabFbo_ != 0) rlUnloadFramebuffer(grabFbo_);
+    if (grabTex_ != 0) rlUnloadTexture(grabTex_);
+    grabFbo_ = grabTex_ = 0;
+    grabW_ = grabH_ = 0;
+}
+
+// Bildkopie in der Größe w x h anlegen (oder behalten). Wie bei
+// EnsureShadowMap ist danach der Bildschirm eingestellt.
+bool EnsureGrab(int w, int h) {
+    if (grabFbo_ != 0 && grabW_ == w && grabH_ == h) return true;
+    UnloadGrab();
+    grabFbo_ = rlLoadFramebuffer();
+    if (grabFbo_ == 0) return false;
+    grabTex_ = rlLoadTexture(nullptr, w, h, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    rlFramebufferAttach(grabFbo_, grabTex_, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    if (!rlFramebufferComplete(grabFbo_)) {
+        UnloadGrab();
+        return false;
+    }
+    grabW_ = w;
+    grabH_ = h;
     return true;
 }
 
@@ -258,6 +292,36 @@ void EndShadowPass() {
     g_assets.SetShadow(lightVP_, kShadowSlot, kShadowStrength, 1.0f / static_cast<float>(shadowSize_));
 }
 
+bool GrabScene(Vector4& rect) {
+    if (grabFailed_) return false;
+    LoadGlOnce();
+    if (!getIntegerv_) return false;
+    rlDrawRenderBatchActive();
+    int fbo = 0, vp[4] = {0, 0, 0, 0};
+    getIntegerv_(GL_FRAMEBUFFER_BINDING_, &fbo);
+    getIntegerv_(GL_VIEWPORT_, vp);
+    if (vp[2] <= 0 || vp[3] <= 0) return false;
+    // Die Kopie darf beim Kopieren nicht auf einem Texturplatz liegen
+    rlActiveTextureSlot(kGrabSlot);
+    rlDisableTexture();
+    rlActiveTextureSlot(0);
+    if (!EnsureGrab(vp[2], vp[3])) {
+        grabFailed_ = true;
+        rlEnableFramebuffer(static_cast<unsigned int>(fbo));
+        TraceLog(LOG_WARNING, "Bildkopie für die Tarnung nicht möglich, Tarnschiffe bleiben sichtbar");
+        return false;
+    }
+    rlBindFramebuffer(RL_READ_FRAMEBUFFER, static_cast<unsigned int>(fbo));
+    rlBindFramebuffer(RL_DRAW_FRAMEBUFFER, grabFbo_);
+    rlBlitFramebuffer(vp[0], vp[1], vp[2], vp[3], 0, 0, vp[2], vp[3], 0x00004000);   // GL_COLOR_BUFFER_BIT
+    rlEnableFramebuffer(static_cast<unsigned int>(fbo));
+    rlActiveTextureSlot(kGrabSlot);
+    rlEnableTexture(grabTex_);
+    rlActiveTextureSlot(0);
+    rect = {static_cast<float>(vp[0]), static_cast<float>(vp[1]), static_cast<float>(vp[2]), static_cast<float>(vp[3])};
+    return true;
+}
+
 bool InShadowArea(Vector3 p, float r) {
     // Quadrat schräg zur Sonne: der Kreis um seine Ecken (Faktor √2)
     return Dist2D(p, shadowCenter_) < shadowHalf_ * 1.415f + r;
@@ -329,6 +393,7 @@ float ScreenFlash() { return screenFlash_; }
 
 void Shutdown() {
     UnloadShadowMap();
+    UnloadGrab();
     if (effectOk_) UnloadShader(effect_);
     effectOk_ = false;
     effectTried_ = false;

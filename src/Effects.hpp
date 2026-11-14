@@ -20,6 +20,9 @@
 //     fliegen Sandkörner durchs Bild (Render.cpp).
 //   - Bildblitz: eine Explosion nahe am eigenen Schiff hellt das ganze Bild
 //     der 3D-Welt kurz auf (Teil von "Treffer-Aufblitzen", Render.cpp).
+//   - Tarnung (Alien-Station, keine Option): Kopie des bisher gezeichneten
+//     Bildes, durch die getarnte Schiffe als leichte Krümmung erscheinen
+//     (Assets::DrawCloaked).
 //
 // Wer benutzt sie?
 //   - src/Render.cpp (World::Draw): Schattendurchgang, Nebel einstellen,
@@ -40,6 +43,8 @@ namespace fx {
 // damit er sich nicht mit den Plätzen der Materialien (0..11, raylib) oder
 // des Render-Batches (0..3) überschneidet.
 constexpr int kShadowSlot = 15;
+// Texturplatz der Bildkopie für die Tarnung (GrabScene)
+constexpr int kGrabSlot = 14;
 
 // GLSL-Text der Nebelrechnung, wird in den Beleuchtungs-Shader (Assets.cpp)
 // und den Effekt-Shader (Effects.cpp) eingefügt. FogAmount(p) liefert für
@@ -113,6 +118,14 @@ Color SandColor();
 // Sandsturm tun beide nichts.
 void BeginEffects();
 void EndEffects();
+
+// --- Tarnung ----------------------------------------------------------------------
+// Mitten in World::Draw, nach allen festen Modellen: kopiert das bisher
+// gezeichnete Bild (aktueller Framebuffer, Bildausschnitt) in eine eigene
+// Textur und legt sie auf den Texturplatz kGrabSlot. rect = Bildausschnitt
+// in Bildpunkten (x, y, Breite, Höhe). false: geht nicht (OpenGL-Funktion
+// fehlt), dann zeichnet Render.cpp die Schiffe sichtbar.
+bool GrabScene(Vector4& rect);
 
 // --- Bildblitz -------------------------------------------------------------------
 // Render.cpp meldet je Bild, wie stark eine nahe Explosion das Bild aufhellt

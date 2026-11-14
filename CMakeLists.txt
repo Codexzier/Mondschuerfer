@@ -33,6 +33,7 @@ set(MONDSCHUERFER_SHARED_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Ai.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Trooper.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Orbit.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shared/AlienStation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Models.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/GameSettings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/shared/Protocol.cpp

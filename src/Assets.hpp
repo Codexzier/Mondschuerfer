@@ -104,6 +104,13 @@ public:
     Vector3 DrawCharacter(int skin, const char* anim, float time, bool loop, const Matrix& world, Color tint = WHITE,
                           Vector3 emissive = {0, 0, 0});
 
+    // Getarntes Schiff (Alien-Station, Render.cpp): statt des Modells das Bild
+    // dahinter (Kopie von fx::GrabScene auf Texturplatz fx::kGrabSlot,
+    // Ausschnitt rect), je nach Flächenrichtung leicht verschoben – man sieht
+    // nur eine Krümmung. cloak 0..1 blendet vom normalen Aussehen (tint,
+    // einfaches Licht) zur Krümmung über; time lässt sie leicht wabern.
+    void DrawCloaked(int id, const Matrix& world, Color tint, float cloak, Vector4 rect, float time);
+
     // Eigene Dreiecke (rlBegin(RL_TRIANGLES) ... rlEnd() mit rlNormal3f je
     // Fläche) mit derselben Beleuchtung wie die Modelle zeichnen: alles
     // zwischen BeginLit() und EndLit(). Die Farbe kommt aus rlColor4ub, es gibt
@@ -193,6 +200,11 @@ private:
     int locFlashPos_ = -1, locFlashColor_ = -1;                         // Explosionsblitze
     int locFogColor_ = -1, locFogCenter_ = -1, locFogParams_ = -1;      // Sandsturm
     int locLightTint_ = -1;                                             // Lichtfarbe
+    // Shader der Tarnung (DrawCloaked), beim ersten Bedarf übersetzt
+    Shader cloak_{};
+    bool cloakTried_ = false, cloakOk_ = false;
+    int locCloakScene_ = -1, locCloakRect_ = -1, locCloakParams_ = -1, locCloakViewPos_ = -1, locCloakLight_ = -1;
+    Vector3 camPos_{};                 // letzte Kameraposition (SetCamera), für die Tarnung
     Vector3 sun_{0.0f, -1.0f, 0.0f};   // Richtung des Sonnenlichts (Init)
     bool ready_ = false;               // Init() war erfolgreich; vorher zeichnet Draw() nichts
 };
