@@ -203,8 +203,10 @@ bool Toggle(Rectangle r, bool on, float size, bool focused);
 // Abstand, alles in Pixeln. Steuerung: Pfeiltasten oder W/S, Enter/Leertaste
 // oder Mausklick; Controller: Steuerkreuz hoch/runter wählt, A bestätigt
 // (oder klickt den Knopf unter dem Controller-Zeiger).
+// keys = false: Tastatur und Controller-Knöpfe bleiben unbeachtet (z. B.
+// während daneben ein Chat-Textfeld die Tasten bekommt).
 int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& enabled, int& selected,
-               float cx, float top, float width, float height, float gap, float textSize);
+               float cx, float top, float width, float height, float gap, float textSize, bool keys = true);
 
 // ---------------------------------------------------------------------------
 // Einzeiliges Texteingabefeld (Mehrspieler: Serveradresse, Name, Passwort).

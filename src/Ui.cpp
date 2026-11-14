@@ -457,7 +457,7 @@ bool Toggle(Rectangle r, bool on, float size, bool focused) {
 //      zweites Auslösen wäre ein Doppelklick.
 //   5. Hat sich die Auswahl geändert: kurzer Bedienton
 int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& enabled, int& selected,
-               float cx, float top, float width, float height, float gap, float textSize) {
+               float cx, float top, float width, float height, float gap, float textSize, bool keys) {
     const int n = static_cast<int>(items.size());
     auto isEnabled = [&](int i) { return i < static_cast<int>(enabled.size()) ? enabled[i] : true; };
     if (selected < 0 || selected >= n || !isEnabled(selected)) {
@@ -466,7 +466,7 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
     const int before = selected;
     // Nach unten: k = 1, 2, ... Einträge weiter, % n springt vom letzten zum
     // ersten. Gesperrte Einträge werden übersprungen.
-    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN)) {
+    if (keys && (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN))) {
         for (int k = 1; k <= n; ++k) {
             int i = (selected + k) % n;
             if (isEnabled(i)) { selected = i; break; }
@@ -474,7 +474,7 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
     }
     // Nach oben: + n * 2 hält den Wert vor dem % positiv (in C++ ist z. B.
     // -1 % 5 = -1, nicht 4).
-    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_UP)) {
+    if (keys && (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W) || PadPressed(GAMEPAD_BUTTON_LEFT_FACE_UP))) {
         for (int k = 1; k <= n; ++k) {
             int i = (selected - k + n * 2) % n;
             if (isEnabled(i)) { selected = i; break; }
@@ -492,7 +492,7 @@ int ButtonList(const std::vector<std::string>& items, const std::vector<bool>& e
         if (hover && isEnabled(i) && PointerMoved()) selected = i;
     }
     const bool padConfirm = PadPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN) && !(PadPointerActive() && anyHover);
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE) || padConfirm) {
+    if (keys && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE) || padConfirm)) {
         if (isEnabled(selected)) chosen = selected;
     }
     if (selected != before) g_audio.Play(Sfx::UiMove);

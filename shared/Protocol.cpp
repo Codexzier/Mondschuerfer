@@ -622,11 +622,15 @@ std::vector<uint8_t> Encode(const ChatMsg& m) {
     Writer w;
     Start(MsgType::Chat, w);
     w.Str(m.text);
+    w.U8(static_cast<uint8_t>(m.channel));
     return w.buf;
 }
 
 bool Decode(Reader& r, ChatMsg& m) {
     m.text = r.Str();
+    const uint8_t ch = r.U8();
+    if (ch > static_cast<uint8_t>(ChatChannel::Command)) return false;
+    m.channel = static_cast<ChatChannel>(ch);
     return r.ok();
 }
 
@@ -1552,6 +1556,7 @@ std::vector<uint8_t> Encode(const ChatLineMsg& m) {
     w.I32(m.playerId);
     w.Str(m.name);
     w.Str(m.text);
+    w.U8(static_cast<uint8_t>(m.channel));
     return w.buf;
 }
 
@@ -1559,6 +1564,9 @@ bool Decode(Reader& r, ChatLineMsg& m) {
     m.playerId = r.I32();
     m.name = r.Str();
     m.text = r.Str();
+    const uint8_t ch = r.U8();
+    if (ch > static_cast<uint8_t>(ChatChannel::Command)) return false;
+    m.channel = static_cast<ChatChannel>(ch);
     return r.ok();
 }
 

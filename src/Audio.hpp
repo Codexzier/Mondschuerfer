@@ -15,7 +15,8 @@
 //       lauter oder leiser gestellt (0 = aus).
 //     - Musik (MusicTrack, siehe MusicMix.hpp): ein Stück für die Menüs, drei
 //       für das Spiel (nacheinander im Kreis), eins für die Piraten-Mission,
-//       eins für das SG-Team am Stargate und eins für das erreichte Ziel. SetMusicTrack() sagt, welche Musik
+//       eins für das SG-Team am Stargate, eins für das Command Center und eins
+//       für das erreichte Ziel. SetMusicTrack() sagt, welche Musik
 //       gerade laufen soll, PlayGoalMusic() stößt die Zielmusik an; Update()
 //       blendet weich zwischen den Stücken über. In den Optionen lässt sich
 //       die Musik ausschalten und ihre Lautstärke einstellen.

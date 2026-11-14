@@ -100,7 +100,8 @@ public:
 
     // Chat (nur als Spieler): Nachricht schicken bzw. melden, ob die
     // Chat-Eingabe offen ist (Sprechblase am eigenen Schiff für die anderen).
-    void SendChat(const std::string& text);
+    // channel Command = Chat im Command Center.
+    void SendChat(const std::string& text, net::ChatChannel channel = net::ChatChannel::All);
     void SendChatTyping(bool typing);
 
     // SG-Teams: Rollenwahl und Command Center (param siehe net::TeamActionType)

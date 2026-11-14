@@ -22,6 +22,7 @@
 #include "CommandCenter.hpp"
 #include "Assets.hpp"
 #include "Audio.hpp"
+#include "Chat.hpp"
 #include "Effects.hpp"
 #include "Ui.hpp"
 #include "rlgl.h"
@@ -97,6 +98,13 @@ GateLook HomeLook(float t) {
     if (t < 0.0f) return GateLook{};
     if (t < cfg::GATE_DIAL) return GateLookAt(GateState::Dialing, t);
     return GateLookAt(GateState::Open, t - cfg::GATE_DIAL);
+}
+
+// Breite der Mitte zwischen linkem (24 + 440) und rechtem Feld (460 + 24),
+// höchstens 500 (bei Referenzgröße)
+float OnlineMiddleWidth() {
+    const float s = Scale();
+    return std::min(500 * s, static_cast<float>(GetScreenWidth()) - 2 * (24 * s + 460 * s) - 24 * s);
 }
 
 } // namespace
@@ -415,16 +423,23 @@ void CommandCenterScreen::OpenOnline() {
     joinTarget_ = 0;
 }
 
+Rectangle CommandCenterScreen::OnlineChatRect() {
+    const float s = Scale();
+    const float w = OnlineMiddleWidth(), h = ChatBox::Height();
+    return {static_cast<float>(GetScreenWidth()) * 0.5f - w * 0.5f, static_cast<float>(GetScreenHeight()) - 24 * s - h, w, h};
+}
+
 // Aufbau wie im Einzelspieler: links Team, Auftrag und Knöpfe, rechts die
 // Teams des Servers (Klick auf ein Team: Ziel für "Beitreten") und darunter
 // die Vorschau der gewählten Einsatzkarte, im zweiten Reiter das Scoreboard
 // aller Spieler (Tab-Taste oder RB wechselt), oben in der Mitte das Ergebnis des
-// letzten Einsatzes, unten die Anwahl. Die Anwahl beginnt, wenn der Server
+// letzten Einsatzes, unten die Anwahl über dem Chat. Die Anwahl beginnt, wenn der Server
 // sie meldet (Team im Zustand 1); die Uhr läuft dann hier weiter (Update),
 // den Einsatz startet der Server. Das Ziel wählt der Gründer ("Ziel: ..."
 // schaltet weiter wie im Einzelspieler); die anderen sehen es.
 OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const net::ScoreboardMsg& board,
-                                              const std::vector<GameMap>& maps, int myId, int sampleGoal, bool fresh) {
+                                              const std::vector<GameMap>& maps, int myId, int sampleGoal, bool fresh,
+                                              bool chatBusy) {
     const net::TeamEntry* mine = nullptr;
     for (const net::TeamEntry& t : teams.teams)
         for (const net::TeamMember& mb : t.members)
@@ -443,7 +458,7 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
 
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
-    const bool live = frames_ > 1;
+    const bool live = frames_ > 1 && !chatBusy;   // beim Tippen im Chat nur Anzeige
     const bool busy = mine && mine->state != 0;
     const bool founder = mine && !mine->members.empty() && mine->members.front().playerId == myId;
     bool allReady = true, myReady = false;
@@ -547,7 +562,7 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
     if (!hasGate) Text("Auf der Mondkarte steht kein Stargate.", x, listTop - 30 * s, 18 * s, BAD);
     else if (founder && !busy && !allReady) Text("Warte, bis alle bereit sind.", x, listTop - 30 * s, 18 * s, MUTED);
     else if (mine && !founder && !busy) Text("Der Gründer wählt Ziel und Tor.", x, listTop - 30 * s, 18 * s, MUTED);
-    int c = ButtonList(items, enabled, sel_, lp.x + pw * 0.5f, listTop, iw, bh, gap, 22 * s);
+    int c = ButtonList(items, enabled, sel_, lp.x + pw * 0.5f, listTop, iw, bh, gap, 22 * s, !chatBusy);
     if (!live) c = -1;
     OnlineCommand cmd;
     if (c >= 0) g_audio.Play(Sfx::UiConfirm);
@@ -652,7 +667,8 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
     }
 
     // --- Mitte: Ergebnis des letzten Einsatzes, Anwahl, Team unterwegs --------
-    const float midW = std::min(500 * s, W - 2 * (24 * s + 460 * s) - 24 * s);
+    // (unten in der Mitte liegt der Chat, die Anwahl steht darüber)
+    const float midW = OnlineMiddleWidth();
     if (ended_ != 0 && teams.hasResult && midW > 100 * s) {
         const Rectangle br{W * 0.5f - midW * 0.5f, top, midW, 70 * s};
         Panel(br);
@@ -664,7 +680,7 @@ OnlineCommand CommandCenterScreen::DrawOnline(const net::TeamsMsg& teams, const 
                      W * 0.5f, br.y + 42 * s, 18 * s, TEXT);
     }
     if (midW > 100 * s && (dialT_ >= 0.0f || (mine && mine->state == 2))) {
-        const Rectangle dr{W * 0.5f - midW * 0.5f, H - 110 * s, midW, 80 * s};
+        const Rectangle dr{W * 0.5f - midW * 0.5f, OnlineChatRect().y - 90 * s, midW, 80 * s};
         Panel(dr);
         if (dialT_ >= 0.0f) {
             TextCentered(dialT_ < cfg::GATE_DIAL ? "Stargate wird angewählt ..." : TextFormat("Wurmloch offen. Team SG%d, los!", mine->number),
