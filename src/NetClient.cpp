@@ -1353,7 +1353,9 @@ void NetClient::Impl::ApplyMe(const net::SnapMe& me) {
         pe.owner = ps.id;
         pe.pos = Vector3{mk.x, 0.0f, mk.z};
         pe.yaw = static_cast<float>(pe.id) * 2.1f;   // fester Blickwinkel je Person
-        pe.model = pe.id % 2 == 1 ? world.mdl.astronautA : world.mdl.astronautB;
+        // Weltraumkarte: Rettungskapseln statt Personen
+        if (world.orbit) pe.model = pe.id % 2 == 1 ? world.mdl.capsuleA : world.mdl.capsuleB;
+        else pe.model = pe.id % 2 == 1 ? world.mdl.astronautA : world.mdl.astronautB;
         world.persons.push_back(pe);
     }
     ps.cue = me.cue;
@@ -2341,11 +2343,12 @@ void NetClient::SendDockAction(net::DockActionType action, int param) {
     if (d.host) enet_host_flush(d.host);
 }
 
-void NetClient::SendChat(const std::string& text) {
+void NetClient::SendChat(const std::string& text, net::ChatChannel channel) {
     Impl& d = *impl_;
     if (d.state != NetState::Playing) return;
     net::ChatMsg m;
     m.text = text;
+    m.channel = channel;
     d.Send(net::Encode(m), true);
     if (d.host) enet_host_flush(d.host);
 }

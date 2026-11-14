@@ -1576,9 +1576,10 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
             if (st.type == StationType::Trade || (w.orbit && !w.alien && st.type == StationType::Dealer)) w.SwitchShip(*ps, m.param);
             break;
         case net::DockActionType::AcceptMission:
-            // Mini-Mission annehmen an der Handelsstation (Tab "Missionen");
-            // Art und freies Angebot prüft AcceptMission.
-            if (st.type == StationType::Trade) w.AcceptMission(*ps, m.param);
+            // Mini-Mission annehmen an der Handelsstation (Tab "Missionen"),
+            // im All beim Raumschiffsverkäufer; Art (auch: zur Karte passend)
+            // und freies Angebot prüft AcceptMission.
+            if (st.type == StationType::Trade || (w.orbit && st.type == StationType::Dealer)) w.AcceptMission(*ps, m.param);
             break;
         case net::DockActionType::SwitchMap:
             // Reiter "Karte": zur Zielkarte param (0 Mond, 1 Weltraumkarte,
@@ -1594,6 +1595,8 @@ void GameServer::HandleDockAction(Client& c, const net::DockActionMsg& m) {
 // Chat-Nachricht: prüfen, bremsen und als ChatLine an alle angemeldeten
 // Spieler schicken (auch an den Absender, der sie erst dann anzeigt).
 // Zuschauer haben keinen Namen und kein Chatfenster.
+// Kanal Command: nur aus dem Command Center und nur an die Spieler, die
+// gerade dort sind (eigenes Chatfenster im Command Center).
 void GameServer::HandleChat(Client& c, const net::ChatMsg& m) {
     if (c.role != Role::Player) return;
     c.chatting = false;   // gesendet = Eingabe zu (der Client schickt das auch noch)
@@ -1601,10 +1604,21 @@ void GameServer::HandleChat(Client& c, const net::ChatMsg& m) {
         BadPacket(c, "Chat");
         return;
     }
+    const bool command = m.channel == net::ChatChannel::Command;
+    if (command && !InCommandCenter(c)) return;   // gerade hinausgegangen: verwerfen
     const double now = Now();
     c.chatTokens = std::min(CHAT_BURST, c.chatTokens + (now - c.chatTokensAt) * CHAT_PER_SECOND);
     c.chatTokensAt = now;
     if (c.chatTokens < 1.0) {
+        if (command) {
+            // Das Command Center zeigt keine Meldungen der Welt: Hinweis als Chatzeile
+            net::ChatLineMsg note;
+            note.name = "Server";
+            note.text = "Bitte etwas langsamer schreiben.";
+            note.channel = net::ChatChannel::Command;
+            Send(c, net::Encode(note), true);
+            return;
+        }
         World& home = HomeOf(c.playerId);
         if (PlayerState* ps = home.FindPlayer(c.playerId))
             home.Notify(*ps, "Chat: bitte etwas langsamer schreiben.", Color{255, 200, 120, 255});
@@ -1615,9 +1629,19 @@ void GameServer::HandleChat(Client& c, const net::ChatMsg& m) {
     line.playerId = c.playerId;
     line.name = c.name;
     line.text = m.text;
+    line.channel = m.channel;
     const std::vector<uint8_t> bytes = net::Encode(line);
     for (auto& up : clients_)
-        if (up->role == Role::Player && !up->closing) Send(*up, bytes, true);
+        if (up->role == Role::Player && !up->closing && (!command || InCommandCenter(*up))) Send(*up, bytes, true);
+}
+
+// Im Command Center: Rolle gewählt, SG-Team, (noch) keine Figur und nicht auf
+// einer Einsatzkarte. Wer im All ist, steht nicht in world_ (dort gibt es
+// kein Command Center).
+bool GameServer::InCommandCenter(const Client& c) const {
+    if (c.role != Role::Player || c.closing || !c.roleChosen) return false;
+    const PlayerState* ps = world_.FindPlayer(c.playerId);
+    return ps && ps->role == PlayerRole::Trooper && ps->trooperId < 0 && !InstanceOf(c.playerId);
 }
 
 void GameServer::HandleChatTyping(Client& c, const net::ChatTypingMsg& m) {
@@ -2358,6 +2382,13 @@ void GameServer::EnterOrbit(Client& c, int map) {
         o.Notify(op, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
     }
     FlushEvents(c);   // Ziel, Fanfare und Meldungen von vorher kommen noch vor dem Wechsel an
+    o.Notify(op, "Willkommen im All! Beschütze die Raumstation vor Asteroiden.", Color{150, 230, 255, 255});
+    o.Notify(op, "Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
+    // Funkspruch: zum ersten Mal "Willkommen im All", nach dem Ziel im All
+    // (Kartenwechsel) "Willkommen zurück im All"
+    op.cue = op.orbitGoal ? cfg::CUE_ORBIT_RETURN : cfg::CUE_ORBIT_NEWSTART;
+    op.cueT = cfg::CUE_TIME;
+    FlushEvents(c);   // Ziel, Fanfare und Meldungen vom Mond kommen noch vor dem Wechsel an
     SendOrbitStart(c);
     SendDepositsNow(c);   // keine Kristalle im All (leere Liste)
     StoreProgress(c);
@@ -2572,12 +2603,10 @@ void GameServer::LoginPlayer(Client& c, Account* account, const std::string& nam
             home.Notify(ps, "Weltraumkarte: Punkte gibt es nur für abgeschossene Piraten. Ziel: 100.000.", Color{200, 220, 255, 255});
         else
             home.Notify(ps, "Ziel: 100.000 Ressourcenpunkte auf dem Konto.", Color{200, 220, 255, 255});
-        // Funkspruch unten rechts: neues Spiel bzw. Fortsetzen (clip_newstart/clip_return).
-        // Auf der Weltraumkarte vorerst keiner (die Clips handeln vom Mond).
-        if (!inOrbit) {
-            ps.cue = resumed || returning ? cfg::CUE_RETURN : cfg::CUE_NEWSTART;
-            ps.cueT = cfg::CUE_TIME;
-        }
+        // Funkspruch unten rechts: neues Spiel bzw. Fortsetzen (clip_newstart/clip_return),
+        // auf der Weltraumkarte "Willkommen zurück im All" (clip_orbit_return).
+        ps.cue = inOrbit ? cfg::CUE_ORBIT_RETURN : resumed || returning ? cfg::CUE_RETURN : cfg::CUE_NEWSTART;
+        ps.cueT = cfg::CUE_TIME;
     }
 
     SendWelcome(c);

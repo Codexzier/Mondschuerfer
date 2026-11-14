@@ -105,7 +105,7 @@ den **Optionen**.
 | A / D oder ← / → | Drehen |
 | Leertaste | Schießen (2 Schuss pro Sekunde) |
 | E | Scanner an / aus |
-| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person einsammeln (Mission) |
+| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person bzw. Rettungskapsel einsammeln (Mission) |
 | R | Schild reparieren (an der Handelsstation) |
 | 1 – 4 | Upgrade kaufen (in der Werft) / Schiff kaufen (beim Raumschiffsverkäufer, mit Umschalt: in Zahlung geben) |
 | 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) / Mission annehmen (Tab „Missionen“) |
@@ -243,6 +243,7 @@ abbrechen* zählt als gescheitert, *Speichern & zum Hauptmenü* verwirft einen l
 | ESC / P (Controller: Menü-Taste) | Pause mit *Weiterspielen*, *Optionen* oder *Abmelden & zum Hauptmenü* (der Server speichert dann deinen Fortschritt), zu Fuß zusätzlich *Einsatz abbrechen*. Die Welt läuft während der Pause (und in den Optionen) weiter, dein Schiff bzw. deine Figur bekommt nur keine Steuerbefehle. |
 | ESC / F im Stationsfenster (Controller: B / Y) | Abdocken |
 | Tab | im Anmeldefenster zwischen Name und Passwort wechseln; im Command Center rechts zwischen *SG-Teams* und *Scoreboard* (Controller: RB) |
+| T / Klick ins Chatfenster (im Command Center) | eigener Chat des Command Centers unten in der Mitte: Eingabe öffnen, Enter = senden, ESC = abbrechen. Die Nachrichten sehen nur die Spieler, die gerade im Command Center sind. |
 | Zuschauer: Mausrad / Ziehen / R / ESC | Zoom / Karte verschieben / ganze Karte / Zuschauen beenden (Controller: rechter Stick / A halten und linken Stick bewegen / – / B) |
 
 ---
@@ -297,6 +298,14 @@ glimmen.
   - *Konvoi verteidigen* (3.500 Punkte): drei Frachter (grün) fliegen zu einer anderen Station,
     unterwegs greifen zwei Piratenwellen an. Kommt keiner an, ist die Mission gescheitert.
   Stürzt du ab, scheitert die Mission, und das Angebot steht wieder an der Station.
+  Auf der Weltraumkarte gibt es eigene Missionen beim Raumschiffsverkäufer (Reiter *Missionen*):
+  - *Rettungskapseln bergen* (5.000 Punkte): drei treibende Kapseln (gelb) mit F aufnehmen und an
+    einem Trägerschiff abliefern.
+  - *Asteroiden abfangen* (7.500 Punkte): nach dem Abdocken kommen im Abstand von 20 Sekunden drei
+    kleinere Asteroiden (rot auf dem Radar) auf die Raumstation zu. Schlägt einer ein, ist die
+    Mission gescheitert (ein Einschlag kostet ein Zehntel der Struktur).
+  - *Versorgungsfrachter eskortieren* (10.000 Punkte): drei Frachter fliegen vom Trägerschiff zur
+    Raumstation, unterwegs greifen zwei Piratenwellen an.
 - **Kampf:** Leertaste feuert 2 Schuss pro Sekunde mit je 10 Schaden. Dein Schild hat zu Beginn
   100 Punkte: nach 10 Treffern stürzt das Schiff ab, und das Spiel ist zu Ende.
   - *Piraten* (rötlich) greifen an, sobald du in ihre Nähe kommst.
@@ -320,8 +329,9 @@ glimmen.
   wechseln (Reiter *Schiff*). Etwa jede
   Minute fliegt ein Asteroid langsam auf die Station zu (Warnung mit Himmelsrichtung, orange auf dem
   Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.
-  Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Die
-  Funksprüche mit Avatar laufen im All noch nicht.
+  Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Im All
+  gibt es eigene Mini-Missionen (siehe oben) und eigene Funksprüche: *Willkommen im All* bei der
+  Ankunft, *Willkommen zurück im All* beim Fortsetzen und nach dem Kartenwechsel.
   Explodiert die Station, stehen alle Kontostände auf 0, und nach 30 Sekunden kommt eine neue.
 - **Alien-Station:** Das Ziel im All führt mit *Weiter zur Alien-Station* auf die dritte Karte
   (Kontostand wieder 0). Im Norden liegt die Raumstation der Aliens: Besiege sie in **20 Minuten**
@@ -512,7 +522,8 @@ Die Musikstücke von **dekker187** (erstellt mit Suno) liegen in `assets/music/`
 | *Lunar Silence 01–03* | `lunar_silence_01.mp3` … `_03.mp3` | im Spiel: Einzelspiel samt Pause und Endbildschirmen, Simulation, Mehrspieler-Spiel und Zuschauen; nacheinander, nach dem dritten wieder das erste |
 | *Entering Pirate Territory* | `enteringPirateTerritory.mp3` | im Spiel, solange die eigene Mini-Mission „Piraten abschießen“ läuft (Endlosschleife, beginnt jedes Mal von vorn) |
 | *Deep Space Horizon* | `deepSpaceHorizon.mp3` | einmal, sobald man das Ziel (100.000) erreicht; danach wieder die Spielmusik |
-| *Breathing Pulse* | `breathingPulse.mp3` | als SG-Team im Command Center, in den ersten 10 Sekunden eines Einsatzes und solange ein Stargate für die Rückkehr angewählt wird oder offen ist (Endlosschleife, beginnt jedes Mal von vorn) |
+| *Breathing Pulse* | `breathingPulse.mp3` | als SG-Team in den ersten 10 Sekunden eines Einsatzes und solange ein Stargate für die Rückkehr angewählt wird oder offen ist (Endlosschleife, beginnt jedes Mal von vorn) |
+| *Lunar SG1 Team (Mondkarte)* | `lunar_sg1_team.mp3` | als SG-Team im Command Center (Endlosschleife, setzt beim nächsten Besuch an derselben Stelle fort) |
 
 Beim Wechsel zwischen den Stücken blendet die Musik weich über (das alte Stück wird in 1 s
 leiser, das neue in 1,5 s lauter). Menü- und Spielmusik, die gerade nicht laufen, werden angehalten

@@ -98,7 +98,7 @@ void WrapEntry(const std::string& prefix, const std::string& text, bool mine, fl
 
 } // namespace
 
-ChatBox::ChatBox() {
+ChatBox::ChatBox(int openKey, const char* hint) : openKey_(openKey), hint_(hint) {
     input_.maxChars = net::MAX_CHAT;
     input_.accept = net::ChatChar;
     input_.placeholder = "Nachricht (Enter senden, ESC abbrechen)";
@@ -132,10 +132,14 @@ void ChatBox::Update(bool allowed) {
             input_.text.clear();
             Close();
         }
-    } else if ((IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) && !TextInputActive()) {
+    } else if ((IsKeyPressed(openKey_) || (openKey_ == KEY_ENTER && IsKeyPressed(KEY_KP_ENTER))) && !TextInputActive()) {
         input_.focused = true;
         input_.lastEdit = GetTime();   // Cursor sofort sichtbar
         openedFrame_ = FrameIndex();
+        // Eine Buchstabentaste (T) steht auch als Zeichen in raylibs
+        // Warteschlange und käme sonst gleich als erster Buchstabe in den Text.
+        if (openKey_ != KEY_ENTER)
+            while (GetCharPressed() != 0) {}
     }
 }
 
@@ -150,9 +154,14 @@ float ChatBox::Height() { return (kPad + VISIBLE_LINES * kLineH + kGap + kInputH
 
 bool ChatBox::Draw(std::string& send) {
     const float s = Scale();
+    return Draw(send, 16 * s, static_cast<float>(GetScreenHeight()) - 16 * s, kWidth * s);
+}
+
+bool ChatBox::Draw(std::string& send, float x, float bottomY, float width) {
+    const float s = Scale();
     const float ts = kTextSize * s;
     const float h = Height();
-    rect_ = {16 * s, static_cast<float>(GetScreenHeight()) - 16 * s - h, kWidth * s, h};
+    rect_ = {x, bottomY - h, width, h};
 
     // Schwarz, halb durchsichtig; bei offener Eingabe nur zu 20 % durchsichtig.
     DrawRectangleRec(rect_, Color{0, 0, 0, static_cast<unsigned char>(Active() ? 204 : 128)});
@@ -178,7 +187,13 @@ bool ChatBox::Draw(std::string& send) {
             closedFrame_ = FrameIndex();
         }
     } else {
-        Text("[Enter] Chat", ir.x + 4 * s, ir.y + (ir.height - 16 * s) * 0.5f, 16 * s, Color{255, 255, 255, 140}, false);
+        Text(hint_, ir.x + 4 * s, ir.y + (ir.height - 16 * s) * 0.5f, 16 * s, Color{255, 255, 255, 140}, false);
+        // Command Center: Klick ins Fenster öffnet die Eingabe
+        if (openKey_ != KEY_ENTER && PointerPressed() && CheckCollisionPointRec(PointerPos(), rect_)) {
+            input_.focused = true;
+            input_.lastEdit = GetTime();
+            openedFrame_ = FrameIndex();
+        }
     }
 
     // --- Verlauf ----------------------------------------------------------------
