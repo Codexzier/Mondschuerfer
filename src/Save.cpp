@@ -14,6 +14,8 @@
 //                                         (im All: die Karte für den Wechsel zurück auf den Mond)
 //   orbit <Strukturpunkte> <Modell 0|1>   Weltraumkarte der Piloten (fehlt auf dem Mond); 0 Punkte = neue Station
 //   orbitgoal 1                           im All schon einmal 100.000: Kartenwechsel frei (fehlt sonst)
+//   alien <Schild> <Zeit s>               Alien-Station, dritte Karte der Piloten (statt orbit); 0 Schild = neue Station
+//   aliengoal 1                           Alien-Station schon einmal besiegt: Wechsel zu allen drei Karten frei
 //   balance <Kontostand>
 //   delivered <insgesamt abgeliefert>     bestimmt die Ausbaustufe der Stationen
 //   upgrades <Tempo> <Panzerung> <Waffe> <Laderaum> <Kanonen>   Stufen 0..5 (Kanonen 0..2; fehlt in alten Spielständen)
@@ -131,12 +133,14 @@ static bool WriteSaveFile(const std::string& file, const World& w) {
     f << kMagic << ' ' << kVersion << '\n';
     f << "seed " << w.seed << '\n';
     if (!w.mapFile.empty()) f << "map " << w.mapFile << '\n';
-    if (w.orbit) f << "orbit " << (w.spaceStations.empty() ? 0.0f : w.stationHp) << ' ' << w.stationVariant << '\n';
+    if (w.alien) f << "alien " << (w.spaceStations.empty() ? 0.0f : w.stationHp) << ' ' << w.alienT << '\n';
+    else if (w.orbit) f << "orbit " << (w.spaceStations.empty() ? 0.0f : w.stationHp) << ' ' << w.stationVariant << '\n';
     f << "balance " << me.balance << '\n';
     f << "delivered " << w.totalDelivered << '\n';
     f << "upgrades " << me.upgrades[0] << ' ' << me.upgrades[1] << ' ' << me.upgrades[2] << ' ' << me.upgrades[3] << ' ' << me.upgrades[4] << '\n';
     f << "lives " << me.lives << '\n';
     if (me.orbitGoal) f << "orbitgoal 1\n";
+    if (me.alienGoal) f << "aliengoal 1\n";
     // Schiffstyp (vor "player", denn dort werden die Schiffswerte berechnet)
     // und geparkte Schiffe: hangar Typ Stufe Stufe Stufe Stufe Stufe Schild
     f << "shiptype " << me.shipType << '\n';
@@ -249,7 +253,7 @@ bool LoadGame(World& w) {
     std::getline(f, line);
     unsigned int seed = 1;
     std::string mapFile;
-    bool orbit = false;
+    bool orbit = false, alien = false;   // alien: Alien-Station (gilt auch als orbit)
     // Erst Seed und Karte lesen, damit die Mondoberfläche identisch erzeugt wird
     std::streampos start = f.tellg();
     while (std::getline(f, line)) {
@@ -259,11 +263,13 @@ bool LoadGame(World& w) {
         if (key == "seed") ls >> seed;
         else if (key == "map") ls >> mapFile;
         else if (key == "orbit") orbit = true;
+        else if (key == "alien") orbit = alien = true;
     }
     // Ab hier wird w verändert. NewGame setzt die Welt komplett zurück
     // (*this = World{}), also sind auch Wracks und Geschosse leer.
     // Weltraumkarte der Piloten: deren Kulisse statt der Mondoberfläche.
-    if (orbit) w.NewOrbit(seed, 0);
+    if (alien) w.NewAlien(seed, 0);
+    else if (orbit) w.NewOrbit(seed, 0);
     else w.NewGame(seed, false);
     // Eigene Karte wieder einsetzen. Wurde die Datei inzwischen gelöscht,
     // geht es mit der Zufallskarte weiter (die Kulisse hat keinen Einfluss
@@ -293,6 +299,16 @@ bool LoadGame(World& w) {
         ls >> key;
         if (key == "balance") ls >> me.balance;
         else if (key == "orbitgoal") { int v = 0; ls >> v; me.orbitGoal = v != 0; }
+        else if (key == "aliengoal") { int v = 0; ls >> v; me.alienGoal = v != 0; }
+        else if (key == "alien") {
+            // Neue Station, dann Schild und Zeit wie gespeichert (0 Schild:
+            // war gerade besiegt, es geht mit einer neuen weiter)
+            float hp = 0.0f, t = 0.0f;
+            ls >> hp >> t;
+            w.PlaceAlienStation();
+            if (hp > 0.0f) w.stationHp = std::min(hp, w.stationMaxHp);
+            if (t > 0.0f) w.alienT = std::min(t, cfg::ALIEN_TIME_LIMIT);
+        }
         else if (key == "orbit") {
             // Station mit dem gespeicherten Modell; war sie gerade zerstört
             // (0 Punkte), kommt gleich die neue.

@@ -32,8 +32,8 @@ raylib 5.5 wird beim ersten Laden des Projekts automatisch von GitHub geladen un
    Visual Studio (MSVC) funktioniert ebenfalls.
 3. Warten, bis CMake fertig ist, dann die Konfiguration **Mondschuerfer** starten (▶).
 
-Die `.exe` ist statisch gelinkt und läuft auch außerhalb von CLion, solange der Ordner
-`assets` daneben liegt (wird beim Bauen automatisch kopiert). Bei MinGW-Toolchains, die
+Die `.exe` ist statisch gelinkt und läuft auch außerhalb von CLion, solange die Datei
+`assets.pak` daneben liegt (wird beim Bauen automatisch erzeugt, siehe „Assets verpacken“). Bei MinGW-Toolchains, die
 keinen vollständig statischen Link erlauben (z. B. die mit CLion mitgelieferte GCC 15),
 werden zusätzlich `libwinpthread-1.dll` und `libgcc_s_seh-1.dll` neben die `.exe` kopiert.
 Diese gehören dann beim Weitergeben dazu.
@@ -70,6 +70,23 @@ Die Netzwerkbibliothek **ENet** und der Webserver **cpp-httplib** liegen im Proj
 `third_party/` und werden mitgebaut; dafür ist kein Download nötig. Heruntergeladen wird nur
 raylib für das Spiel (falls es nicht installiert ist).
 
+### Assets verpacken (assets.pak)
+
+Beim Bauen packt das Werkzeug `PackAssets` (`tools/PackAssets.cpp`) den Asset-Ordner (ohne
+`NewAssets/`) in **eine verschlüsselte Datei `assets.pak`** neben dem Spiel. Weitergegeben
+werden nur Spiel und `assets.pak`; ein Ordner `assets` aus älteren Builds kann weg. Fehlt
+`assets.pak`, lädt das Spiel wie früher aus dem Ordner `assets` (zum Entwickeln).
+
+| Option | Standard | Bedeutung |
+|---|---|---|
+| `MONDSCHUERFER_ASSET_DIR` | `assets/` im Projekt | Ordner, der gepackt wird. Lizenzierte Assets gehören **nicht** in das öffentliche Repo, sondern in einen eigenen Ordner. |
+| `MONDSCHUERFER_ASSET_KEY` | `assets.key` im Projekt | Schlüsseldatei, beliebiger Inhalt, z. B. `openssl rand -hex 32 > assets.key`. Steht in `.gitignore`, **nie einchecken**. Nach dem Anlegen CMake neu laden. Fehlt sie, nimmt der Build einen öffentlich bekannten Testschlüssel und warnt. |
+
+Für Releases über GitHub Actions den Schlüssel als Repository-Secret `ASSETS_KEY` hinterlegen.
+Grenze: Der Schlüssel steckt im Spiel. Das Paket schützt gegen Durchklicken und
+Entpackprogramme, nicht gegen gezielte Analyse; der eigentliche Schutz ist die Lizenz
+(Einzelheiten in `src/AssetPack.hpp`).
+
 ### Mehrspieler-Server ohne Docker bauen
 
 Der Server braucht nur einen C++17-Compiler und CMake (≥ 3.16), kein raylib und kein Internet:
@@ -105,7 +122,7 @@ den **Optionen**.
 | A / D oder ← / → | Drehen |
 | Leertaste | Schießen (2 Schuss pro Sekunde) |
 | E | Scanner an / aus |
-| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person einsammeln (Mission) |
+| F | Abbauen (an Lagerstätte oder Wrack) / Andocken (an Station) / Person bzw. Rettungskapsel einsammeln (Mission) |
 | R | Schild reparieren (an der Handelsstation) |
 | 1 – 4 | Upgrade kaufen (in der Werft) / Schiff kaufen (beim Raumschiffsverkäufer, mit Umschalt: in Zahlung geben) |
 | 1 – 3 | Schiff wechseln (Handelsstation, Tab „Schiff“) / Mission annehmen (Tab „Missionen“) |
@@ -298,6 +315,14 @@ glimmen.
   - *Konvoi verteidigen* (3.500 Punkte): drei Frachter (grün) fliegen zu einer anderen Station,
     unterwegs greifen zwei Piratenwellen an. Kommt keiner an, ist die Mission gescheitert.
   Stürzt du ab, scheitert die Mission, und das Angebot steht wieder an der Station.
+  Auf der Weltraumkarte gibt es eigene Missionen beim Raumschiffsverkäufer (Reiter *Missionen*):
+  - *Rettungskapseln bergen* (5.000 Punkte): drei treibende Kapseln (gelb) mit F aufnehmen und an
+    einem Trägerschiff abliefern.
+  - *Asteroiden abfangen* (7.500 Punkte): nach dem Abdocken kommen im Abstand von 20 Sekunden drei
+    kleinere Asteroiden (rot auf dem Radar) auf die Raumstation zu. Schlägt einer ein, ist die
+    Mission gescheitert (ein Einschlag kostet ein Zehntel der Struktur).
+  - *Versorgungsfrachter eskortieren* (10.000 Punkte): drei Frachter fliegen vom Trägerschiff zur
+    Raumstation, unterwegs greifen zwei Piratenwellen an.
 - **Kampf:** Leertaste feuert 2 Schuss pro Sekunde mit je 10 Schaden. Dein Schild hat zu Beginn
   100 Punkte: nach 10 Treffern stürzt das Schiff ab, und das Spiel ist zu Ende.
   - *Piraten* (rötlich) greifen an, sobald du in ihre Nähe kommst.
@@ -321,14 +346,25 @@ glimmen.
   wechseln (Reiter *Schiff*). Etwa jede
   Minute fliegt ein Asteroid langsam auf die Station zu (Warnung mit Himmelsrichtung, orange auf dem
   Radar). Schieß ihn ab, bevor er einschlägt: Jeder Einschlag kostet ein Viertel der Struktur.
-  Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Die
-  Funksprüche mit Avatar laufen im All noch nicht.
+  Berührst du ihn mit deinem Schiff, verliert es je Sekunde ein Zehntel seines Schilds. Im All
+  gibt es eigene Mini-Missionen (siehe oben) und eigene Funksprüche: *Willkommen im All* bei der
+  Ankunft, *Willkommen zurück im All* beim Fortsetzen und nach dem Kartenwechsel.
   Explodiert die Station, stehen alle Kontostände auf 0, und nach 30 Sekunden kommt eine neue.
-  Die nächste Karte folgt später; bis dahin beginnt nach dem Ziel eine neue Runde im All.
-  Ab dem ersten Ziel im All ist der **Kartenwechsel** frei: Reiter *Karte* an der Handelsstation
-  (Mond) bzw. an Werft und Raumschiffsverkäufer (Trägerschiffe). Der Kontostand gilt für beide Karten
-  und bleibt beim Wechsel; das Ziel auf dem Mond bringt dann ebenfalls eine neue Runde statt des
-  Sprungs ins All. *Fortsetzen* führt auf die Karte, auf der du zuletzt warst.
+- **Alien-Station:** Das Ziel im All führt mit *Weiter zur Alien-Station* auf die dritte Karte
+  (Kontostand wieder 0). Im Norden liegt die Raumstation der Aliens: Besiege sie in **20 Minuten**
+  (Schild und Restzeit oben in der Mitte), sonst repariert sie sich ganz und die Zeit beginnt von
+  vorn. In ihrer Nähe schießen ihre Geschütze. Die Alien-Schiffe starten an der Station und erholen
+  sich, wenn sie 5 Sekunden nicht getroffen werden. **Tarnschiffe** (Typ 2) sieht man nur als leichte
+  Krümmung des Bildes, auch nicht auf dem Radar; kurz nach einem Schuss oder Treffer tauchen sie auf.
+  Im Süden liegt nur ein Trägerschiff: reparieren (Reiter *Schiff*) und Kartenwechsel (Reiter
+  *Karte*), kein Schiffswechsel. Die besiegte Station bringt 100.000 Punkte, aufgeteilt nach dem
+  Schaden; nach einer Minute kommt eine neue.
+  Ab dem ersten Ziel im All ist der **Kartenwechsel** zwischen Mond und All frei: Reiter *Karte* an der
+  Handelsstation (Mond) bzw. an den Trägerschiffen ([1]/[2] für die beiden anderen Karten). Zur
+  Alien-Station und von ihr weg geht es so, sobald du sie einmal besiegt hast; bis dahin führt das
+  Ziel im All wieder dorthin. Der Kontostand gilt für alle Karten und bleibt beim Wechsel; das Ziel
+  auf dem Mond bringt dann ebenfalls eine neue Runde statt des Sprungs ins All. *Fortsetzen* führt
+  auf die Karte, auf der du zuletzt warst.
 - **Fortsetzen:** Das Spiel speichert automatisch beim Andocken, nach jedem SG-Einsatz und beim Schließen des Fensters,
   außerdem über *Pause → Speichern & zum Hauptmenü*. Der Spielstand liegt als
   `mondschuerfer_spielstand.txt` neben der ausführbaren Datei. Nach einem Absturz wird er gelöscht.
@@ -434,7 +470,9 @@ Spiel ein eigenes Passwort, das du sonst nirgends benutzt.
   Piratenabschüsse bringen Punkte, Asteroiden abschießen, die Raumstation schützen). Explodiert die
   Station, stehen die Kontostände **aller** Piloten im All auf 0. Wer sich im All abmeldet, kommt
   dort wieder an. Sind alle Leben verbraucht, beginnt der Fortschritt von vorn auf dem Mond.
-  Den Kartenwechsel (Reiter *Karte*) gibt es wie im Einzelspieler ab dem ersten Ziel im All.
+  Den Kartenwechsel (Reiter *Karte*) gibt es wie im Einzelspieler ab dem ersten Ziel im All. Das Ziel im
+  All führt alle, die die Alien-Station noch nicht besiegt haben, auf eine gemeinsame Alien-Station;
+  ihr Sieg gilt für alle Piloten dort.
 - Was alle zusammen abliefern, lässt die Handelsstationen wachsen.
 - **SG-Teams:** Im Command Center gründest du ein Team (SG1, SG2 …, bis zu 4 Spieler) oder trittst
   einem bei. Der Gründer wählt das **Ziel** (*Mondkarte (gemeinsam)* oder eine Einsatzkarte, die der
@@ -659,6 +697,7 @@ Mondschuerfer/
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
+│   ├── AssetPack.cpp/.hpp Asset-Paket assets.pak: Aufbau, Verschlüsselung, Lesen
 │   ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Musik, Zuordnung Ereignis -> Datei
 │   ├── ClipPlayer.cpp/.hpp Funkspruch-Clips der Missionen (assets/clips, MPEG-1)
 │   ├── MusicMix.hpp      Überblenden der Musik (reine Rechnung, ohne raylib)
@@ -674,6 +713,7 @@ Mondschuerfer/
 │   ├── web/              Verwaltungs-Webseite (index.html, app.js, style.css)
 │   ├── Dockerfile        Container-Image
 │   └── Caddyfile         optionaler HTTPS-Vorbau für die Webseite
+├── tools/PackAssets.cpp   Werkzeug: packt den Asset-Ordner beim Bauen in assets.pak
 ├── third_party/          Fremde Bibliotheken im Projekt (siehe third_party/README.md)
 │   ├── enet/             ENet 1.3.18 (Netzwerk über UDP)
 │   ├── httplib/          cpp-httplib 0.22.0 (Webserver der Verwaltungsseite)

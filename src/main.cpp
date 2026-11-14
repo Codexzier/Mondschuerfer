@@ -402,11 +402,9 @@ private:
     // gesperrt und ein Fehlerton kommt.
     void Continue() {
         if (LoadGame(world_)) {
-            // Auf der Weltraumkarte vorerst kein Funkspruch (die Clips handeln vom Mond)
-            if (!world_.orbit) {
-                world_.Me().cue = cfg::CUE_RETURN;
-                world_.Me().cueT = cfg::CUE_TIME;
-            }
+            // Auf der Weltraumkarte der eigene Funkspruch "Willkommen zurück im All"
+            world_.Me().cue = world_.orbit ? cfg::CUE_ORBIT_RETURN : cfg::CUE_RETURN;
+            world_.Me().cueT = cfg::CUE_TIME;
             controls_.Reset();
             screen_ = Screen::Playing;
             camTarget_ = world_.Player().pos;
@@ -426,6 +424,27 @@ private:
     void EnterOrbit(bool keepBalance = false) {
         auto next = std::make_unique<World>();
         next->NewOrbit(static_cast<unsigned int>(std::time(nullptr)), world_.totalDelivered);
+        next->CarryPilot(next->Me(), world_.Me(), keepBalance);
+        next->mapFile = world_.mapFile;
+        // Funkspruch im All: zum ersten Mal "Willkommen im All", nach dem Ziel
+        // im All (Kartenwechsel frei) "Willkommen zurück im All"
+        next->Me().cue = next->Me().orbitGoal ? cfg::CUE_ORBIT_RETURN : cfg::CUE_ORBIT_NEWSTART;
+        next->Me().cueT = cfg::CUE_TIME;
+        world_ = std::move(*next);
+        SaveGame(world_);
+        controls_.Reset();
+        screen_ = Screen::Playing;
+        camTarget_ = world_.Player().pos;
+        endHandled_ = false;
+        dockFrames_ = 0;
+    }
+
+    // Ziel auf der Weltraumkarte erreicht, "Weiter zur Alien-Station": die
+    // dritte Karte der Piloten (World::NewAlien), sonst wie EnterOrbit.
+    // keepBalance: Kartenwechsel am Trägerschiff (Reiter "Karte").
+    void EnterAlien(bool keepBalance = false) {
+        auto next = std::make_unique<World>();
+        next->NewAlien(static_cast<unsigned int>(std::time(nullptr)), world_.totalDelivered);
         next->CarryPilot(next->Me(), world_.Me(), keepBalance);
         next->mapFile = world_.mapFile;
         world_ = std::move(*next);
@@ -825,7 +844,7 @@ private:
         if (screen_ == Screen::Playing || screen_ == Screen::Paused ||
             (screen_ == Screen::Options && optionsReturn_ == Screen::Paused)) {
             const PlayerState& me = world_.Me();
-            if (me.cueT > 0.0f && !world_.orbit) cue = me.cue;   // im All vorerst keine Funksprüche
+            if (me.cueT > 0.0f && cfg::CueOnOrbit(me.cue) == world_.orbit) cue = me.cue;   // nur Funksprüche dieser Karte
             showClip = screen_ == Screen::Playing && me.dockedAt < 0;
         }
         g_clip.Update(dt, cue, showClip);
@@ -1109,7 +1128,10 @@ private:
     void DrawPlaying() {
         if (world_.outcome == Outcome::Won) {
             DrawHud(world_, cam_, false);
-            if (DrawVictory(world_, true)) EnterOrbit();
+            if (DrawVictory(world_, true)) {
+                if (world_.orbit) EnterAlien();   // Ziel im All: weiter zur Alien-Station
+                else EnterOrbit();
+            }
             return;
         }
         if (world_.outcome == Outcome::Dead) {
@@ -1140,11 +1162,13 @@ private:
                 world_.SetRole(world_.Me(), PlayerRole::Trooper);
                 OpenCommand();
             }
-            // Reiter "Karte": Mond <-> Weltraumkarte (ersetzt die Welt, daher zuletzt)
-            else if (req.switchMap && world_.CanSwitchMap(world_.Me())) {
+            // Reiter "Karte": Mond, Weltraumkarte oder Alien-Station (ersetzt
+            // die Welt, daher zuletzt)
+            else if (req.switchMap >= 0 && world_.CanSwitchMap(world_.Me(), req.switchMap)) {
                 g_audio.Play(Sfx::UiConfirm);
-                if (world_.orbit) EnterMoon();
-                else EnterOrbit(true);
+                if (req.switchMap == 0) EnterMoon();
+                else if (req.switchMap == 1) EnterOrbit(true);
+                else EnterAlien(true);
             }
         }
     }
@@ -1423,10 +1447,9 @@ private:
 // damit jeder float exakt wieder eingelesen wird; so rechnen Spiel und Server
 // mit genau denselben Werten wie beim Laden der Modelle.
 static void DumpModelBounds() {
-    FilePathList files = LoadDirectoryFilesEx((g_assets.AssetDir() + "models").c_str(), ".glb", false);
     std::vector<std::string> names;
-    for (unsigned i = 0; i < files.count; ++i) names.push_back(GetFileNameWithoutExt(files.paths[i]));
-    UnloadDirectoryFiles(files);
+    for (const std::string& file : ListAssetFiles(g_assets.AssetDir() + "models/", ".glb"))
+        names.push_back(GetFileNameWithoutExt(file.c_str()));
     std::sort(names.begin(), names.end());
     auto num = [](float v) {
         std::string s = TextFormat("%.9g", v);
@@ -1529,14 +1552,14 @@ int main(int argc, char** argv) {
     rlSetClipPlanes(0.5, 2500.0); // bessere Tiefengenauigkeit
 
     // Modelle, Texturen und Shader laden (braucht den OpenGL-Kontext, also
-    // nach InitWindow). Fehlt der Ordner "assets", statt abzustürzen einen
+    // nach InitWindow). Fehlen assets.pak und der Ordner "assets", statt abzustürzen einen
     // Hinweis im Fenster zeigen, bis es geschlossen wird.
     if (!g_assets.Init()) {
         while (!WindowShouldClose()) {
             BeginDrawing();
             ClearBackground(Color{20, 22, 30, 255});
             DrawText("Assets nicht gefunden!", 40, 40, 40, RED);
-            DrawText("Der Ordner 'assets' (mit models/*.glb aus dem Kenney Space Kit)", 40, 100, 20, RAYWHITE);
+            DrawText("Die Datei 'assets.pak' oder der Ordner 'assets' (mit models/*.glb)", 40, 100, 20, RAYWHITE);
             DrawText("muss neben der ausführbaren Datei liegen.", 40, 130, 20, RAYWHITE);
             EndDrawing();
         }

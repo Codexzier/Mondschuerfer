@@ -993,7 +993,7 @@ void MultiplayerScreen::UpdateAudio(float dt) {
         const Ship& p = w.Player();
         const PlayerState& me = w.Me();
         // Die Welt läuft im Mehrspieler auch in der Pause weiter, der Clip auch.
-        if (me.cueT > 0.0f && !w.orbit) cue = me.cue;   // im All vorerst keine Funksprüche
+        if (me.cueT > 0.0f && cfg::CueOnOrbit(me.cue) == w.orbit) cue = me.cue;   // nur Funksprüche dieser Karte
         showClip = me.dockedAt < 0;
         if (!paused_ && w.PlayerAlive() && !p.hidden && me.dockedAt < 0) {
             loops.engine = 1.0f;
@@ -1395,7 +1395,8 @@ void MultiplayerScreen::DrawPlaying() {
         if (req.buyShip >= 0)
             net_.SendDockAction(net::DockActionType::BuyShip, static_cast<uint8_t>(req.buyShip | (req.tradeIn ? 0x80 : 0)));
         if (req.switchShip >= 0) net_.SendDockAction(net::DockActionType::SwitchShip, static_cast<uint8_t>(req.switchShip));
-        if (req.switchMap) net_.SendDockAction(net::DockActionType::SwitchMap);
+        // SwitchMap: Zielkarte (0 Mond, 1 All, 2 Alien-Station)
+        if (req.switchMap >= 0) net_.SendDockAction(net::DockActionType::SwitchMap, static_cast<uint8_t>(req.switchMap));
         if (req.acceptMission >= 0)
             net_.SendDockAction(net::DockActionType::AcceptMission, static_cast<uint8_t>(req.acceptMission));
         if (req.undock) {
@@ -1802,7 +1803,8 @@ void MultiplayerScreen::DrawSpectatorMarkers(const World& w) {
     // Erst Gegner und Händler, zuletzt die Spieler (sollen obenauf liegen)
     for (int pass = 0; pass < 2; ++pass) {
         for (const Ship& sh : w.ships) {
-            if (sh.dead || sh.hidden || &sh == &w.Player()) continue;
+            // Getarnte Alien-Schiffe (Alien-Station) auch hier nicht zeigen
+            if (sh.dead || sh.hidden || &sh == &w.Player() || World::Cloaked(sh)) continue;
             const bool isPlayer = sh.playerId >= 0 || sh.kind == ShipKind::Player;
             if (isPlayer != (pass == 1)) continue;
             Vector2 p = GetWorldToScreen(sh.pos, cam_);

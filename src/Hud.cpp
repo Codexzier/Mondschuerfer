@@ -196,7 +196,7 @@ void StationLabel(const World& w, const Camera3D& cam, int idx, bool edgeArrow) 
         // Der Text steht 34 px vom Pfeil Richtung Bildmitte, damit er nicht
         // über den Bildrand hinausragt.
         int dist = static_cast<int>(Dist2D(w.Player().pos, st.pos));
-        std::string t = TextFormat("%s %d m", trade ? "Handel" : (st.type == StationType::Shipyard ? "Werft" : "Schiffe"), dist);
+        std::string t = TextFormat("%s %d m", trade ? "Handel" : (st.type == StationType::Shipyard ? "Werft" : w.alien ? "Träger" : "Schiffe"), dist);
         Vector2 tp = Vector2Subtract(e, Vector2Scale(Vector2Normalize(d), 34 * s));
         TextCentered(t, tp.x, tp.y - 8 * s, 18 * s, col);
     }
@@ -252,11 +252,12 @@ void Minimap(const World& w) {
         DrawRectangleV({m.x - 5 * s, m.y - 5 * s}, {10 * s, 10 * s}, c);
         DrawRectangleLinesEx({m.x - 7 * s, m.y - 7 * s, 14 * s, 14 * s}, 1, c);
     }
-    // Weltraumkarte der Piloten: Raumstation (Kreis in ihrer Größe) und
-    // Asteroiden (orange, pulsierend, auch außerhalb des Radarkreises)
+    // Weltraumkarte der Piloten: Raumstation (Kreis in ihrer Größe, die
+    // Alien-Station violett) und Asteroiden (orange, pulsierend, auch
+    // außerhalb des Radarkreises)
     const float pulse = 0.5f + 0.5f * sinf(w.time * 5.0f);
     for (const SpaceStation& st : w.spaceStations)
-        DrawCircleLinesV(map(st.pos), st.r / (2 * cfg::WORLD_HALF) * r.width, Color{110, 215, 225, 220});
+        DrawCircleLinesV(map(st.pos), st.r / (2 * cfg::WORLD_HALF) * r.width, w.alien ? Color{215, 140, 255, 220} : Color{110, 215, 225, 220});
     for (const Asteroid& a : w.asteroids) {
         if (a.dead) continue;
         const Vector2 m = map(a.pos);
@@ -267,7 +268,8 @@ void Minimap(const World& w) {
         // Das eigene Schiff zeichnet unten der weiße Pfeil. (Früher wurde hier jedes
         // Spielerschiff übersprungen – im Mehrspieler fehlten dadurch die anderen
         // Spieler; im Einzelspieler gibt es nur das eigene, dort ändert sich nichts.)
-        if (sh.dead || sh.hidden || &sh == &p) continue;
+        // Getarnte Alien-Schiffe (Alien-Station) fehlen auf dem Radar
+        if (sh.dead || sh.hidden || &sh == &p || World::Cloaked(sh)) continue;
         if (Dist2D(sh.pos, p.pos) > 90.0f) continue;
         Vector2 m = map(sh.pos);
         // Rot: Piraten und Händler/Miner, die man angegriffen hat (sie wehren
@@ -349,7 +351,12 @@ std::string MissionProgress(const Mission& m) {
             return m.progress >= m.goal ? std::string("Alle an Bord: zur Handelsstation!")
                                         : TextFormat("Personen %d / %d", m.progress, m.goal);
         case MissionType::Pirates: return TextFormat("Abschüsse %d / %d", m.progress, m.goal);
-        case MissionType::Convoy: return TextFormat("Frachter unterwegs %d, angekommen %d", m.alive, m.progress);
+        case MissionType::Convoy:
+        case MissionType::Supply: return TextFormat("Frachter unterwegs %d, angekommen %d", m.alive, m.progress);
+        case MissionType::Capsules:
+            return m.progress >= m.goal ? std::string("Alle an Bord: zum Trägerschiff!")
+                                        : TextFormat("Kapseln %d / %d", m.progress, m.goal);
+        case MissionType::Asteroids: return TextFormat("Abgefangen %d / %d", m.progress, m.goal);
     }
     return std::string();
 }
@@ -737,6 +744,7 @@ static void DrawTrooperHud(const World& w, const Trooper& t, const Camera3D& cam
 // Weltraumkarte der Piloten (World::orbit): oben in der Mitte der Zustand
 // der Raumstation (Strukturpunkte, Abstand des nächsten Asteroiden oder Zeit
 // bis zur neuen Station), über jedem Asteroiden im Bild sein Trefferbalken.
+// Alien-Station (World::alien): ihr Schild und die verbleibende Zeit.
 static void DrawOrbitHud(const World& w, const Camera3D& cam) {
     const float s = Scale();
     const float W = static_cast<float>(GetScreenWidth()), H = static_cast<float>(GetScreenHeight());
@@ -757,6 +765,23 @@ static void DrawOrbitHud(const World& w, const Camera3D& cam) {
     float y = r.y + 10 * s;
     const bool up = !w.spaceStations.empty() && w.stationMaxHp > 0.0f;
     const float k = up ? w.stationHp / w.stationMaxHp : 0.0f;
+    if (w.alien) {
+        const Color alienCol{215, 140, 255, 255};
+        Text("ALIEN-STATION", x, y, 18 * s, alienCol);
+        TextRight(up ? TextFormat("Schild %d %%", static_cast<int>(ceilf(k * 100.0f))) : "besiegt", x + bw, y, 18 * s, up ? TEXT : GOOD);
+        y += 24 * s;
+        Bar({x, y, bw, 8 * s}, k, alienCol);
+        y += 16 * s;
+        if (!up) {
+            TextCentered(TextFormat("Neue Alien-Station in %.0f s", std::max(0.0f, ceilf(w.stationDownT))), W * 0.5f, y, 18 * s, MUTED);
+        } else {
+            // Gesamtbedingung der Karte: in der Zeit besiegen, die letzte Minute blinkt rot
+            const int t = static_cast<int>(ceilf(std::max(0.0f, w.alienT)));
+            TextCentered(TextFormat("Besiegen in %d:%02d", t / 60, t % 60), W * 0.5f, y, 18 * s,
+                         t <= 60 ? Fade(BAD, 0.6f + 0.4f * sinf(w.time * 6.0f)) : TEXT);
+        }
+        return;
+    }
     Text("RAUMSTATION", x, y, 18 * s, MUTED);
     TextRight(up ? TextFormat("Struktur %d %%", static_cast<int>(ceilf(k * 100.0f))) : "zerstört", x + bw, y, 18 * s,
               k < 0.3f ? BAD : TEXT);
@@ -905,11 +930,12 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
 
     // --- Laufende Mission oben in der Mitte -------------------------------------------
     // Name und Fortschritt ("Personen 2 / 3", "Abschüsse 1 / 3" ...) in einem
-    // schmalen Panel über den Meldungen.
+    // schmalen Panel über den Meldungen (Weltraumkarte: unter dem Zustand der
+    // Raumstation).
     if (const Mission* mi = w.FindMission(me.mission)) {
         const std::string t = std::string("MISSION  ") + cfg::MISSIONS[static_cast<int>(mi->type)].name + "    " + MissionProgress(*mi);
         const float tw = Width(t, 22 * s) + 40 * s;
-        const Rectangle mr{W * 0.5f - tw * 0.5f, 16 * s, tw, 42 * s};
+        const Rectangle mr{W * 0.5f - tw * 0.5f, (w.orbit ? 100 : 16) * s, tw, 42 * s};
         Panel(mr);
         TextCentered(t, W * 0.5f, mr.y + 10 * s, 22 * s, Color{255, 230, 120, 255});
     }
@@ -949,7 +975,7 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
                                               : key + " Andocken: Handelsstation";
             else if (kind == 4) hint = key + " Andocken: Werft (Upgrades)";
             else if (kind == 5) hint = key + " Andocken: Raumschiffsverkäufer";
-            else if (kind == 6) { hint = key + " Person einsammeln"; hc = Color{255, 230, 120, 255}; }
+            else if (kind == 6) { hint = key + (w.orbit ? " Rettungskapsel bergen" : " Person einsammeln"); hc = Color{255, 230, 120, 255}; }
             else if (kind == 1 || kind == 2) {
                 // InteractTarget liefert nur die ID; die Restmenge suchen wir
                 // in der passenden Liste (Lagerstätten bzw. Wracks).
@@ -983,11 +1009,12 @@ void DrawHud(const World& w, const Camera3D& cam, bool simulation) {
     // da. Sind die Untertitel in den Optionen aus, bleibt nur der Clip mit
     // Überschrift (ohne Clip dann gar nichts). Die Restzeit läuft nur außerhalb
     // der Station (World::Update), angedockt wird er nicht gezeigt. Die
-    // letzten 0,6 s blendet er aus. Auf der Weltraumkarte gibt es vorerst
-    // keine Funksprüche (die Clips handeln vom Mond).
+    // letzten 0,6 s blendet er aus. Jede Karte zeigt nur ihre eigenen
+    // Funksprüche (cfg::CueOnOrbit: Mond-Clips nicht im All und umgekehrt).
     const Texture2D* clip = g_clip.Frame(me.cue);
     const bool subs = g_clientConfig.subtitles;
-    if (!w.orbit && me.cue >= 0 && me.cue < cfg::CUE_COUNT && me.cueT > 0.0f && me.dockedAt < 0 && (clip || subs)) {
+    if (cfg::CueOnOrbit(me.cue) == w.orbit && me.cue >= 0 && me.cue < cfg::CUE_COUNT && me.cueT > 0.0f && me.dockedAt < 0 &&
+        (clip || subs)) {
         const cfg::CueDef def = cfg::CueInfo(me.cue);
         const std::string title = std::string("FUNKSPRUCH  ") + def.name;
         const float a = std::clamp(me.cueT / 0.6f, 0.0f, 1.0f);
@@ -1068,42 +1095,57 @@ static float DockTabs(const char* const* names, int count, int& tab, float x, fl
     return 58 * s;
 }
 
-// Reiter "Karte": Wechsel Mond <-> Weltraumkarte (World::CanSwitchMap). Frei,
-// sobald man auf beiden Karten je einmal 100.000 erreicht hat; vorher steht
-// hier, was noch fehlt. Kontostand, Aufrüstungen, Schiffe und Leben kommen mit.
+// Reiter "Karte": Wechsel zwischen Mond, Weltraumkarte und Alien-Station
+// (World::CanSwitchMap). Mond <-> All: frei, sobald man auf beiden Karten je
+// einmal 100.000 erreicht hat; zur Alien-Station und von ihr weg: frei, sobald
+// man sie einmal besiegt hat. Vorher steht hier, was noch fehlt. Kontostand,
+// Aufrüstungen, Schiffe und Leben kommen mit. Je Zielkarte ein Knopf [1]/[2].
 static void DrawMapTab(const World& w, const PlayerState& me, float x, float y, float bw, bool interactive, DockRequest& req) {
     const float s = Scale();
     const bool keyboard = controls::ActiveDevice() == controls::Device::KeyboardMouse;
-    Text(w.orbit ? "Du bist auf der Weltraumkarte." : "Du bist auf der Mondkarte.", x, y, 24 * s, TEXT);
+    const int here = w.PilotMap();
+    const char* const hereText[3] = {"Du bist auf der Mondkarte.", "Du bist auf der Weltraumkarte.", "Du bist bei der Alien-Station."};
+    Text(hereText[here], x, y, 24 * s, TEXT);
     y += 38 * s;
-    const char* info = "Wer auf dem Mond und auf der Weltraumkarte je einmal 100.000 Punkte erreicht hat, kann hier "
-                       "zwischen den Karten wechseln. Kontostand, Aufrüstungen, Schiffe und Leben kommen mit.";
+    const char* info = "Mond und Weltraumkarte: frei, wenn du auf beiden je einmal 100.000 Punkte erreicht hast. "
+                       "Alien-Station: frei, wenn du sie einmal besiegt hast. Kontostand, Aufrüstungen, Schiffe und Leben kommen mit.";
     for (const std::string& line : WrapLines(info, bw, 18 * s)) {
         Text(line, x, y, 18 * s, MUTED);
         y += 24 * s;
     }
-    y += 16 * s;
+    y += 12 * s;
     // Mond geschafft: wer im All ist oder dort schon das Ziel hatte, sonst ein Ziel im Mehrspieler
     const bool moonDone = w.orbit || me.orbitGoal || me.goals > 0;
     const struct {
         const char* name;
         bool done;
-    } maps[2] = {{"Mondkarte", moonDone}, {"Weltraumkarte", me.orbitGoal}};
+        const char* doneText;
+        const char* to;
+    } maps[3] = {{"Mondkarte", moonDone, "100.000 erreicht", "Zur Mondkarte"},
+                 {"Weltraumkarte", me.orbitGoal, "100.000 erreicht", "Zur Weltraumkarte"},
+                 {"Alien-Station", me.alienGoal, "besiegt", "Zur Alien-Station"}};
     for (const auto& m : maps) {
-        Rectangle row{x, y, bw, 44 * s};
+        Rectangle row{x, y, bw, 40 * s};
         DrawRectangleRec(row, Color{36, 42, 54, 220});
-        Text(m.name, row.x + 16 * s, row.y + 10 * s, 22 * s, TEXT);
-        TextRight(m.done ? "100.000 erreicht" : "noch offen", row.x + row.width - 16 * s, row.y + 10 * s, 22 * s, m.done ? GOOD : MUTED);
-        y += 52 * s;
+        Text(m.name, row.x + 16 * s, row.y + 8 * s, 22 * s, TEXT);
+        TextRight(m.done ? m.doneText : "noch offen", row.x + row.width - 16 * s, row.y + 8 * s, 22 * s, m.done ? GOOD : MUTED);
+        y += 46 * s;
     }
-    y += 12 * s;
-    const bool can = w.CanSwitchMap(me);
-    const std::string label = std::string(keyboard ? "[1]  " : "") + (w.orbit ? "Zur Mondkarte wechseln" : "Zur Weltraumkarte wechseln");
-    bool hover = false;
-    const bool click = Button({x, y, bw, 50 * s}, label, 22 * s, false, can && interactive, &hover);
-    const bool key = interactive && IsKeyPressed(KEY_ONE);
-    if (interactive && can && (click || key)) req.switchMap = true;
-    else if (interactive && !can && (key || (hover && PointerPressed()))) g_audio.Play(Sfx::Denied);
+    y += 10 * s;
+    // Zwei Knöpfe nebeneinander: die beiden anderen Karten
+    const float half = (bw - 12 * s) * 0.5f;
+    int slot = 0;
+    for (int t = 0; t < 3; ++t) {
+        if (t == here) continue;
+        const bool can = w.CanSwitchMap(me, t);
+        const std::string label = (keyboard ? TextFormat("[%d]  ", slot + 1) : std::string()) + maps[t].to;
+        bool hover = false;
+        const bool click = Button({x + slot * (half + 12 * s), y, half, 50 * s}, label, 22 * s, false, can && interactive, &hover);
+        const bool key = interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + slot));
+        if (interactive && can && (click || key)) req.switchMap = t;
+        else if (interactive && !can && (key || (hover && PointerPressed()))) g_audio.Play(Sfx::Denied);
+        ++slot;
+    }
 }
 
 // Schild und Knopf "Schild reparieren" (World::Repair): Handelsstation
@@ -1174,6 +1216,62 @@ static void DrawShipSwitch(const World& w, const PlayerState& me, float x, float
              (interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + i)))))
             req.switchShip = type;
         y += rowPitch * s;
+    }
+}
+
+// Reiter "Missionen" (Handelsstation; auf der Weltraumkarte beim
+// Raumschiffsverkäufer): laufende Mission und offene Angebote
+// (World::AcceptMission). Angebote derselben Art stehen in einer Zeile;
+// angenommen wird über die Art. Es gibt nur Angebote der eigenen Karte.
+static void DrawMissionsTab(const World& w, const PlayerState& me, float x, float y, float bw, bool interactive, DockRequest& req) {
+    const float s = Scale();
+    const bool keyboard = controls::ActiveDevice() == controls::Device::KeyboardMouse;
+    const Mission* cur = w.FindMission(me.mission);
+    if (cur) {
+        const cfg::MissionDef& def = cfg::MISSIONS[static_cast<int>(cur->type)];
+        Text("Laufende Mission", x, y, 20 * s, MUTED);
+        y += 26 * s;
+        Rectangle box{x, y, bw, 70 * s};
+        DrawRectangleRec(box, Color{36, 42, 54, 220});
+        DrawRectangleLinesEx(box, 1.0f, ACCENT_DIM);
+        Text(def.name, box.x + 16 * s, box.y + 8 * s, 26 * s, Color{255, 230, 120, 255});
+        Text(MissionProgress(*cur), box.x + 16 * s, box.y + 42 * s, 18 * s, TEXT);
+        y += 84 * s;
+    }
+    Text("Angebote", x, y, 20 * s, MUTED);
+    y += 26 * s;
+    int count[cfg::MISSION_TYPE_COUNT] = {};
+    int offers = 0;
+    for (const Mission& m : w.missions)
+        if (m.owner < 0) { ++count[static_cast<int>(m.type)]; ++offers; }
+    if (offers == 0) {
+        Text(w.settings.missions > 0 ? "Gerade keine Angebote. Neue kommen bald." : "Auf diesem Server gibt es keine Missionen.",
+             x, y, 18 * s, TEXT);
+    }
+    int row = 0;
+    for (int t = 0; t < cfg::MISSION_TYPE_COUNT; ++t) {
+        if (count[t] == 0) continue;
+        const cfg::MissionDef& def = cfg::MISSIONS[t];
+        Rectangle rr{x, y, bw, 78 * s};
+        DrawRectangleRec(rr, Color{36, 42, 54, 220});
+        std::string name = def.name;
+        if (count[t] > 1) name += TextFormat("  (%dx)", count[t]);
+        Text(name, rr.x + 16 * s, rr.y + 8 * s, 24 * s, TEXT);
+        const std::vector<std::string> lines = WrapLines(def.text, bw - 240 * s, 15 * s);
+        for (size_t i = 0; i < lines.size() && i < 2; ++i)
+            Text(lines[i], rr.x + 16 * s, rr.y + 38 * s + static_cast<float>(i) * 19 * s, 15 * s, MUTED);
+        // Rechts: Belohnung und Knopf. Nur ohne laufende Mission annehmbar.
+        TextRight("+" + Num(def.reward) + " Pkt.", rr.x + rr.width - 16 * s, rr.y + 8 * s, 20 * s, GOOD);
+        const bool can = cur == nullptr;
+        std::string bl = keyboard ? TextFormat("[%d]  Annehmen", row + 1) : std::string("Annehmen");
+        Rectangle b{rr.x + rr.width - 196 * s, rr.y + 36 * s, 180 * s, 38 * s};
+        bool hover = false;
+        const bool click = Button(b, bl, 20 * s, false, can && interactive, &hover);
+        const bool key = interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + row));
+        if (interactive && can && (click || key)) req.acceptMission = t;
+        else if (interactive && !can && (key || (hover && PointerPressed()))) g_audio.Play(Sfx::Denied);
+        y += 86 * s;
+        ++row;
     }
 }
 
@@ -1278,56 +1376,7 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         } else if (dockTab == 3) {
             DrawMapTab(w, me, x, y, bw, interactive, req);
         } else {
-            // --- Tab "Missionen": laufende Mission und offene Angebote
-            //     (World::AcceptMission). Angebote derselben Art stehen in
-            //     einer Zeile; angenommen wird über die Art. ---------------------
-            const Mission* cur = w.FindMission(me.mission);
-            if (cur) {
-                const cfg::MissionDef& def = cfg::MISSIONS[static_cast<int>(cur->type)];
-                Text("Laufende Mission", x, y, 20 * s, MUTED);
-                y += 26 * s;
-                Rectangle box{x, y, bw, 70 * s};
-                DrawRectangleRec(box, Color{36, 42, 54, 220});
-                DrawRectangleLinesEx(box, 1.0f, ACCENT_DIM);
-                Text(def.name, box.x + 16 * s, box.y + 8 * s, 26 * s, Color{255, 230, 120, 255});
-                Text(MissionProgress(*cur), box.x + 16 * s, box.y + 42 * s, 18 * s, TEXT);
-                y += 84 * s;
-            }
-            Text("Angebote", x, y, 20 * s, MUTED);
-            y += 26 * s;
-            int count[cfg::MISSION_TYPE_COUNT] = {};
-            int offers = 0;
-            for (const Mission& m : w.missions)
-                if (m.owner < 0) { ++count[static_cast<int>(m.type)]; ++offers; }
-            if (offers == 0) {
-                Text(w.settings.missions > 0 ? "Gerade keine Angebote. Neue kommen bald." : "Auf diesem Server gibt es keine Missionen.",
-                     x, y, 18 * s, TEXT);
-            }
-            int row = 0;
-            for (int t = 0; t < cfg::MISSION_TYPE_COUNT; ++t) {
-                if (count[t] == 0) continue;
-                const cfg::MissionDef& def = cfg::MISSIONS[t];
-                Rectangle rr{x, y, bw, 78 * s};
-                DrawRectangleRec(rr, Color{36, 42, 54, 220});
-                std::string name = def.name;
-                if (count[t] > 1) name += TextFormat("  (%dx)", count[t]);
-                Text(name, rr.x + 16 * s, rr.y + 8 * s, 24 * s, TEXT);
-                const std::vector<std::string> lines = WrapLines(def.text, bw - 240 * s, 15 * s);
-                for (size_t i = 0; i < lines.size() && i < 2; ++i)
-                    Text(lines[i], rr.x + 16 * s, rr.y + 38 * s + static_cast<float>(i) * 19 * s, 15 * s, MUTED);
-                // Rechts: Belohnung und Knopf. Nur ohne laufende Mission annehmbar.
-                TextRight("+" + Num(def.reward) + " Pkt.", rr.x + rr.width - 16 * s, rr.y + 8 * s, 20 * s, GOOD);
-                const bool can = cur == nullptr;
-                std::string bl = keyboard ? TextFormat("[%d]  Annehmen", row + 1) : std::string("Annehmen");
-                Rectangle b{rr.x + rr.width - 196 * s, rr.y + 36 * s, 180 * s, 38 * s};
-                bool hover = false;
-                const bool click = Button(b, bl, 20 * s, false, can && interactive, &hover);
-                const bool key = interactive && IsKeyPressed(static_cast<KeyboardKey>(KEY_ONE + row));
-                if (interactive && can && (click || key)) req.acceptMission = t;
-                else if (interactive && !can && (key || (hover && PointerPressed()))) g_audio.Play(Sfx::Denied);
-                y += 86 * s;
-                ++row;
-            }
+            DrawMissionsTab(w, me, x, y, bw, interactive, req);
         }
         // "Abdocken" steht immer unten im Fenster und ist per Tastatur
         // vorausgewählt (focused = true), daher hervorgehoben. Mit teamButton
@@ -1337,6 +1386,23 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
         if (teamButton && Button({x + tw + 12 * s, ub.y, tw, ub.height}, "Als SG-Team spielen", 20 * s, false, interactive))
             req.toTeam = true;
+    } else if (station.type == StationType::Dealer && w.alien) {
+        // --- Trägerschiff der Alien-Station: nur Reparatur (Reiter "Schiff")
+        //     und Kartenwechsel (Reiter "Karte"), kein Kauf und kein
+        //     Schiffswechsel ---------------------------------------------------
+        const float panelH = 600.0f;
+        Rectangle r{W * 0.5f - 330 * s, H * 0.5f - panelH * 0.5f * s, 660 * s, panelH * s};
+        Panel(r);
+        float x = r.x + 30 * s, y = r.y + 24 * s, bw = r.width - 60 * s;
+        Text("TRÄGERSCHIFF", x, y, 40 * s, DEALER_COLOR);
+        TextRight("Kontostand  " + Num(me.balance), x + bw, y + 10 * s, 24 * s, ACCENT);
+        y += 46 * s;
+        const char* tabNames[2] = {"Schiff", "Karte"};
+        y += DockTabs(tabNames, 2, dockTab, x, y, bw, interactive);
+        if (dockTab == 0) DrawRepair(w, me, x, y, bw, interactive, req);
+        else DrawMapTab(w, me, x, y, bw, interactive, req);
+        Rectangle ub{x, r.y + r.height - 74 * s, bw, 50 * s};
+        if (Button(ub, undockLabel, 22 * s, true, interactive)) req.undock = true;
     } else if (station.type == StationType::Dealer) {
         // --- Raumschiffsverkäufer: alle Schiffstypen, die man noch nicht
         //     besitzt, kaufen (altes Schiff parken) oder mit Inzahlunggabe
@@ -1351,7 +1417,7 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         const float statsY = rows <= 4 ? 50.0f : 40.0f, buttonH = rows <= 4 ? 36.0f : 30.0f;
         // Auf dem Trägerschiff (Weltraumkarte) zusätzlich die Reiter Schiffe |
         // Schiff (Reparatur und Wechsel, dort gibt es keine Handelsstation) |
-        // Karte. Das Fenster ist so hoch, dass jeder Reiter hineinpasst.
+        // Missionen | Karte. Das Fenster ist so hoch, dass jeder Reiter hineinpasst.
         const float tabsH = w.orbit ? 58.0f : 0.0f;
         const int parked = std::min(static_cast<int>(me.hangar.size()), w.settings.ShipCount() - 1);
         const float parkedPitch = parked <= 3 ? 80.0f : 72.0f;
@@ -1366,13 +1432,15 @@ DockRequest DrawDockPanel(const World& w, bool interactive, bool teamButton) {
         TextRight("Kontostand  " + Num(me.balance), x + bw, y + 10 * s, 24 * s, ACCENT);
         y += 46 * s;
         if (w.orbit) {
-            const char* tabNames[3] = {"Schiffe", "Schiff", "Karte"};
-            y += DockTabs(tabNames, 3, dockTab, x, y, bw, interactive);
+            const char* tabNames[4] = {"Schiffe", "Schiff", "Missionen", "Karte"};
+            y += DockTabs(tabNames, 4, dockTab, x, y, bw, interactive);
         }
         if (w.orbit && dockTab > 0) {
             if (dockTab == 1) {
                 y += DrawRepair(w, me, x, y, bw, interactive, req) + 24 * s;
                 DrawShipSwitch(w, me, x, y, bw, parked, parkedPitch, interactive, req);
+            } else if (dockTab == 2) {
+                DrawMissionsTab(w, me, x, y, bw, interactive, req);
             } else {
                 DrawMapTab(w, me, x, y, bw, interactive, req);
             }
@@ -1574,6 +1642,8 @@ bool DrawGameOver(const World& w) {
 
 // Die Zahl im Untertitel ist fest eingetragen und muss zu cfg::GOAL_POINTS passen.
 bool DrawVictory(const World& w, bool toOrbit) {
+    if (toOrbit && w.orbit)
+        return EndScreen(w, "ZIEL ERREICHT!", "100.000 Punkte im All! Jetzt geht es zur Alien-Station.", GOOD, "Weiter zur Alien-Station");
     if (toOrbit)
         return EndScreen(w, "ZIEL ERREICHT!", "100.000 Ressourcenpunkte! Jetzt geht es ins All.", GOOD, "Weiter ins All");
     return EndScreen(w, "ZIEL ERREICHT!", "Du hast 100.000 Ressourcenpunkte erwirtschaftet.", GOOD);

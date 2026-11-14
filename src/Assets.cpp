@@ -3,7 +3,8 @@
 // (Schnittstelle und Überblick: Assets.hpp).
 //
 // Inhalt dieser Datei:
-//   - LoadFilePatched: repariert die GLB-Dateien des Kits beim Einlesen.
+//   - LoadFilePatched: liest Dateien aus dem Asset-Paket oder von der Platte
+//     und repariert die GLB-Dateien des Kits beim Einlesen.
 //   - MoonTone: färbt das orange Gestein des Kits grau oder blau.
 //   - kVertexShader / kFragmentHead / kFragmentMain: einfache Beleuchtung
 //     (Sonne + Himmel + Randlicht + Leuchten), dazu Schatten, Blitze und
@@ -23,6 +24,7 @@
 // nach InitWindow().
 // ---------------------------------------------------------------------------
 #include "Assets.hpp"
+#include "AssetPack.hpp"
 #include "Effects.hpp"
 #include "Models.hpp"
 #include <algorithm>
@@ -34,6 +36,54 @@
 Assets g_assets;
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Asset-Paket assets.pak (AssetPack.hpp). Ist es geöffnet, beginnen alle
+// Asset-Pfade mit kPakPrefix ("pak:/models/..."); der Teil danach ist der
+// Pfad im Paket. Den Präfix gibt es auf keiner Platte, eine Verwechslung mit
+// echten Dateien ist also ausgeschlossen.
+// ---------------------------------------------------------------------------
+pak::Reader g_pak;
+const char* kPakPrefix = "pak:/";
+
+// Paketschlüssel: CMake schreibt ihn verwürfelt nach build/generated/PakKey.inc
+// (aus der Schlüsseldatei, siehe CMakeLists.txt). Das Verwürfeln sorgt nur
+// dafür, dass die 32 Bytes nicht unverändert in der ausführbaren Datei stehen.
+pak::Key PakKey() {
+    static const unsigned char kMasked[32] = {
+#include "PakKey.inc"
+    };
+    pak::Key k{};
+    for (int i = 0; i < 32; ++i) k[i] = static_cast<uint8_t>(kMasked[i] ^ ((i * 73 + 90) & 255));
+    return k;
+}
+
+// Pfad im Paket zu einem Asset-Pfad. raylib baut die Pfade von Texturen
+// eines Modells selbst zusammen ("./pak:/models/kit/Textures/colormap.png",
+// GetDirectoryPath setzt "./" davor); deshalb werden "." und ".." aufgelöst
+// und der Backslash wie "/" behandelt. false: kein Pfad im Paket (oder kein Paket).
+bool PakRelative(const std::string& path, std::string& rel) {
+    if (!g_pak.IsOpen()) return false;
+    std::vector<std::string> parts;
+    std::string part;
+    for (size_t i = 0; i <= path.size(); ++i) {
+        const char c = i < path.size() ? path[i] : '/';
+        if (c != '/' && c != '\\') {
+            part += c;
+            continue;
+        }
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(part);
+        }
+        part.clear();
+    }
+    if (parts.empty() || parts[0] != "pak:") return false;
+    rel.clear();
+    for (size_t i = 1; i < parts.size(); ++i) rel += (i > 1 ? "/" : "") + parts[i];
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // Die GLB-Dateien des Space Kits enthalten einen Hilfsknoten "tmpParent"
@@ -56,22 +106,41 @@ namespace {
 //   danach       BIN-Block mit den Eckpunktdaten
 //
 // Eingebunden wird die Funktion mit SetLoadFileDataCallback() in Init(). Ab
-// dann liest raylib JEDE Datei über diese Funktion (auch Töne und Schriften);
-// alles, was nicht mit "glTF" beginnt, wird unverändert durchgereicht. Der
-// Speicher muss mit MemAlloc() kommen, weil raylib ihn später selbst mit
-// UnloadFileData() (MemFree) freigibt.
+// dann liest raylib JEDE Datei über diese Funktion (auch Töne, Bilder und
+// Schriften). Pfade im Asset-Paket ("pak:/...") kommen entschlüsselt aus dem
+// Paket, alle anderen von der Platte. Alles, was nicht mit "glTF" beginnt,
+// wird unverändert durchgereicht. Der Speicher muss mit MemAlloc() kommen,
+// weil raylib ihn später selbst mit UnloadFileData() (MemFree) freigibt.
 // ---------------------------------------------------------------------------
 unsigned char* LoadFilePatched(const char* fileName, int* dataSize) {
     *dataSize = 0;
-    FILE* f = fopen(fileName, "rb");
-    if (!f) return nullptr;
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size <= 0) { fclose(f); return nullptr; }
-    auto* data = static_cast<unsigned char*>(MemAlloc(static_cast<unsigned int>(size)));
-    size_t read = fread(data, 1, static_cast<size_t>(size), f);
-    fclose(f);
+    unsigned char* data = nullptr;
+    size_t read = 0;
+    std::string rel;
+    if (PakRelative(fileName, rel)) {
+        const pak::Entry* e = g_pak.Find(rel);
+        if (!e || e->size == 0 || e->size > 0x7FFFFFFF) {
+            TraceLog(LOG_WARNING, "PAK: %s fehlt im Asset-Paket", rel.c_str());
+            return nullptr;
+        }
+        data = static_cast<unsigned char*>(MemAlloc(static_cast<unsigned int>(e->size)));
+        if (!g_pak.Read(*e, data)) {
+            TraceLog(LOG_WARNING, "PAK: %s nicht lesbar (Pruefsumme falsch)", rel.c_str());
+            MemFree(data);
+            return nullptr;
+        }
+        read = static_cast<size_t>(e->size);
+    } else {
+        FILE* f = fopen(fileName, "rb");
+        if (!f) return nullptr;
+        fseek(f, 0, SEEK_END);
+        long size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (size <= 0) { fclose(f); return nullptr; }
+        data = static_cast<unsigned char*>(MemAlloc(static_cast<unsigned int>(size)));
+        read = fread(data, 1, static_cast<size_t>(size), f);
+        fclose(f);
+    }
     *dataSize = static_cast<int>(read);
 
     if (read > 20 && memcmp(data, "glTF", 4) == 0) {
@@ -207,6 +276,44 @@ void main() {
 }
 )";
 
+// Tarnung (DrawCloaked): gleicher Vertex-Shader, eigener Fragment-Shader.
+// Er liest die Bildkopie (sceneTex) an der Stelle des Bildpunkts, verschoben
+// um die Flächenrichtung im Bild (matView setzt raylib) und ein leichtes
+// Wabern – so krümmt das Schiff das Bild dahinter wie eine Glaslinse. Am Rand
+// (flacher Blickwinkel) ein Hauch heller. cloakParams.x mischt mit dem
+// normalen Aussehen (einfaches Licht), y = Zeit. Verschiebung in Bildpunkten
+// bei 1080 Zeilen, für andere Auflösungen mitskaliert.
+const char* kCloakFragment = R"(
+#version 330
+in vec3 fragPosition;
+in vec2 fragTexCoord;
+in vec3 fragNormal;
+in vec4 fragColor;
+uniform sampler2D texture0;
+uniform vec4 colDiffuse;
+uniform sampler2D sceneTex;
+uniform vec4 sceneRect;
+uniform mat4 matView;
+uniform vec3 viewPos;
+uniform vec3 lightDir;
+uniform vec2 cloakParams;
+out vec4 finalColor;
+void main() {
+    vec3 n = normalize(fragNormal);
+    vec3 v = normalize(viewPos - fragPosition);
+    float rim = 1.0 - abs(dot(n, v));
+    vec3 vn = (matView * vec4(n, 0.0)).xyz;
+    vec2 wobble = vec2(sin(fragPosition.x * 4.0 + cloakParams.y * 3.0), cos(fragPosition.z * 4.0 + cloakParams.y * 2.6));
+    vec2 off = (vn.xy * 14.0 + wobble * 2.0) * sceneRect.w / 1080.0;
+    vec2 uv = clamp((gl_FragCoord.xy - sceneRect.xy + off) / sceneRect.zw, vec2(0.001), vec2(0.999));
+    vec3 behind = textureLod(sceneTex, uv, 0.0).rgb;
+    behind = mix(behind, behind * 1.1 + vec3(0.03, 0.035, 0.05), rim * rim);
+    vec4 base = texture(texture0, fragTexCoord) * colDiffuse * fragColor;
+    vec3 visible = base.rgb * (0.35 + 0.75 * max(dot(n, -lightDir), 0.0));
+    finalColor = vec4(mix(visible, behind, clamp(cloakParams.x, 0.0, 1.0)), 1.0);
+}
+)";
+
 // Der Fragment-Shader besteht aus drei Teilen: Kopf, Nebelrechnung
 // (fx::kFogGlsl) und Hauptteil; Init() fügt sie zusammen.
 const char* kFragmentHead = R"(
@@ -297,22 +404,40 @@ bool Assets::Init() {
     // Muss vor dem ersten LoadModel() eingetragen sein (siehe LoadFilePatched).
     SetLoadFileDataCallback(LoadFilePatched);
 
-    // Assets-Ordner suchen: zuerst neben der ausführbaren Datei (funktioniert
-    // unabhängig vom Arbeitsordner), dann relativ zum Arbeitsordner, auch ein
-    // oder zwei Ebenen höher (z. B. Start aus build/ oder build/Release/).
-    // Als Erkennungszeichen dient eine Modelldatei, die es immer gibt.
+    // Zuerst das Asset-Paket neben der ausführbaren Datei (so wird das Spiel
+    // ausgeliefert, siehe AssetPack.hpp). Lässt es sich nicht öffnen
+    // (beschädigt, anderer Schlüssel), weiter wie ohne Paket.
     const std::string app = GetApplicationDirectory();
-    const char* candidates[] = {"assets/", "../assets/", "../../assets/"};
-    std::vector<std::string> tries = {app + "assets/"};
-    for (const char* c : candidates) tries.emplace_back(c);
-    for (const auto& dir : tries) {
-        if (FileExists((dir + "models/craft_speederA.glb").c_str())) {
-            assetDir_ = dir;
-            break;
+    const std::string pakFile = app + "assets.pak";
+    if (FileExists(pakFile.c_str())) {
+        std::string err;
+        if (g_pak.Open(pakFile, PakKey(), err) && g_pak.Find("models/craft_speederA.glb")) {
+            assetDir_ = kPakPrefix;
+            TraceLog(LOG_INFO, "PAK: %s geoeffnet (%d Dateien)", pakFile.c_str(), static_cast<int>(g_pak.Entries().size()));
+        } else {
+            TraceLog(LOG_ERROR, "PAK: %s nicht lesbar: %s", pakFile.c_str(), err.empty() ? "Modelle fehlen" : err.c_str());
+            g_pak = pak::Reader{};
+        }
+    }
+
+    // Sonst den Assets-Ordner suchen (beim Entwickeln): zuerst neben der
+    // ausführbaren Datei (funktioniert unabhängig vom Arbeitsordner), dann
+    // relativ zum Arbeitsordner, auch ein oder zwei Ebenen höher (z. B. Start
+    // aus build/ oder build/Release/). Als Erkennungszeichen dient eine
+    // Modelldatei, die es immer gibt.
+    if (assetDir_.empty()) {
+        const char* candidates[] = {"assets/", "../assets/", "../../assets/"};
+        std::vector<std::string> tries = {app + "assets/"};
+        for (const char* c : candidates) tries.emplace_back(c);
+        for (const auto& dir : tries) {
+            if (FileExists((dir + "models/craft_speederA.glb").c_str())) {
+                assetDir_ = dir;
+                break;
+            }
         }
     }
     if (assetDir_.empty()) {
-        TraceLog(LOG_ERROR, "Assets-Ordner nicht gefunden (erwartet: assets/models/*.glb)");
+        TraceLog(LOG_ERROR, "Weder assets.pak noch Assets-Ordner gefunden (erwartet: assets/models/*.glb)");
         return false;
     }
 
@@ -364,6 +489,8 @@ void Assets::Shutdown() {
     // Shader und Texturen der Materialien (die könnten mehrere Modelle teilen).
     // Den gemeinsamen Shader geben wir deshalb hier einmal selbst frei.
     if (ready_) UnloadShader(lit_);
+    if (cloakOk_) UnloadShader(cloak_);
+    cloakOk_ = cloakTried_ = false;
     ready_ = false;
 }
 
@@ -433,6 +560,7 @@ BoundingBox Assets::Bounds(int id) {
 
 // Kameraposition für das Randlicht (viewPos im Fragment-Shader).
 void Assets::SetCamera(Vector3 camPos) {
+    camPos_ = camPos;
     SetShaderValue(lit_, locViewPos_, &camPos, SHADER_UNIFORM_VEC3);
 }
 
@@ -490,6 +618,39 @@ void Assets::Draw(int id, Vector3 pos, float yaw, float scale, Color tint, Vecto
     Draw(id, TRS(pos, yaw, scale), tint, emissive);
 }
 
+void Assets::DrawCloaked(int id, const Matrix& world, Color tint, float cloak, Vector4 rect, float time) {
+    Entry* ep = Ensure(id);
+    if (!ep) return;
+    if (!cloakTried_) {
+        cloakTried_ = true;
+        cloak_ = LoadShaderFromMemory(kVertexShader, kCloakFragment);
+        locCloakScene_ = GetShaderLocation(cloak_, "sceneTex");
+        locCloakRect_ = GetShaderLocation(cloak_, "sceneRect");
+        locCloakParams_ = GetShaderLocation(cloak_, "cloakParams");
+        locCloakViewPos_ = GetShaderLocation(cloak_, "viewPos");
+        locCloakLight_ = GetShaderLocation(cloak_, "lightDir");
+        cloakOk_ = IsShaderValid(cloak_) && locCloakScene_ >= 0;   // Fehler: Standard-Shader ohne sceneTex
+    }
+    // Ohne eigenen Shader: normal zeichnen (sichtbar)
+    if (!cloakOk_) {
+        Draw(id, world, tint);
+        return;
+    }
+    Entry& e = *ep;
+    e.model.transform = MatrixMultiply(e.base, world);
+    const int slot = fx::kGrabSlot;
+    const float params[2] = {cloak, time};
+    SetShaderValue(cloak_, locCloakScene_, &slot, SHADER_UNIFORM_INT);
+    SetShaderValue(cloak_, locCloakRect_, &rect, SHADER_UNIFORM_VEC4);
+    SetShaderValue(cloak_, locCloakParams_, params, SHADER_UNIFORM_VEC2);
+    SetShaderValue(cloak_, locCloakViewPos_, &camPos_, SHADER_UNIFORM_VEC3);
+    SetShaderValue(cloak_, locCloakLight_, &sun_, SHADER_UNIFORM_VEC3);
+    // Nur für diesen Aufruf den Shader der Materialien tauschen
+    for (int i = 0; i < e.model.materialCount; ++i) e.model.materials[i].shader = cloak_;
+    DrawModel(e.model, {0, 0, 0}, 1.0f, tint);
+    for (int i = 0; i < e.model.materialCount; ++i) e.model.materials[i].shader = lit_;
+}
+
 // Häute der Figur in der Reihenfolge von Trooper::skin (shared/World.hpp)
 namespace {
 const char* const kCharacterSkins[] = {"militaryMaleA", "militaryMaleB", "militaryFemaleA", "militaryFemaleB", "cyborg",
@@ -544,4 +705,55 @@ void Assets::BeginLit() {
 
 void Assets::EndLit() {
     EndShaderMode();   // zeichnet die gesammelten Dreiecke mit lit_
+}
+
+// ---------------------------------------------------------------------------
+// Dateien aus dem Asset-Paket oder von der Platte (Erklärung: Assets.hpp)
+// ---------------------------------------------------------------------------
+bool InAssetPack(const std::string& path) {
+    std::string rel;
+    return PakRelative(path, rel);
+}
+
+bool AssetExists(const std::string& path) {
+    std::string rel;
+    if (PakRelative(path, rel)) return g_pak.Find(rel) != nullptr;
+    return FileExists(path.c_str());
+}
+
+bool LoadAssetBytes(const std::string& path, std::vector<unsigned char>& out) {
+    out.clear();
+    std::string rel;
+    if (PakRelative(path, rel)) {
+        if (g_pak.Read(rel, out)) return true;
+        TraceLog(LOG_WARNING, "PAK: %s fehlt oder ist nicht lesbar", rel.c_str());
+        out.clear();
+        return false;
+    }
+    int size = 0;
+    unsigned char* data = LoadFileData(path.c_str(), &size);
+    if (!data) return false;
+    out.assign(data, data + size);
+    UnloadFileData(data);
+    return true;
+}
+
+std::vector<std::string> ListAssetFiles(const std::string& dir, const char* ext) {
+    std::vector<std::string> list;
+    std::string rel;
+    if (PakRelative(dir, rel)) {
+        if (!rel.empty()) rel += '/';
+        const std::string base = dir.empty() || dir.back() == '/' ? dir : dir + "/";
+        for (const pak::Entry& e : g_pak.Entries()) {
+            if (e.path.compare(0, rel.size(), rel) != 0) continue;
+            const std::string name = e.path.substr(rel.size());
+            if (name.find('/') == std::string::npos && IsFileExtension(name.c_str(), ext)) list.push_back(base + name);
+        }
+        return list;
+    }
+    if (!DirectoryExists(dir.c_str())) return list;
+    FilePathList files = LoadDirectoryFilesEx(dir.c_str(), ext, false);
+    for (unsigned int i = 0; i < files.count; ++i) list.emplace_back(files.paths[i]);
+    UnloadDirectoryFiles(files);
+    return list;
 }

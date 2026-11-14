@@ -169,6 +169,10 @@ void DrawGlowDisc(Vector3 c, float r, Color col, int segments = 24) {
     rlEnd();
 }
 
+// Höhe der Rettungskapseln auf der Weltraumkarte (Mission "Rettungskapseln
+// bergen"): knapp unter den Schiffen, die über sie hinwegfliegen
+constexpr float kCapsuleY = cfg::SHIP_ALTITUDE - 3.0f;
+
 // Pseudozufall 0..1 aus einer Zahl (gleiche Eingabe -> gleiches Ergebnis),
 // z. B. für die Stelle, an der ein Kristall gerade aufblitzt.
 float Hash01(float n) {
@@ -299,10 +303,18 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
     // Nur die eigenen (im Mehrspieler schickt der Server ohnehin nur diese).
     // 1,8-fach vergrößert (das Modell ist nur 0,8 m hoch), damit man sie von
     // oben erkennt; sie hüpfen leicht, als würden sie auf sich aufmerksam machen.
+    // Weltraumkarte: Rettungskapseln (rocket_top, gut 2 m breit) treiben
+    // unter der Flughöhe und taumeln langsam.
     const PlayerState& me = w.Me();
     for (const auto& pe : w.persons) {
         if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
-        const float hop = 0.12f * fabsf(sinf(time * 4.0f + static_cast<float>(pe.id)));
+        const float ph = static_cast<float>(pe.id);
+        if (w.orbit) {
+            const Vector3 at{pe.pos.x, kCapsuleY + 0.3f * sinf(time * 0.9f + ph), pe.pos.z};
+            g_assets.Draw(pe.model, TRS(at, pe.yaw + time * 0.3f, 0.5f * sinf(time * 0.7f + ph), 0.4f * sinf(time * 0.5f + ph * 1.3f), 2.2f));
+            continue;
+        }
+        const float hop = 0.12f * fabsf(sinf(time * 4.0f + ph));
         g_assets.Draw(pe.model, Vector3{pe.pos.x, hop, pe.pos.z}, pe.yaw, 1.8f);
     }
 
@@ -359,6 +371,7 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
     for (const auto& s : w.ships) {
         if (s.dead || s.hidden) continue;
         if (Dist2D(s.pos, focus) > cullR) continue;
+        if (s.cloak > 0.0f) continue;   // Tarnschiff: eigener Durchgang ohne Schatten (DrawCloakedShips)
         // Farbton je Schiffsart: Piraten rötlich, Elite-Piraten violett.
         // Spieler (auch fremde im Mehrspieler) und Händler/Miner bleiben unverändert.
         Color tint = WHITE;
@@ -376,6 +389,26 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
         // abgeschossenes Schiff: Es nickt so schnell, wie es rollt.
         float pitch = s.crashing ? (w.orbit ? s.bank : -0.5f) : -0.06f * s.thrustVisual;
         g_assets.Draw(s.model, TRS(s.pos, s.yaw, pitch, s.bank, 1.0f), tint, em);
+    }
+}
+
+// Tarnschiffe der Alien-Station (Ship::cloak > 0), nach allen festen
+// Modellen: Erst wird das bisher gezeichnete Bild kopiert (fx::GrabScene),
+// dann zeichnet Assets::DrawCloaked jedes Schiff als leichte Krümmung dieses
+// Bildes. Beim Ent- und Tarnen blendet es zum normalen Aussehen über
+// (cloak 0..1). Ohne Bildkopie bleiben sie sichtbar.
+static void DrawCloakedShips(const World& w, Vector3 focus, float cullR) {
+    bool any = false;
+    for (const auto& s : w.ships)
+        if (!s.dead && !s.hidden && s.cloak > 0.0f && Dist2D(s.pos, focus) <= cullR) any = true;
+    if (!any) return;
+    Vector4 rect{};
+    const bool grabbed = fx::GrabScene(rect);
+    for (const auto& s : w.ships) {
+        if (s.dead || s.hidden || s.cloak <= 0.0f || Dist2D(s.pos, focus) > cullR) continue;
+        const float pitch = s.crashing ? s.bank : -0.06f * s.thrustVisual;
+        g_assets.DrawCloaked(s.model, TRS(s.pos, s.yaw, pitch, s.bank, 1.0f), Color{190, 150, 255, 255}, grabbed ? s.cloak : 0.0f,
+                             rect, w.time);
     }
 }
 
@@ -1571,6 +1604,7 @@ void World::Draw(const Camera3D& cam) const {
 
     // --- Züge, Raketen, Rover, Personen, Figuren und Schiffe -----------------------------------
     DrawMovingModels(*this, focus, cullR, flashK);
+    DrawCloakedShips(*this, focus, cullR);   // Alien-Station: Tarnschiffe als Krümmung
 
     // ===== Ab hier transparente / leuchtende Effekte ====================================
     // raylib sammelt einfache Formen (DrawCylinder, DrawCube, rlBegin/rlVertex)
@@ -1664,7 +1698,8 @@ void World::Draw(const Camera3D& cam) const {
         DrawGroundRing(player.pos, 1.7f, 1.95f, Color{255, 170, 60, 130}, 40, ringY);
     for (const auto& s : ships) {
         // &s == &player: das eigene Schiff (ships[0]) hat oben schon seinen Ring.
-        if (s.dead || s.hidden || s.crashing || &s == &player) continue;
+        // Getarnte Alien-Schiffe haben keinen Ring.
+        if (s.dead || s.hidden || s.crashing || &s == &player || Cloaked(s)) continue;
         if (Dist2D(s.pos, focus) > cullR) continue;
         if (s.kind == ShipKind::Player)   // andere Spieler (Mehrspieler)
             DrawGroundRing(s.pos, 1.7f, 1.95f, Color{110, 240, 170, 130}, 32, ringY);
@@ -1745,12 +1780,14 @@ void World::Draw(const Camera3D& cam) const {
         DrawBeam(w.pos, 8.0f, 0.3f, Color{220, 140, 40, static_cast<unsigned char>(70 * pulse)});
         DrawGroundRing(w.pos, 3.0f, 3.4f, Color{255, 170, 60, static_cast<unsigned char>(120 * pulse)}, 40);
     }
-    // Personen: gelbe Lichtsäule und Bodenring (gelb wie auf der Minikarte)
+    // Personen: gelbe Lichtsäule und Bodenring (gelb wie auf der Minikarte);
+    // Rettungskapseln im All: Säule durch die Kapsel, Ring auf ihrer Höhe
     for (const auto& pe : persons) {
         if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
         float pulse = 0.6f + 0.4f * sinf(time * 4.0f + static_cast<float>(pe.id));
-        DrawBeam(pe.pos, 10.0f, 0.3f, Color{230, 200, 40, static_cast<unsigned char>(80 * pulse)});
-        DrawGroundRing(pe.pos, 2.4f, 2.8f, Color{255, 225, 60, static_cast<unsigned char>(140 * pulse)}, 40);
+        const Vector3 base{pe.pos.x, orbit ? kCapsuleY - 3.0f : pe.pos.y, pe.pos.z};
+        DrawBeam(base, 10.0f, 0.3f, Color{230, 200, 40, static_cast<unsigned char>(80 * pulse)});
+        DrawGroundRing(pe.pos, 2.4f, 2.8f, Color{255, 225, 60, static_cast<unsigned char>(140 * pulse)}, 40, orbit ? kCapsuleY + 0.8f : 0.12f);
     }
 
     // Kristalle glimmen: weicher grüner Schein auf dem Boden und kleine
@@ -1847,7 +1884,7 @@ void World::Draw(const Camera3D& cam) const {
     // (thrustVisual 0..1), dazu schnelles Flackern (40 rad/s, ca. 6 Mal pro
     // Sekunde) mit der Schiffs-id als Phasenversatz. Piraten rot, sonst orange.
     for (const auto& s : ships) {
-        if (s.dead || s.hidden || Dist2D(s.pos, focus) > cullR) continue;
+        if (s.dead || s.hidden || Cloaked(s) || Dist2D(s.pos, focus) > cullR) continue;   // getarnt: ohne Flammen
         Vector3 fwd = ForwardFromYaw(s.yaw);
         float len = 0.25f + s.thrustVisual * 0.9f + 0.08f * sinf(time * 40.0f + s.id);
         for (int k = -1; k <= 1; k += 2) {
@@ -1879,7 +1916,7 @@ void World::Draw(const Camera3D& cam) const {
         const long first = static_cast<long>(floorf(g_trail.last / kTrailStep)) + 1;
         const long newest = static_cast<long>(floorf(time / kTrailStep));
         for (const auto& s : ships) {
-            if (s.dead || s.hidden || s.crashing || Dist2D(s.pos, focus) > cullR) continue;
+            if (s.dead || s.hidden || s.crashing || Cloaked(s) || Dist2D(s.pos, focus) > cullR) continue;
             const float speed = sqrtf(s.vel.x * s.vel.x + s.vel.z * s.vel.z);
             const float power = std::max(s.thrustVisual, std::min(1.0f, speed / 12.0f));
             if (power < 0.08f) continue;
