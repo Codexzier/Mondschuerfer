@@ -85,6 +85,7 @@ target_include_directories(pl_mpeg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_part
 add_executable(Mondschuerfer
         src/main.cpp
         src/Assets.cpp
+        src/AssetPack.cpp
         src/Audio.cpp
         src/ClipPlayer.cpp
         src/Render.cpp
@@ -163,9 +164,75 @@ if (APPLE)
     target_link_libraries(Mondschuerfer PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
 endif ()
 
-# Assets (Kenney Space Kit, Sci-Fi Sounds, Interface Sounds, Musik, Clips) neben die ausfuehrbare Datei kopieren
+# ---------------------------------------------------------------------------
+# Assets als verschluesseltes Paket assets.pak neben die ausfuehrbare Datei
+# (Aufbau und Grenzen: src/AssetPack.hpp). Das Werkzeug PackAssets packt den
+# Asset-Ordner neu, sobald sich darin eine Datei oder der Schluessel aendert.
+#   MONDSCHUERFER_ASSET_DIR  Ordner mit den Assets (Standard: assets/ im Projekt).
+#                            Lizenzierte Assets gehoeren NICHT in das oeffentliche
+#                            Repo, sondern in einen eigenen Ordner:
+#                            cmake ... -DMONDSCHUERFER_ASSET_DIR=/pfad/zu/den/assets
+#   MONDSCHUERFER_ASSET_KEY  Schluesseldatei (Standard: assets.key im Projekt, steht
+#                            in .gitignore). Inhalt beliebig, z. B. 64 Zufallszeichen.
+#                            Fehlt sie, wird ein oeffentlich bekannter Testschluessel
+#                            benutzt. Nach dem Anlegen CMake neu laden.
+# Der Schluessel landet verwuerfelt in build/generated/PakKey.inc (nur im Build-Ordner).
+# ---------------------------------------------------------------------------
+set(MONDSCHUERFER_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets" CACHE PATH "Ordner mit den Assets")
+set(MONDSCHUERFER_ASSET_KEY "${CMAKE_CURRENT_SOURCE_DIR}/assets.key" CACHE FILEPATH "Schluesseldatei fuer assets.pak")
+
+set(PAK_KEY_FILE "${MONDSCHUERFER_ASSET_KEY}")
+if (EXISTS "${PAK_KEY_FILE}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PAK_KEY_FILE}")
+else ()
+    message(WARNING "Schluesseldatei ${MONDSCHUERFER_ASSET_KEY} fehlt: assets.pak wird mit dem "
+            "oeffentlich bekannten Testschluessel verschluesselt (nur zum Entwickeln).")
+    set(PAK_KEY_FILE "${CMAKE_CURRENT_BINARY_DIR}/test.key")
+    if (NOT EXISTS "${PAK_KEY_FILE}")
+        file(WRITE "${PAK_KEY_FILE}" "Mondschuerfer-Testschluessel")
+    endif ()
+endif ()
+
+# Paketschluessel = SHA-256 der Schluesseldatei (wie pak::KeyFromFileContents),
+# Byte i verwuerfelt mit (i * 73 + 90) & 255 (wie PakKey() in src/Assets.cpp)
+file(SHA256 "${PAK_KEY_FILE}" PAK_KEY_HEX)
+set(PAK_KEY_BYTES "")
+foreach (i RANGE 31)
+    math(EXPR pos "${i} * 2")
+    string(SUBSTRING "${PAK_KEY_HEX}" ${pos} 2 byte)
+    math(EXPR masked "0x${byte} ^ ((${i} * 73 + 90) & 255)" OUTPUT_FORMAT HEXADECIMAL)
+    string(APPEND PAK_KEY_BYTES "${masked}, ")
+endforeach ()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/PakKey.inc.tmp"
+        "// Automatisch erzeugt (CMakeLists.txt): Paketschluessel, verwuerfelt. Nicht einchecken.\n${PAK_KEY_BYTES}\n")
+configure_file("${CMAKE_CURRENT_BINARY_DIR}/generated/PakKey.inc.tmp"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/PakKey.inc" COPYONLY)
+target_include_directories(Mondschuerfer PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+add_executable(PackAssets tools/PackAssets.cpp src/AssetPack.cpp shared/Crypto.cpp)
+target_include_directories(PackAssets PRIVATE src shared)
+if (MSVC)
+    target_compile_options(PackAssets PRIVATE /utf-8)
+elseif (MINGW)
+    if (MINGW_FULL_STATIC_OK)
+        target_link_options(PackAssets PRIVATE -static)
+    else ()
+        target_link_options(PackAssets PRIVATE -static-libgcc -static-libstdc++)
+    endif ()
+endif ()
+
+file(GLOB_RECURSE PAK_INPUTS CONFIGURE_DEPENDS "${MONDSCHUERFER_ASSET_DIR}/*")
+list(FILTER PAK_INPUTS EXCLUDE REGEX "/NewAssets/")
+set(PAK_FILE "${CMAKE_CURRENT_BINARY_DIR}/assets.pak")
+add_custom_command(OUTPUT "${PAK_FILE}"
+        COMMAND PackAssets "${MONDSCHUERFER_ASSET_DIR}" "${PAK_KEY_FILE}" "${PAK_FILE}"
+        DEPENDS PackAssets ${PAK_INPUTS} "${PAK_KEY_FILE}"
+        COMMENT "Packe Assets nach assets.pak"
+        VERBATIM)
+add_custom_target(AssetPak ALL DEPENDS "${PAK_FILE}")
+add_dependencies(Mondschuerfer AssetPak)
+# Bei Build-Systemen mit eigenem Ordner je Konfiguration (Visual Studio) liegt
+# das Spiel nicht im Build-Ordner: dorthin kopieren (sonst ohne Wirkung).
 add_custom_command(TARGET Mondschuerfer POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:Mondschuerfer>/assets
-        COMMENT "Kopiere Assets zum Spiel")
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PAK_FILE}" "$<TARGET_FILE_DIR:Mondschuerfer>/assets.pak"
+        VERBATIM)

@@ -50,6 +50,7 @@
 // nachgefüllt oder (bei Lautstärke 0) pausiert – wie die Dauergeräusche.
 // ---------------------------------------------------------------------------
 #include "Audio.hpp"
+#include "Assets.hpp"
 #include "raymath.h"
 #include <algorithm>
 #include <cmath>
@@ -207,6 +208,16 @@ const SongDef kSongs[] = {
 static_assert(sizeof(kSongs) / sizeof(kSongs[0]) == SONG_COUNT, "kSongs passt nicht zu enum Song");
 static_assert(SONG_COUNT == MusicMix::kTracks, "MusicMix::kTracks passt nicht zu kSongs");
 
+// Musik-Stream laden. LoadMusicStream öffnet die Datei selbst und kennt das
+// Asset-Paket nicht; aus dem Paket wird die Datei deshalb ganz entschlüsselt
+// und aus dem Speicher gestreamt. data muss erhalten bleiben, solange die
+// Musik geladen ist (raylib liest beim Abspielen daraus).
+Music LoadMusicAsset(const std::string& path, std::vector<unsigned char>& data) {
+    if (!InAssetPack(path)) return LoadMusicStream(path.c_str());
+    if (!LoadAssetBytes(path, data)) return Music{};
+    return LoadMusicStreamFromMemory(GetFileExtension(path.c_str()), data.data(), static_cast<int>(data.size()));
+}
+
 } // namespace
 
 // ===========================================================================
@@ -252,7 +263,7 @@ bool Audio::Init(const std::string& assetDir) {
 
     for (int i = 0; i < LOOP_COUNT; ++i) {
         const std::string path = dir + kLoops[i].file + ".ogg";
-        loops_[i].music = LoadMusicStream(path.c_str());
+        loops_[i].music = LoadMusicAsset(path, loops_[i].data);
         loops_[i].valid = IsMusicValid(loops_[i].music);
         // looping ist bei raylib schon voreingestellt; hier ausdrücklich,
         // weil die Dauergeräusche ohne Wiederholung nach ein paar Sekunden
@@ -268,7 +279,7 @@ bool Audio::Init(const std::string& assetDir) {
     // zu bestimmen – das dauert einen Augenblick, passiert aber nur beim Start.
     for (int i = 0; i < MusicMix::kTracks; ++i) {
         const std::string path = assetDir + kSongs[i].file;
-        songs_[i].music = LoadMusicStream(path.c_str());
+        songs_[i].music = LoadMusicAsset(path, songs_[i].data);
         songs_[i].valid = IsMusicValid(songs_[i].music);
         if (songs_[i].valid) songs_[i].music.looping = kSongs[i].loop;
         else TraceLog(LOG_WARNING, "Musik konnte nicht geladen werden: %s", path.c_str());

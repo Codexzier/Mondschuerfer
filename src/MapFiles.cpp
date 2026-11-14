@@ -14,11 +14,17 @@ namespace {
 const char* kExt = ".karte";
 
 std::string PathOf(const std::string& stem) { return MapDir() + stem + kExt; }
-// Mitgelieferte Karten (assets/karten, nur lesen)
+// Mitgelieferte Karten (assets/karten bzw. im Asset-Paket, nur lesen)
 std::string BuiltinDir() { return g_assets.AssetDir() + "karten/"; }
 std::string BuiltinPathOf(const std::string& stem) { return BuiltinDir() + stem + kExt; }
 
 bool ReadFile(const std::string& path, std::string& text) {
+    if (InAssetPack(path)) {
+        std::vector<unsigned char> data;
+        if (!LoadAssetBytes(path, data)) return false;
+        text.assign(data.begin(), data.end());
+        return true;
+    }
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     std::ostringstream ss;
@@ -35,23 +41,20 @@ std::string MapDir() { return std::string(GetApplicationDirectory()) + "karten/"
 std::vector<MapFileInfo> ListMaps() {
     std::vector<MapFileInfo> list;
     for (const std::string& dir : {MapDir(), BuiltinDir()}) {
-        if (!DirectoryExists(dir.c_str())) continue;
-        FilePathList files = LoadDirectoryFilesEx(dir.c_str(), kExt, false);
-        for (unsigned int i = 0; i < files.count; ++i) {
-            std::string stem = GetFileNameWithoutExt(files.paths[i]);
+        for (const std::string& file : ListAssetFiles(dir, kExt)) {
+            std::string stem = GetFileNameWithoutExt(file.c_str());
             if (std::any_of(list.begin(), list.end(), [&](const MapFileInfo& o) { return o.stem == stem; })) continue;
             GameMap m;
             if (!LoadMapFile(stem, m)) continue;
             list.push_back({stem, m.name.empty() ? stem : m.name, m.kind, m.theme, m.size, m.sky});
         }
-        UnloadDirectoryFiles(files);
     }
     std::sort(list.begin(), list.end(), [](const MapFileInfo& a, const MapFileInfo& b) { return a.name < b.name; });
     return list;
 }
 
 bool MapFileExists(const std::string& stem) {
-    return FileExists(PathOf(stem).c_str()) || FileExists(BuiltinPathOf(stem).c_str());
+    return FileExists(PathOf(stem).c_str()) || AssetExists(BuiltinPathOf(stem));
 }
 
 bool LoadMapFile(const std::string& stem, GameMap& out) {

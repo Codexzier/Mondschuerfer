@@ -32,8 +32,8 @@ raylib 5.5 wird beim ersten Laden des Projekts automatisch von GitHub geladen un
    Visual Studio (MSVC) funktioniert ebenfalls.
 3. Warten, bis CMake fertig ist, dann die Konfiguration **Mondschuerfer** starten (▶).
 
-Die `.exe` ist statisch gelinkt und läuft auch außerhalb von CLion, solange der Ordner
-`assets` daneben liegt (wird beim Bauen automatisch kopiert). Bei MinGW-Toolchains, die
+Die `.exe` ist statisch gelinkt und läuft auch außerhalb von CLion, solange die Datei
+`assets.pak` daneben liegt (wird beim Bauen automatisch erzeugt, siehe „Assets verpacken“). Bei MinGW-Toolchains, die
 keinen vollständig statischen Link erlauben (z. B. die mit CLion mitgelieferte GCC 15),
 werden zusätzlich `libwinpthread-1.dll` und `libgcc_s_seh-1.dll` neben die `.exe` kopiert.
 Diese gehören dann beim Weitergeben dazu.
@@ -69,6 +69,23 @@ Beide lassen sich kombinieren, z. B. Spiel und Server in einem Build-Ordner:
 Die Netzwerkbibliothek **ENet** und der Webserver **cpp-httplib** liegen im Projekt unter
 `third_party/` und werden mitgebaut; dafür ist kein Download nötig. Heruntergeladen wird nur
 raylib für das Spiel (falls es nicht installiert ist).
+
+### Assets verpacken (assets.pak)
+
+Beim Bauen packt das Werkzeug `PackAssets` (`tools/PackAssets.cpp`) den Asset-Ordner (ohne
+`NewAssets/`) in **eine verschlüsselte Datei `assets.pak`** neben dem Spiel. Weitergegeben
+werden nur Spiel und `assets.pak`; ein Ordner `assets` aus älteren Builds kann weg. Fehlt
+`assets.pak`, lädt das Spiel wie früher aus dem Ordner `assets` (zum Entwickeln).
+
+| Option | Standard | Bedeutung |
+|---|---|---|
+| `MONDSCHUERFER_ASSET_DIR` | `assets/` im Projekt | Ordner, der gepackt wird. Lizenzierte Assets gehören **nicht** in das öffentliche Repo, sondern in einen eigenen Ordner. |
+| `MONDSCHUERFER_ASSET_KEY` | `assets.key` im Projekt | Schlüsseldatei, beliebiger Inhalt, z. B. `openssl rand -hex 32 > assets.key`. Steht in `.gitignore`, **nie einchecken**. Nach dem Anlegen CMake neu laden. Fehlt sie, nimmt der Build einen öffentlich bekannten Testschlüssel und warnt. |
+
+Für Releases über GitHub Actions den Schlüssel als Repository-Secret `ASSETS_KEY` hinterlegen.
+Grenze: Der Schlüssel steckt im Spiel. Das Paket schützt gegen Durchklicken und
+Entpackprogramme, nicht gegen gezielte Analyse; der eigentliche Schutz ist die Lizenz
+(Einzelheiten in `src/AssetPack.hpp`).
 
 ### Mehrspieler-Server ohne Docker bauen
 
@@ -659,6 +676,7 @@ Mondschuerfer/
 │   ├── Controls.cpp/.hpp Flugsteuerung: Tastatur, Maus (Klick/Halten), Controller; Tastennamen
 │   ├── ControlsMath.hpp  Rechnungen der Steuerung (Stick-Richtung, Trigger, Anflug), ohne raylib testbar
 │   ├── Assets.cpp/.hpp   Modelle laden, Beleuchtungs-Shader
+│   ├── AssetPack.cpp/.hpp Asset-Paket assets.pak: Aufbau, Verschlüsselung, Lesen
 │   ├── Audio.cpp/.hpp    Soundeffekte, Dauergeräusche, Musik, Zuordnung Ereignis -> Datei
 │   ├── ClipPlayer.cpp/.hpp Funkspruch-Clips der Missionen (assets/clips, MPEG-1)
 │   ├── MusicMix.hpp      Überblenden der Musik (reine Rechnung, ohne raylib)
@@ -674,6 +692,7 @@ Mondschuerfer/
 │   ├── web/              Verwaltungs-Webseite (index.html, app.js, style.css)
 │   ├── Dockerfile        Container-Image
 │   └── Caddyfile         optionaler HTTPS-Vorbau für die Webseite
+├── tools/PackAssets.cpp   Werkzeug: packt den Asset-Ordner beim Bauen in assets.pak
 ├── third_party/          Fremde Bibliotheken im Projekt (siehe third_party/README.md)
 │   ├── enet/             ENet 1.3.18 (Netzwerk über UDP)
 │   ├── httplib/          cpp-httplib 0.22.0 (Webserver der Verwaltungsseite)

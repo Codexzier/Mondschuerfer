@@ -28,7 +28,7 @@
 //   shared/Models.hpp (ID <-> Dateiname), shared/GameSettings.hpp (MoonColor).
 //
 // Ablauf:
-//   1. Init(): Assets-Ordner suchen, Shader übersetzen, Sonnenrichtung
+//   1. Init(): Asset-Paket oder Assets-Ordner suchen, Shader übersetzen, Sonnenrichtung
 //      setzen. Es wird dabei noch KEIN Modell geladen.
 //   2. Jedes Frame: SetCamera() (für das Randlicht im Shader), danach Draw()
 //      für jedes Objekt. Beim ersten Draw() einer ID wird das Modell geladen
@@ -146,7 +146,8 @@ public:
     void SetLight(Vector3 tint);
 
     // Gefundener Assets-Ordner mit "/" am Ende, z. B. "assets/" oder der
-    // Ordner neben der ausführbaren Datei.
+    // Ordner neben der ausführbaren Datei; "pak:/" für das Asset-Paket
+    // assets.pak neben der ausführbaren Datei (siehe AssetExists unten).
     const std::string& AssetDir() const { return assetDir_; }
 
 private:
@@ -199,6 +200,22 @@ private:
 
 // Das einzige Assets-Objekt (definiert in Assets.cpp).
 extern Assets g_assets;
+
+// Dateien aus dem Asset-Paket assets.pak (AssetPack.hpp) oder aus dem
+// Assets-Ordner, je nachdem, was Init() gefunden hat. Pfade wie überall:
+// AssetDir() + "sounds/...". Mit Paket ist AssetDir() "pak:/"; solche Pfade
+// liest nur LoadFilePatched (alle raylib-Ladefunktionen, die LoadFileData
+// benutzen) und diese Funktionen, nicht fopen oder FileExists.
+//   InAssetPack:    Pfad liegt im Paket (raylib-Funktionen, die selbst eine
+//                   Datei öffnen, z. B. LoadMusicStream, gehen dann nicht)
+//   AssetExists:    Datei vorhanden (Paket oder Platte)
+//   LoadAssetBytes: ganze Datei (im Paket: geprüft und entschlüsselt)
+//   ListAssetFiles: Pfade der Dateien mit Endung ext direkt in dir (ohne
+//                   Unterordner); geht auch für normale Ordner
+bool InAssetPack(const std::string& path);
+bool AssetExists(const std::string& path);
+bool LoadAssetBytes(const std::string& path, std::vector<unsigned char>& out);
+std::vector<std::string> ListAssetFiles(const std::string& dir, const char* ext);
 
 // Hilfsfunktionen für Welt-Matrizen ("TRS" = Translation · Rotation · Scale).
 //

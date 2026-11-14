@@ -38,6 +38,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
 
+      # Schluessel fuer assets.pak aus dem Repository-Secret ASSETS_KEY (Settings ->
+      # Secrets and variables -> Actions). Ohne Secret: oeffentlicher Testschluessel.
+      - name: Schluessel fuer assets.pak
+        shell: bash
+        env:
+          ASSETS_KEY: ${{ secrets.ASSETS_KEY }}
+        run: |
+          if [ -n "$ASSETS_KEY" ]; then printf '%s' "$ASSETS_KEY" > assets.key; else echo "Kein Secret ASSETS_KEY: Testschluessel"; fi
+
       - name: Bauen (Windows, MinGW)
         if: runner.os == 'Windows'
         shell: bash
@@ -61,7 +70,7 @@ jobs:
           else
             cp build/Mondschuerfer dist/Mondschuerfer/
           fi
-          cp -r build/assets dist/Mondschuerfer/assets
+          cp build/assets.pak dist/Mondschuerfer/
           cp README.md dist/Mondschuerfer/
           cd dist
           if [ "$RUNNER_OS" = "Linux" ]; then

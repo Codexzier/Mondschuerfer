@@ -1423,10 +1423,9 @@ private:
 // damit jeder float exakt wieder eingelesen wird; so rechnen Spiel und Server
 // mit genau denselben Werten wie beim Laden der Modelle.
 static void DumpModelBounds() {
-    FilePathList files = LoadDirectoryFilesEx((g_assets.AssetDir() + "models").c_str(), ".glb", false);
     std::vector<std::string> names;
-    for (unsigned i = 0; i < files.count; ++i) names.push_back(GetFileNameWithoutExt(files.paths[i]));
-    UnloadDirectoryFiles(files);
+    for (const std::string& file : ListAssetFiles(g_assets.AssetDir() + "models/", ".glb"))
+        names.push_back(GetFileNameWithoutExt(file.c_str()));
     std::sort(names.begin(), names.end());
     auto num = [](float v) {
         std::string s = TextFormat("%.9g", v);
@@ -1529,14 +1528,14 @@ int main(int argc, char** argv) {
     rlSetClipPlanes(0.5, 2500.0); // bessere Tiefengenauigkeit
 
     // Modelle, Texturen und Shader laden (braucht den OpenGL-Kontext, also
-    // nach InitWindow). Fehlt der Ordner "assets", statt abzustürzen einen
+    // nach InitWindow). Fehlen assets.pak und der Ordner "assets", statt abzustürzen einen
     // Hinweis im Fenster zeigen, bis es geschlossen wird.
     if (!g_assets.Init()) {
         while (!WindowShouldClose()) {
             BeginDrawing();
             ClearBackground(Color{20, 22, 30, 255});
             DrawText("Assets nicht gefunden!", 40, 40, 40, RED);
-            DrawText("Der Ordner 'assets' (mit models/*.glb aus dem Kenney Space Kit)", 40, 100, 20, RAYWHITE);
+            DrawText("Die Datei 'assets.pak' oder der Ordner 'assets' (mit models/*.glb)", 40, 100, 20, RAYWHITE);
             DrawText("muss neben der ausführbaren Datei liegen.", 40, 130, 20, RAYWHITE);
             EndDrawing();
         }

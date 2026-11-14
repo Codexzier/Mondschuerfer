@@ -5,3 +5,6 @@ mondschuerfer_spielstand.txt
 mondschuerfer_client.txt
 data/
 .env
+
+# Schluessel fuer assets.pak (nie einchecken, siehe CMakeLists.txt)
+assets.key
