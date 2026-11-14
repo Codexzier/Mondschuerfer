@@ -3,7 +3,8 @@
 // an/aus, Musik- und Clip-Lautstärke, Untertitel an/aus), "Grafik" (Tilt-Shift, Kantenglättung, FXAA, Stil-Look,
 // Schatten, Sandsturm, Triebwerksschweif, Treffer-Aufblitzen, Bodensteine, Sternenstaub, Weltraumnebel,
 // Fahrspuren) und "Steuerung"
-// (Tank-Steuerung an/aus, Übersicht der Tasten) (Schnittstelle und Bedienung: Options.hpp).
+// (Tank-Steuerung an/aus, Übersicht der Tasten), im Debug-Build zusätzlich
+// "Videoclip Tester" (ClipTester.cpp) (Schnittstelle und Bedienung: Options.hpp).
 //
 // Wer benutzt die Datei? main.cpp (Hauptmenü, Einzelspieler-Pause) und
 // Multiplayer.cpp (Mehrspieler-Pause), jeweils über ein OptionsScreen-Objekt.
@@ -198,6 +199,9 @@ void OptionsScreen::Close() {
     draggingFxaa_ = false;
     draggingTracks_ = false;
     for (bool& d : draggingEffect_) d = false;
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    tester_.Stop();
+#endif
     g_clientConfig.SaveIfChanged();   // z. B. Lautstärke per Pfeiltasten geändert
     g_audio.Play(Sfx::UiBack);
 }
@@ -386,6 +390,11 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
         rows[n++] = ROW_TANK;
         rows[n++] = ROW_BARS;
     }
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    else if (tab == TAB_CLIPTEST) {
+        rows[n++] = ROW_CLIPTEST;
+    }
+#endif
     rows[n++] = ROW_BACK;
     return n;
 }
@@ -394,6 +403,9 @@ int OptionsScreen::RowsOf(int tab, int* rows) {
 // keepTabsRow: Auswahl bleibt auf den Karteireitern (Pfeiltasten dort, Klick),
 // sonst springt sie auf die erste Zeile der neuen Seite (Tab, LB/RB).
 void OptionsScreen::SetTab(int tab, bool keepTabsRow) {
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    if (tab_ == TAB_CLIPTEST) tester_.Stop();   // Clip endet mit der Seite
+#endif
     tab_ = (tab + TAB_COUNT) % TAB_COUNT;
     dragging_ = draggingClip_ = draggingTilt_ = draggingMsaa_ = draggingFxaa_ = draggingTracks_ = false;
     for (bool& d : draggingEffect_) d = false;
@@ -401,6 +413,9 @@ void OptionsScreen::SetTab(int tab, bool keepTabsRow) {
     int rows[16];
     RowsOf(tab_, rows);
     sel_ = keepTabsRow ? ROW_TABS : rows[1];
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    if (tab_ == TAB_CLIPTEST) tester_.Open();   // Clip-Liste neu einlesen
+#endif
 }
 
 bool OptionsScreen::Draw() {
@@ -435,7 +450,11 @@ bool OptionsScreen::Draw() {
     // Knopf "Zurück", dann klickt A dort (ausgewertet unten bei "Auswerten").
     // Seite wechseln: Tab (mit Umschalt rückwärts) bzw. LB/RB auf jeder Zeile,
     // auf den Karteireitern auch Pfeil links/rechts.
-    const bool keys = frames_ > 1;
+    bool keys = frames_ > 1;
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    if (tab_ == TAB_CLIPTEST && tester_.Typing()) keys = false;   // Tasten gehören dem Pfadfeld
+    bool testPlay = false;   // Knopf "Teste Video Datei abspielen" per Enter/A
+#endif
     bool toggle = false, toggleSubs = false, toggleTank = false, toggleBars = false, close = false;
     float volStep = 0.0f, clipStep = 0.0f, tiltStep = 0.0f, fxaaStep = 0.0f;
     int msaaStep = 0, trackStep = 0, effectStep = 0;
@@ -475,6 +494,9 @@ bool OptionsScreen::Draw() {
             else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
             else if (sel_ == ROW_TANK) toggleTank = true;
             else if (sel_ == ROW_BARS) toggleBars = true;
+#ifdef MONDSCHUERFER_CLIP_TESTER
+            else if (sel_ == ROW_CLIPTEST) testPlay = true;
+#endif
             else if (sel_ == ROW_BACK) close = true;
         }
         if (BackPressed()) close = true;
@@ -485,7 +507,11 @@ bool OptionsScreen::Draw() {
     // Stehen die Pfeiltasten auf den Karteireitern, hat der gewählte einen
     // hellen Rahmen; unter der Maus wird ein Reiter aufgehellt.
     const Vector2 mouse = PointerPos();
-    const char* tabNames[TAB_COUNT] = {"Ton", "Grafik", "Steuerung"};
+    const char* tabNames[TAB_COUNT] = {"Ton", "Grafik", "Steuerung",
+#ifdef MONDSCHUERFER_CLIP_TESTER
+                                       "Videoclip Tester",
+#endif
+    };
     bool overTabs = false;
     for (int t = 0; t < TAB_COUNT; ++t) {
         const Rectangle r{x + t * (kTabW + 10.0f) * s, y, kTabW * s, kTabH * s};
@@ -500,7 +526,8 @@ bool OptionsScreen::Draw() {
         DrawRectangleRec(r, fill);
         if (current && sel_ == ROW_TABS) DrawRectangleLinesEx(r, std::max(2.0f, 3.0f * s), TEXT);
         else if (!current) DrawRectangleLinesEx(r, 1.0f, ACCENT_DIM);
-        TextCentered(tabNames[t], r.x + r.width * 0.5f, r.y + (r.height - 24 * s) * 0.5f, 24 * s,
+        const float ts = Width(tabNames[t], 24 * s) > r.width - 16 * s ? 20 * s : 24 * s;   // langer Name etwas kleiner
+        TextCentered(tabNames[t], r.x + r.width * 0.5f, r.y + (r.height - ts) * 0.5f, ts,
                      current ? Color{26, 31, 41, 255} : TEXT, !current);
     }
     // Linie unter den Reitern über die ganze Breite
@@ -722,6 +749,12 @@ bool OptionsScreen::Draw() {
         Text("Wirkt auf die 3D-Welt; HUD und Menüs bleiben scharf. Der Sandsturm schränkt die Sicht um das Schiff ein.", x,
              y + 4 * s, 17 * s, MUTED);
         overRow = overTilt || overMsaa || overFxaa || overEffect || overTracks;
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    } else if (tab_ == TAB_CLIPTEST) {
+        // Seite "Videoclip Tester": Liste, Abspielen und Prüfung in ClipTester.cpp
+        const float h = std::max(SoundHeight(), std::max(GraphicsHeight(), ControlsHeight())) * s;
+        overRow = tester_.Draw(Rectangle{x, y, iw, h}, sel_ == ROW_CLIPTEST);
+#endif
     } else {
         // Zeile "Tank-Steuerung": wie die Zeile "Untertitel", schaltet um,
         // wie der linke Stick im Flug lenkt (Controls.cpp).
@@ -804,8 +837,14 @@ bool OptionsScreen::Draw() {
         else if (sel_ == ROW_SUBTITLES) toggleSubs = true;
         else if (sel_ == ROW_TANK) toggleTank = true;
         else if (sel_ == ROW_BARS) toggleBars = true;
+#ifdef MONDSCHUERFER_CLIP_TESTER
+        else if (sel_ == ROW_CLIPTEST) testPlay = true;
+#endif
         else if (sel_ == ROW_BACK) close = true;
     }
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    if (testPlay) tester_.PlayTestFile();
+#endif
     if (volStep != 0.0f) {
         SetVolume(g_audio.MusicVolume() + volStep, false);
         g_audio.Play(Sfx::UiMove, 0.6f);

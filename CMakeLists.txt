@@ -103,8 +103,13 @@ add_executable(Mondschuerfer
         src/Chat.cpp
         src/CommandCenter.cpp
         src/EventEditor.cpp
+        src/ClipTester.cpp
         ${MONDSCHUERFER_SHARED_SOURCES}
 )
+
+# Seite "Videoclip Tester" in den Optionen (src/ClipTester.hpp) nur im
+# Debug-Build (CLion); der Release-Build der GitHub-Action enthält sie nicht.
+target_compile_definitions(Mondschuerfer PRIVATE $<$<CONFIG:Debug>:MONDSCHUERFER_CLIP_TESTER>)
 
 target_include_directories(Mondschuerfer PRIVATE src shared ${MONDSCHUERFER_ENET_INCLUDE})
 target_link_libraries(Mondschuerfer PRIVATE raylib enet pl_mpeg)

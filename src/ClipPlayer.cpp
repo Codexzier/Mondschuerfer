@@ -51,6 +51,19 @@ void ClipPlayer::Update(float dt, int cue, bool show) {
         ResumeSound(sound_);   // nach dem Ende des Tons ohne Wirkung
     }
     paused_ = false;
+    Advance(dt);
+}
+
+// Der Tester ruft Init() nie auf: dir_ ist leer, Open bekommt den ganzen Pfad.
+bool ClipPlayer::PlayFile(const std::string& path) {
+    Stop();
+    tried_ = true;
+    Open(path);
+    if (hasSound_) PlaySound(sound_);
+    return plm_ != nullptr;
+}
+
+void ClipPlayer::Advance(float dt) {
     if (!plm_ || ended_) return;
 
     t_ += dt;
