@@ -17,6 +17,7 @@
 //   3. Stop(): bei einem neuen Funkspruch oder wenn keiner mehr läuft.
 // ---------------------------------------------------------------------------
 #include "ClipPlayer.hpp"
+#include "Assets.hpp"
 #include "Config.hpp"
 #include <algorithm>
 #include <cmath>
@@ -70,14 +71,21 @@ void ClipPlayer::Update(float dt, int cue, bool show) {
 
 void ClipPlayer::Open(const std::string& file) {
     const std::string path = dir_ + file;
-    if (!FileExists(path.c_str())) {
+    if (!AssetExists(path)) {
         TraceLog(LOG_WARNING, "CLIP: %s fehlt, nur Untertitel", path.c_str());
         return;
     }
+    // Aus dem Asset-Paket: ganzen Clip entschlüsseln (wenige MB); beide
+    // Decoder lesen dann aus data_ statt aus der Datei.
+    const bool inPak = InAssetPack(path);
+    if (inPak && !LoadAssetBytes(path, data_)) return;
+    auto create = [&]() {
+        return inPak ? plm_create_with_memory(data_.data(), data_.size(), 0) : plm_create_with_filename(path.c_str());
+    };
 
     // Ton: ganz entpacken (pl_mpeg liefert immer Stereo, als float)
     if (IsAudioDeviceReady()) {
-        if (plm_t* a = plm_create_with_filename(path.c_str())) {
+        if (plm_t* a = create()) {
             plm_set_video_enabled(a, 0);
             const int rate = plm_get_samplerate(a);
             std::vector<float> pcm;
@@ -108,7 +116,7 @@ void ClipPlayer::Open(const std::string& file) {
     }
 
     // Bild: Decoder bleibt offen, Textur in Clipgröße
-    plm_ = plm_create_with_filename(path.c_str());
+    plm_ = create();
     if (!plm_) return;
     plm_set_audio_enabled(plm_, 0);
     const int w = plm_get_width(plm_), h = plm_get_height(plm_);
@@ -133,6 +141,7 @@ void ClipPlayer::Stop() {
         UnloadSound(sound_);
     }
     plm_ = nullptr;
+    std::vector<unsigned char>().swap(data_);   // Speicher wirklich freigeben
     tex_ = Texture2D{};
     sound_ = Sound{};
     hasSound_ = hasFrame_ = ended_ = paused_ = tried_ = false;
