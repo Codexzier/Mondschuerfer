@@ -265,15 +265,19 @@ constexpr float CONVOY_WAVES[2] = {8.0f, 22.0f};
 // das Netzwerk (SnapMe): Reihenfolge nicht ändern. Funkspruch je Phase
 // (0 Start, 1 Ende, 2 Fehlschlag): Clip-Datei aus assets/clips (MPEG-1 mit
 // MP2-Ton, abgespielt von src/ClipPlayer.cpp) und Untertitel.
-// Leerer Untertitel = kein Funkspruch in dieser Phase.
+// Leerer Untertitel = kein Funkspruch in dieser Phase. Fehlt die Clip-Datei,
+// steht nur der Untertitel da.
+// orbit: Die Mission gibt es nur auf der Weltraumkarte der Piloten (Angebote
+// beim Raumschiffsverkäufer auf dem Trägerschiff), sonst nur auf dem Mond.
 struct MissionDef {
     const char* name;
     const char* text;      // Kurzbeschreibung im Stationsfenster
     int reward;            // Punkte, sofort aufs Konto
     const char* clip[3];
     const char* subtitle[3];
+    bool orbit = false;
 };
-constexpr int MISSION_TYPE_COUNT = 3;
+constexpr int MISSION_TYPE_COUNT = 6;
 constexpr MissionDef MISSIONS[MISSION_TYPE_COUNT] = {
     {"Personen einsammeln", "Drei verirrte Personen abholen [F] und zu einer Handelsstation bringen.", 2000,
      {"clip_collectingpersonal_start.mpg", "clip_collectingpersonal_end.mpg", ""},
@@ -288,13 +292,36 @@ constexpr MissionDef MISSIONS[MISSION_TYPE_COUNT] = {
      {"Wir müssen Ware an die nächsten Station bringen. Bitte verteidigen sie den Konvoi.",
       "Die Ware ist sicher angekommen. Setzen sie nun ihre Aufgabe fort.",
       "Sie haben versagt. Setzen sie ihre vorige Arbeit fort."}},
+    // --- Weltraumkarte der Piloten ---
+    {"Rettungskapseln bergen", "Drei treibende Rettungskapseln aufnehmen [F] und zu einem Trägerschiff bringen.", 5000,
+     {"clip_capsules_start.mpg", "clip_capsules_end.mpg", ""},
+     {"Commander, nach einem Angriff treiben Rettungskapseln im All. Bergen Sie drei Kapseln und bringen Sie sie zu einem unserer Trägerschiffe.",
+      "Alle Kapseln sind an Bord, die Besatzungen sind in Sicherheit. Vielen Dank, Commander.", ""},
+     true},
+    {"Asteroiden abfangen", "Drei Asteroiden zerstören, bevor sie die Raumstation treffen.", 7500,
+     {"clip_asteroids_start.mpg", "clip_asteroids_end.mpg", "clip_asteroids_fail.mpg"},
+     {"Achtung, Commander! Drei Asteroiden nehmen Kurs auf die Raumstation. Fangen Sie sie ab, bevor sie einschlagen.",
+      "Alle drei Asteroiden sind zerstört. Die Raumstation ist in Sicherheit. Gute Arbeit!",
+      "Einschlag! Ein Asteroid hat die Raumstation getroffen. Die Mission ist gescheitert."},
+     true},
+    {"Versorgungsfrachter eskortieren", "Drei Versorgungsfrachter vom Trägerschiff zur Raumstation begleiten.", 10000,
+     {"clip_supply_start.mpg", "clip_supply_end.mpg", "clip_supply_fail.mpg"},
+     {"Unsere Versorgungsfrachter fliegen jetzt zur Raumstation. Begleiten Sie sie und halten Sie uns die Aliens vom Leib.",
+      "Die Versorgungsgüter sind an der Raumstation angekommen. Danke für den Geleitschutz, Commander.",
+      "Alle Frachter wurden zerstört. Die Raumstation wartet vergeblich auf ihre Versorgung."},
+     true},
 };
 // Funksprüche außerhalb der Missionen (PlayerState::cue ab CUE_NEWSTART):
 // beim Beginn eines neuen Spiels und beim Fortsetzen (Einzelspieler: Knopf
 // "Fortsetzen", Mehrspieler: Anmeldung mit vorhandenem Fortschritt).
+// Auf der Weltraumkarte eigene: bei der Ankunft im All (CUE_ORBIT_NEWSTART;
+// war das Ziel im All schon einmal erreicht, CUE_ORBIT_RETURN) und beim
+// Fortsetzen bzw. Anmelden dort (CUE_ORBIT_RETURN).
 constexpr int CUE_NEWSTART = MISSION_TYPE_COUNT * 3;
 constexpr int CUE_RETURN = CUE_NEWSTART + 1;
-constexpr int CUE_COUNT = CUE_RETURN + 1;   // gültige Werte für PlayerState::cue: 0 .. CUE_COUNT - 1
+constexpr int CUE_ORBIT_NEWSTART = CUE_NEWSTART + 2;
+constexpr int CUE_ORBIT_RETURN = CUE_NEWSTART + 3;
+constexpr int CUE_COUNT = CUE_ORBIT_RETURN + 1;   // gültige Werte für PlayerState::cue: 0 .. CUE_COUNT - 1
 struct CueDef {
     const char* name;      // Überschrift im Funkspruch-Kasten
     const char* clip;      // Datei in assets/clips, "" = keine
@@ -305,11 +332,20 @@ constexpr CueDef GENERAL_CUES[CUE_COUNT - CUE_NEWSTART] = {
      "Willkommen Commander, Sammeln und liefern sie uns die Kristalle. Wenn sie genug geliefert haben, können sie den Mond verlassen."},
     {"Willkommen zurück", "clip_return.mpg",
      "Schön das sie wieder da sind. Beginnen sie mit der Arbeit und bringen sie weiter die Kristalle."},
+    {"Willkommen im All", "clip_orbit_newstart.mpg",
+     "Willkommen im All, Commander. Beschützen Sie die Raumstation vor Asteroiden und Aliens. Aufträge gibt es beim Raumschiffsverkäufer."},
+    {"Willkommen zurück im All", "clip_orbit_return.mpg",
+     "Willkommen zurück im All, Commander. Die Raumstation braucht weiter Ihren Schutz."},
 };
 // Überschrift, Clip und Untertitel des Funkspruchs cue (0 .. CUE_COUNT - 1).
 constexpr CueDef CueInfo(int cue) {
     return cue >= CUE_NEWSTART ? GENERAL_CUES[cue - CUE_NEWSTART]
                                : CueDef{MISSIONS[cue / 3].name, MISSIONS[cue / 3].clip[cue % 3], MISSIONS[cue / 3].subtitle[cue % 3]};
+}
+// Gehört der Funkspruch cue zur Weltraumkarte? Gezeigt wird ein Funkspruch
+// nur auf seiner Karte (die Mond-Clips handeln vom Mond). Ungültig = false.
+constexpr bool CueOnOrbit(int cue) {
+    return cue >= 0 && cue < CUE_COUNT && (cue >= CUE_NEWSTART ? cue >= CUE_ORBIT_NEWSTART : MISSIONS[cue / 3].orbit);
 }
 
 // Mehrspieler (nur Server)
@@ -459,6 +495,14 @@ constexpr float ORBIT_ASTEROID_HP = 250.0f;      // so viel Schaden hält ein As
 constexpr float ORBIT_ASTEROID_DAMAGE = 250.0f;  // Strukturpunkte je Einschlag (vier Treffer: Station zerstört)
 constexpr float ORBIT_ASTEROID_SIZE = 7.0f;      // Maßstab des Modells (gut 6 m breit)
 constexpr float ORBIT_ASTEROID_CONTACT = 0.1f;   // Schiff berührt einen Asteroiden: ein Zehntel des vollen Schilds je Sekunde
+// Mission "Asteroiden abfangen" (World::UpdateMissions): drei kleinere
+// Asteroiden, der erste nach dem Abdocken, dann je ORBIT_MISSION_ASTEROID_GAP
+// Sekunden später. Ein Einschlag kostet weniger Struktur als ein normaler
+// Asteroid (die Mission soll die Station nicht allein zerstören können).
+constexpr float ORBIT_MISSION_ASTEROID_GAP = 20.0f;
+constexpr float ORBIT_MISSION_ASTEROID_SIZE = 4.5f;
+constexpr float ORBIT_MISSION_ASTEROID_HP = 120.0f;
+constexpr float ORBIT_MISSION_ASTEROID_DAMAGE = 100.0f;
 // Piraten und Elite-Piraten im All fliegen das Alien-Raumschiff des Nutzers
 // (assets/models/ships/, Farbton wie auf dem Mond: Render.cpp).
 constexpr const char* ORBIT_PIRATE_MODEL = "ships/alien-spacecraft";

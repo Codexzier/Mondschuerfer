@@ -169,6 +169,10 @@ void DrawGlowDisc(Vector3 c, float r, Color col, int segments = 24) {
     rlEnd();
 }
 
+// Höhe der Rettungskapseln auf der Weltraumkarte (Mission "Rettungskapseln
+// bergen"): knapp unter den Schiffen, die über sie hinwegfliegen
+constexpr float kCapsuleY = cfg::SHIP_ALTITUDE - 3.0f;
+
 // Pseudozufall 0..1 aus einer Zahl (gleiche Eingabe -> gleiches Ergebnis),
 // z. B. für die Stelle, an der ein Kristall gerade aufblitzt.
 float Hash01(float n) {
@@ -299,10 +303,18 @@ void DrawMovingModels(const World& w, Vector3 focus, float cullR, float hitFlash
     // Nur die eigenen (im Mehrspieler schickt der Server ohnehin nur diese).
     // 1,8-fach vergrößert (das Modell ist nur 0,8 m hoch), damit man sie von
     // oben erkennt; sie hüpfen leicht, als würden sie auf sich aufmerksam machen.
+    // Weltraumkarte: Rettungskapseln (rocket_top, gut 2 m breit) treiben
+    // unter der Flughöhe und taumeln langsam.
     const PlayerState& me = w.Me();
     for (const auto& pe : w.persons) {
         if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
-        const float hop = 0.12f * fabsf(sinf(time * 4.0f + static_cast<float>(pe.id)));
+        const float ph = static_cast<float>(pe.id);
+        if (w.orbit) {
+            const Vector3 at{pe.pos.x, kCapsuleY + 0.3f * sinf(time * 0.9f + ph), pe.pos.z};
+            g_assets.Draw(pe.model, TRS(at, pe.yaw + time * 0.3f, 0.5f * sinf(time * 0.7f + ph), 0.4f * sinf(time * 0.5f + ph * 1.3f), 2.2f));
+            continue;
+        }
+        const float hop = 0.12f * fabsf(sinf(time * 4.0f + ph));
         g_assets.Draw(pe.model, Vector3{pe.pos.x, hop, pe.pos.z}, pe.yaw, 1.8f);
     }
 
@@ -1745,12 +1757,14 @@ void World::Draw(const Camera3D& cam) const {
         DrawBeam(w.pos, 8.0f, 0.3f, Color{220, 140, 40, static_cast<unsigned char>(70 * pulse)});
         DrawGroundRing(w.pos, 3.0f, 3.4f, Color{255, 170, 60, static_cast<unsigned char>(120 * pulse)}, 40);
     }
-    // Personen: gelbe Lichtsäule und Bodenring (gelb wie auf der Minikarte)
+    // Personen: gelbe Lichtsäule und Bodenring (gelb wie auf der Minikarte);
+    // Rettungskapseln im All: Säule durch die Kapsel, Ring auf ihrer Höhe
     for (const auto& pe : persons) {
         if (pe.owner != me.id || Dist2D(pe.pos, focus) > cullR) continue;
         float pulse = 0.6f + 0.4f * sinf(time * 4.0f + static_cast<float>(pe.id));
-        DrawBeam(pe.pos, 10.0f, 0.3f, Color{230, 200, 40, static_cast<unsigned char>(80 * pulse)});
-        DrawGroundRing(pe.pos, 2.4f, 2.8f, Color{255, 225, 60, static_cast<unsigned char>(140 * pulse)}, 40);
+        const Vector3 base{pe.pos.x, orbit ? kCapsuleY - 3.0f : pe.pos.y, pe.pos.z};
+        DrawBeam(base, 10.0f, 0.3f, Color{230, 200, 40, static_cast<unsigned char>(80 * pulse)});
+        DrawGroundRing(pe.pos, 2.4f, 2.8f, Color{255, 225, 60, static_cast<unsigned char>(140 * pulse)}, 40, orbit ? kCapsuleY + 0.8f : 0.12f);
     }
 
     // Kristalle glimmen: weicher grüner Schein auf dem Boden und kleine

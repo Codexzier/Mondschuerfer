@@ -77,6 +77,8 @@ void World::ResolveModels() {
     mdl.crystalB = ModelId("rock_crystalsLargeB");
     mdl.astronautA = ModelId("astronautA");               // verirrte Personen (Mission)
     mdl.astronautB = ModelId("astronautB");
+    mdl.capsuleA = ModelId("rocket_topA");                // Rettungskapseln (Mission im All)
+    mdl.capsuleB = ModelId("rocket_topB");
 }
 
 // Zufälliger Ort auf dem Boden (y = 0), der mindestens minDistStations von
