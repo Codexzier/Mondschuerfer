@@ -4,7 +4,8 @@
 //
 // Wofür ist die Datei da?
 //   Die Optionen zeigen ein Fenster mittig über dem Bild mit drei
-//   Karteireitern (Seiten) und darunter dem Knopf "Zurück":
+//   Karteireitern (Seiten) und darunter dem Knopf "Zurück" (im Debug-Build
+//   kommt die Seite "Videoclip Tester" hinzu, siehe ClipTester.hpp):
 //   Seite "Ton":
 //     - Musik an/aus (Umschalter), Musiklautstärke und Lautstärke der
 //       Missions-Clips (Schieberegler in 5-%-Schritten), Untertitel der
@@ -43,6 +44,7 @@
 //   g_audio (wirkt sofort) und g_clientConfig (wird gespeichert).
 //
 // Abhängigkeiten: Ui.hpp (Panel, Knopf, Schieberegler, Umschalter, Texte),
+// ClipTester.hpp (Seite "Videoclip Tester", nur Debug-Build),
 // Audio.hpp (g_audio: Musikwerte, Bedientöne), ClipPlayer.hpp (g_clip:
 // Clip-Lautstärke), ClientConfig.hpp
 // (g_clientConfig: Speichern), raylib (Tastatur, Maus, Zeichnen).
@@ -66,6 +68,7 @@
 //             A klickt (Regler: A halten und ziehen), Steuerkreuz wie die
 //             Pfeiltasten, B = zurück (PlayStation: L1/R1, Kreuz, Kreis). Siehe "Controller in Menüs" in Ui.hpp.
 // ---------------------------------------------------------------------------
+#include "ClipTester.hpp"
 #include <string>
 
 class OptionsScreen {
@@ -93,13 +96,22 @@ public:
 
 private:
     // Karteireiter (Seiten) der Optionen
-    enum Tab { TAB_SOUND, TAB_GRAPHICS, TAB_CONTROLS, TAB_COUNT };
+    enum Tab {
+        TAB_SOUND, TAB_GRAPHICS, TAB_CONTROLS,
+#ifdef MONDSCHUERFER_CLIP_TESTER
+        TAB_CLIPTEST,   // "Videoclip Tester", nur im Debug-Build
+#endif
+        TAB_COUNT
+    };
     // Wählbare Zeilen (Tastatursteuerung); welche davon zu sehen sind, hängt
     // von der Seite ab (RowsOf). ROW_TABS = die Karteireiter selbst.
     // ROW_PIXEL .. ROW_NEBULA sind die Grafikeffekte (EffectLevel usw.).
     enum Row {
         ROW_TABS, ROW_MUSIC, ROW_VOLUME, ROW_CLIPS, ROW_SUBTITLES, ROW_TILT, ROW_MSAA, ROW_FXAA,
         ROW_PIXEL, ROW_SHADOWS, ROW_SAND, ROW_TRAIL, ROW_FLASH, ROW_STONES, ROW_DUST, ROW_NEBULA, ROW_TRACKS, ROW_TANK, ROW_BARS,
+#ifdef MONDSCHUERFER_CLIP_TESTER
+        ROW_CLIPTEST,   // Knopf "Teste Video Datei abspielen"
+#endif
         ROW_BACK
     };
     static constexpr int kEffectRows = ROW_NEBULA - ROW_PIXEL + 1;
@@ -163,4 +175,7 @@ private:
     bool draggingFxaa_ = false;   // ... den FXAA-Regler
     bool draggingTracks_ = false; // ... den Fahrspuren-Regler
     bool draggingEffect_[kEffectRows] = {};   // ... die Regler der Grafikeffekte
+#ifdef MONDSCHUERFER_CLIP_TESTER
+    ClipTester tester_;      // Seite "Videoclip Tester"
+#endif
 };
